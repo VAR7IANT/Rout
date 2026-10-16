@@ -1,0 +1,32 @@
+{
+  "sing-box": {
+    "version": "v1.14.3",
+    "assets": [
+      {
+        "name": "sing-box-1.14.3-linux-amd64.tar.gz",
+        "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-linux-amd64.tar.gz",
+        "sha256": "e2bdf179c15a3652955dc44867e33ca0965c9c9b91b34267dcc5a5d639a5feee"
+      },
+      {
+        "name": "sing-box-1.14.3-linux-arm64.tar.gz",
+        "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-linux-arm64.tar.gz",
+        "sha256": "29dae24d76bea3bc62d07dd3e60cfc12003de7debbd6b768df9be9c68360174e"
+      }
+    ]
+  },
+  "gost": {
+    "version": "v3.3.0",
+    "assets": [
+      {
+        "name": "gost_3.3.0_linux_amd64.tar.gz",
+        "url": "https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_amd64.tar.gz",
+        "sha256": "676fb7f78d267b6ae73df719c0c7f2b565dde7147da935cfafbc1e1da558b6d5"
+      },
+      {
+        "name": "gost_3.3.0_linux_arm64.tar.gz",
+        "url": "https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_arm64.tar.gz",
+        "sha256": "d03699e3f385d4ff5dad68046712adfcc7515325a064d2ab046e0bece30f8f8f"
+      }
+    ]
+  }
+}

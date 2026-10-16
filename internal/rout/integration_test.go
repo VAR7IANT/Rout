@@ -1,0 +1,549 @@
+package rout
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func integrationApp(t *testing.T) *App {
+	t.Helper()
+	dir := os.Getenv("ROUT_TEST_ENGINES")
+	if dir == "" {
+		t.Skip("set ROUT_TEST_ENGINES to verified engine directory for integration tests")
+	}
+	a := &App{Home: t.TempDir(), BinDir: dir, ServiceMode: "none"}
+	for _, n := range []string{"sing-box", "gost"} {
+		if _, e := os.Stat(a.enginePath(n)); e != nil {
+			t.Fatal(e)
+		}
+	}
+	return a
+}
+func tlsFixture(t *testing.T) (string, string, *httptest.Server) {
+	t.Helper()
+	key, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if e != nil {
+		t.Fatal(e)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(42), Subject: pkix.Name{CommonName: "example.test"}, DNSNames: []string{"example.test"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, e := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	pk, e := x509.MarshalPKCS8PrivateKey(key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cert := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	secret := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pk}))
+	pair, e := tls.X509KeyPair([]byte(cert), []byte(secret))
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "camouflage") }))
+	s.EnableHTTP2 = true
+	s.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	return cert, secret, s
+}
+func startEngine(t *testing.T, path string, args ...string) {
+	t.Helper()
+	logPath := filepath.Join(t.TempDir(), "engine.log")
+	log, e := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cmd := exec.Command(path, args...)
+	cmd.Stdout = log
+	cmd.Stderr = log
+	if e = cmd.Start(); e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	exited := false
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		if !exited {
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		log.Close()
+		if t.Failed() {
+			b, _ := os.ReadFile(logPath)
+			t.Log(string(b))
+		}
+	})
+	time.Sleep(120 * time.Millisecond)
+	select {
+	case e := <-done:
+		exited = true
+		b, _ := os.ReadFile(logPath)
+		t.Fatalf("engine exited %v: %s", e, b)
+	default:
+	}
+}
+func configFile(t *testing.T, c M) string {
+	t.Helper()
+	b, e := JSON(c)
+	if e != nil {
+		t.Fatal(e)
+	}
+	p := filepath.Join(t.TempDir(), "config.json")
+	if e = AtomicWrite(p, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	return p
+}
+func copyTunnel(a, b net.Conn) {
+	defer a.Close()
+	defer b.Close()
+	done := make(chan struct{}, 1)
+	go func() { _, _ = io.Copy(a, b); done <- struct{}{} }()
+	_, _ = io.Copy(b, a)
+	a.Close()
+	b.Close()
+	<-done
+}
+func mapFixtureAddress(addr string) string {
+	h, p, e := net.SplitHostPort(addr)
+	if e == nil && h == "origin.rout.invalid" {
+		return net.JoinHostPort("127.0.0.1", p)
+	}
+	return addr
+}
+func httpProxyFixture(t *testing.T) (*Proxy, *atomic.Int32) {
+	t.Helper()
+	count := &atomic.Int32{}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "CONNECT" || r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("test-user:p:a@ss%$")) {
+			w.WriteHeader(407)
+			return
+		}
+		up, e := net.Dial("tcp", mapFixtureAddress(r.Host))
+		if e != nil {
+			w.WriteHeader(502)
+			return
+		}
+		down, buf, e := w.(http.Hijacker).Hijack()
+		if e != nil {
+			up.Close()
+			return
+		}
+		count.Add(1)
+		fmt.Fprint(buf, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		buf.Flush()
+		copyTunnel(down, up)
+	}))
+	t.Cleanup(s.Close)
+	h, p, _ := ParseEndpoint(strings.TrimPrefix(s.URL, "http://"))
+	return &Proxy{"http", h, p, "test-user", "p:a@ss%$"}, count
+}
+func socksFixture(t *testing.T) (*Proxy, *atomic.Int32) {
+	t.Helper()
+	l, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { l.Close() })
+	count := &atomic.Int32{}
+	go func() {
+		for {
+			c, e := l.Accept()
+			if e != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(15 * time.Second))
+				head := make([]byte, 2)
+				if _, e := io.ReadFull(c, head); e != nil || head[0] != 5 {
+					return
+				}
+				methods := make([]byte, int(head[1]))
+				if _, e := io.ReadFull(c, methods); e != nil {
+					return
+				}
+				c.Write([]byte{5, 2})
+				if _, e := io.ReadFull(c, head); e != nil {
+					return
+				}
+				user := make([]byte, int(head[1]))
+				io.ReadFull(c, user)
+				io.ReadFull(c, head[:1])
+				password := make([]byte, int(head[0]))
+				io.ReadFull(c, password)
+				if string(user) != "test-user" || string(password) != "p:a@ss%$" {
+					c.Write([]byte{1, 1})
+					return
+				}
+				c.Write([]byte{1, 0})
+				req := make([]byte, 4)
+				if _, e := io.ReadFull(c, req); e != nil || req[1] != 1 {
+					return
+				}
+				var host string
+				switch req[3] {
+				case 1:
+					b := make([]byte, 4)
+					io.ReadFull(c, b)
+					host = net.IP(b).String()
+				case 4:
+					b := make([]byte, 16)
+					io.ReadFull(c, b)
+					host = net.IP(b).String()
+				case 3:
+					b := make([]byte, 1)
+					io.ReadFull(c, b)
+					name := make([]byte, int(b[0]))
+					io.ReadFull(c, name)
+					host = string(name)
+				default:
+					return
+				}
+				port := make([]byte, 2)
+				if _, e := io.ReadFull(c, port); e != nil {
+					return
+				}
+				addr := net.JoinHostPort(host, itoa(int(binary.BigEndian.Uint16(port))))
+				up, e := net.Dial("tcp", mapFixtureAddress(addr))
+				if e != nil {
+					c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				count.Add(1)
+				c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0})
+				copyTunnel(c, up)
+			}(c)
+		}
+	}()
+	h, p, _ := ParseEndpoint(l.Addr().String())
+	return &Proxy{"socks5", h, p, "test-user", "p:a@ss%$"}, count
+}
+func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
+	if os.Getenv("ROUT_SKIP_SINGBOX_RUNTIME") == "1" {
+		t.Skip("sing-box runtime disabled explicitly; protocol traffic has NOT been verified")
+	}
+	a := integrationApp(t)
+	cert, key, camouflage := tlsFixture(t)
+	camHost, camPort, _ := ParseEndpoint(strings.TrimPrefix(camouflage.URL, "https://"))
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "198.51.100.19") }))
+	defer origin.Close()
+	_, originPort, _ := ParseEndpoint(strings.TrimPrefix(origin.URL, "http://"))
+	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
+		for _, mode := range []string{"direct", "socks5", "http"} {
+			t.Run(protocol+"/"+mode, func(t *testing.T) {
+				p := fixture(t, protocol)
+				p.Port, _ = freePort()
+				p.PublicHost = "127.0.0.1"
+				p.PublicPort = p.Port
+				p.SNI = "example.test"
+				p.CertPEM = cert
+				p.KeyPEM = key
+				var count *atomic.Int32
+				if mode == "http" {
+					p.Outbound, count = httpProxyFixture(t)
+				}
+				if mode == "socks5" {
+					p.Outbound, count = socksFixture(t)
+				}
+				if e := p.Validate(); e != nil {
+					t.Fatal(e)
+				}
+				if e := a.writeProfile(p); e != nil {
+					t.Fatal(e)
+				}
+				conf, e := serverConfig(p, a.profileDir(p.ID))
+				if e != nil {
+					t.Fatal(e)
+				}
+				if protocol == "vless" || protocol == "anytls" {
+					conf["inbounds"].([]any)[0].(M)["tls"].(M)["reality"].(M)["handshake"] = M{"server": camHost, "server_port": camPort}
+				}
+				path := configFile(t, conf)
+				if e = a.checkConfig(path); e != nil {
+					out, _ := runOutput(time.Second, a.enginePath("sing-box"), "check", "-c", path)
+					t.Fatalf("%v: %s", e, out)
+				}
+				startEngine(t, a.enginePath("sing-box"), "run", "-c", path)
+				port, _ := freePort()
+				client, e := ClientConfig(p, "127.0.0.1", p.Port, port)
+				if e != nil {
+					t.Fatal(e)
+				}
+				endpoint := origin.URL
+				if mode != "direct" {
+					endpoint = "http://origin.rout.invalid:" + itoa(originPort)
+				}
+				e = a.withClient(client, port, func(proxy string) error {
+					ip, e := fetchIP(proxy, endpoint)
+					if e != nil {
+						return e
+					}
+					if ip != "198.51.100.19" {
+						return fmt.Errorf("unexpected response")
+					}
+					return nil
+				})
+				if e != nil {
+					t.Fatal(e)
+				}
+				if count != nil && count.Load() == 0 {
+					t.Fatal("request bypassed selected proxy")
+				}
+			})
+		}
+	}
+}
+func TestIntegrationGOSTTCPAndUDP(t *testing.T) {
+	a := integrationApp(t)
+	for _, network := range []string{"tcp", "udp"} {
+		t.Run(network, func(t *testing.T) {
+			var target string
+			if network == "tcp" {
+				l, e := net.Listen("tcp", "127.0.0.1:0")
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer l.Close()
+				target = l.Addr().String()
+				go func() {
+					for {
+						c, e := l.Accept()
+						if e != nil {
+							return
+						}
+						go func() { defer c.Close(); io.Copy(c, c) }()
+					}
+				}()
+			} else {
+				l, e := net.ListenPacket("udp", "127.0.0.1:0")
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer l.Close()
+				target = l.LocalAddr().String()
+				go func() {
+					buf := make([]byte, 512)
+					for {
+						n, addr, e := l.ReadFrom(buf)
+						if e != nil {
+							return
+						}
+						l.WriteTo(buf[:n], addr)
+					}
+				}()
+			}
+			port, _ := freePort()
+			p := Profile{ID: RandomHex(6), Name: "relay-test", Kind: "relay", Enabled: true, Protocol: network, Listen: "127.0.0.1", Port: port, PublicHost: "203.0.113.1", PublicPort: port, Target: target}
+			if e := p.Validate(); e != nil {
+				t.Fatal(e)
+			}
+			c, e := serverConfig(p, t.TempDir())
+			if e != nil {
+				t.Fatal(e)
+			}
+			startEngine(t, a.enginePath("gost"), "-C", configFile(t, c))
+			conn, e := net.DialTimeout(network, net.JoinHostPort("127.0.0.1", itoa(port)), time.Second)
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(3 * time.Second))
+			conn.Write([]byte("ping"))
+			b := make([]byte, 4)
+			if _, e = io.ReadFull(conn, b); e != nil || string(b) != "ping" {
+				t.Fatalf("relay failed: %v", e)
+			}
+		})
+	}
+}
+func TestIntegrationExportedURIs(t *testing.T) {
+	a := integrationApp(t)
+	for _, protocol := range []string{"vless", "anytls", "ss"} {
+		t.Run(protocol, func(t *testing.T) {
+			p := fixture(t, protocol)
+			raw, e := p.URI()
+			if e != nil {
+				t.Fatal(e)
+			}
+			out, e := URIOutbound(raw)
+			if e != nil {
+				t.Fatal(e)
+			}
+			path := configFile(t, M{"outbounds": []any{out}})
+			if e = a.checkConfig(path); e != nil {
+				t.Fatal(e)
+			}
+		})
+	}
+}
+
+func TestIntegrationConfigSchema(t *testing.T) {
+	a := integrationApp(t)
+	cert, key, _ := tlsFixture(t)
+	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
+		for _, mode := range []string{"direct", "socks5", "http"} {
+			t.Run(protocol+"/"+mode, func(t *testing.T) {
+				p := fixture(t, protocol)
+				p.SNI = "example.test"
+				p.CertPEM = cert
+				p.KeyPEM = key
+				if mode != "direct" {
+					p.Outbound = &Proxy{mode, "proxy.example", 1080, "user", "special:p@ss%$"}
+				}
+				if e := a.writeProfile(p); e != nil {
+					t.Fatal(e)
+				}
+				for _, path := range []string{filepath.Join(a.profileDir(p.ID), "config.json")} {
+					if e := a.checkConfig(path); e != nil {
+						out, _ := runOutput(time.Second, a.enginePath("sing-box"), "check", "-c", path)
+						t.Fatalf("%v: %s", e, out)
+					}
+				}
+				client, e := ClientConfig(p, p.PublicHost, p.PublicPort, 2080)
+				if e != nil {
+					t.Fatal(e)
+				}
+				path := configFile(t, client)
+				if e = a.checkConfig(path); e != nil {
+					out, _ := runOutput(time.Second, a.enginePath("sing-box"), "check", "-c", path)
+					t.Fatalf("%v: %s", e, out)
+				}
+			})
+		}
+	}
+}
+
+func TestIntegrationServiceLifecycle(t *testing.T) {
+	if os.Getenv("ROUT_TEST_SYSTEMD") != "1" {
+		t.Skip("set ROUT_TEST_SYSTEMD=1 on a disposable root/systemd test host")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("systemd lifecycle test requires root")
+	}
+	verified := integrationApp(t)
+	root, e := os.MkdirTemp("/var/lib", "rout-ci-")
+	if e != nil {
+		t.Fatal(e)
+	}
+	a := &App{Home: filepath.Join(root, "config"), BinDir: filepath.Join(root, "bin"), ServiceMode: "auto"}
+	if e = os.MkdirAll(a.BinDir, 0755); e != nil {
+		t.Fatal(e)
+	}
+	b, e := os.ReadFile(verified.enginePath("sing-box"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = AtomicWrite(a.enginePath("sing-box"), b, 0755); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() {
+		s, e := a.Load()
+		if e == nil {
+			if e = a.Commit(s, State{Schema: 1, Profiles: []Profile{}}, false); e != nil {
+				t.Errorf("service cleanup failed: %v", e)
+			}
+		}
+		os.RemoveAll(root)
+	})
+	p := fixture(t, "ss")
+	p.Port, _ = freePort()
+	p.PublicPort = p.Port
+	old, _ := a.Load()
+	if e = a.Commit(old, replace(old, p), false); e != nil {
+		t.Fatal(e)
+	}
+	if a.Running(p) != "运行中" {
+		t.Fatal("service did not start")
+	}
+	hits := &atomic.Int32{}
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); fmt.Fprint(w, "198.51.100.19") }))
+	defer origin.Close()
+	request := func() error {
+		port, _ := freePort()
+		client, e := ClientConfig(p, "127.0.0.1", p.Port, port)
+		if e != nil {
+			return e
+		}
+		return a.withClient(client, port, func(proxy string) error { _, e := fetchIP(proxy, origin.URL); return e })
+	}
+	if e = request(); e != nil {
+		t.Fatal(e)
+	}
+	// Verify live fail-closed behavior with an unavailable proxy endpoint.
+	old, _ = a.Load()
+	deadPort, _ := freePort()
+	p.Outbound = &Proxy{"http", "127.0.0.1", deadPort, "u", "p"}
+	if e = a.Commit(old, replace(old, p), false); e != nil {
+		t.Fatal(e)
+	}
+	before := hits.Load()
+	if e = request(); e == nil {
+		t.Fatal("unavailable exit unexpectedly succeeded")
+	}
+	if hits.Load() != before {
+		t.Fatal("proxy failure fell back to direct")
+	}
+	old, _ = a.Load()
+	p.Outbound = nil
+	if e = a.Commit(old, replace(old, p), false); e != nil {
+		t.Fatal(e)
+	}
+	// A new engine exits after config generation: the previous service must recover.
+	if e = AtomicWrite(a.enginePath("gost"), []byte("#!/bin/sh\nexit 42\n"), 0755); e != nil {
+		t.Fatal(e)
+	}
+	old, _ = a.Load()
+	broken := p
+	broken.Kind = "relay"
+	broken.Protocol = "both"
+	broken.Target = strings.TrimPrefix(origin.URL, "http://")
+	if e = a.Commit(old, replace(old, broken), false); e == nil {
+		t.Fatal("expected failed service start")
+	}
+	restored, e := a.Load()
+	if e != nil {
+		t.Fatal(e)
+	}
+	actual, e := Find(restored, p.ID)
+	if e != nil || actual.Kind != "node" || a.Running(p) != "运行中" {
+		t.Fatal("service rollback failed")
+	}
+	if e = request(); e != nil {
+		t.Fatal(e)
+	}
+	for _, enabled := range []bool{false, true} {
+		old, _ = a.Load()
+		p.Enabled = enabled
+		if e = a.Commit(old, replace(old, p), false); e != nil {
+			t.Fatal(e)
+		}
+		if (a.Running(p) == "运行中") != enabled {
+			t.Fatal("service enable/disable mismatch")
+		}
+	}
+}

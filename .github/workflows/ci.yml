@@ -1,0 +1,54 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Unit tests and static checks
+        run: |
+          go vet ./...
+          go test -race ./...
+          sh -n install.sh scripts/release.sh
+          test -z "$(gofmt -l cmd internal)"
+      - name: Install pinned engines for integration tests
+        run: go run ./cmd/rout --home "$RUNNER_TEMP/rout-state" --bin-dir "$RUNNER_TEMP/rout-engines" --service none engines
+      - name: Protocol, proxy authentication and TCP/UDP forwarding integration tests
+        env:
+          ROUT_TEST_ENGINES: ${{ runner.temp }}/rout-engines
+        run: go test -race -count=1 -v ./internal/rout
+      - name: Service lifecycle, startup rollback and failed-exit isolation
+        run: |
+          go test -c -o "$RUNNER_TEMP/rout-integration.test" ./internal/rout
+          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^TestIntegrationServiceLifecycle$' -test.v
+      - name: Build both Linux architectures
+        run: sh scripts/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rout-linux
+          path: dist/*
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rout-linux
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes
