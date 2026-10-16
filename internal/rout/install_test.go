@@ -35,6 +35,10 @@ func TestInstallerChecksumAndAtomicReplacement(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(bin, "curl"), []byte(curl), 0755); e != nil {
 		t.Fatal(e)
 	}
+	// Installation is restricted to a private test directory; no root privileges are needed.
+	if e := os.WriteFile(filepath.Join(bin, "id"), []byte("#!/bin/sh\nprintf '0\\n'\n"), 0755); e != nil {
+		t.Fatal(e)
+	}
 	run := func() ([]byte, error) {
 		c := exec.Command("sh", "../../install.sh")
 		c.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "ROUT_INSTALL_DIR="+dest, "ROUT_TEST_FIXTURES="+fixtures, "ROUT_VERSION=v0.1.0")

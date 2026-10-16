@@ -9,12 +9,23 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
           cache: false
+      - name: Read release version
+        id: version
+        run: |
+          version=$(go run ./cmd/rout version | awk '{print $2}')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo 'Tag does not match the compiled version' >&2
+            exit 1
+          fi
       - name: Unit tests and static checks
         run: |
           go vet ./...
@@ -38,7 +49,7 @@ jobs:
           name: rout-linux
           path: dist/*
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -51,4 +62,11 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes
+          ROUT_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          tag="v$ROUT_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; keeping its verified assets"
+          else
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Rout $tag" --generate-notes
+          fi

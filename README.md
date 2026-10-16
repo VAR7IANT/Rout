@@ -89,7 +89,7 @@ sh scripts/release.sh
 
 The integration suite uses local origins, test HTTP/SOCKS proxies and disposable credentials. It checks actual encrypted traffic for all five node protocols, both authenticated proxy exits, and TCP/UDP forwarding. A host that permits sing-box's Linux network interface discovery is required. `ROUT_SKIP_SINGBOX_RUNTIME=1` skips those runtime cases when the environment blocks netlink; configuration checks and GOST forwarding still run. Do not equate a skipped test with a successful protocol test.
 
-CI runs unit/race/static checks, verified-engine integration tests and cross-compilation on every push. Tagging `v0.1.0` publishes checksum-verified amd64/arm64 binaries **only after** those checks pass:
+CI runs unit/race/static checks, verified-engine integration tests, actual systemd lifecycle/rollback tests and cross-compilation on every push. A successful push to `main` publishes the compiled version as a release **only after** all checks pass. An existing release is preserved. Bump `Version` and the installer's default version for a new release. Explicit version tags are also supported and must match the compiled version:
 
 ```sh
 git tag v0.1.0
