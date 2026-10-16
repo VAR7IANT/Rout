@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-type App struct{ Home, BinDir, ServiceMode string }
+type App struct {
+	Home, BinDir, ServiceMode string
+	Language                  string
+}
 
 func DefaultApp() *App                     { return &App{Home: "/etc/rout", BinDir: "/opt/rout/bin", ServiceMode: "auto"} }
 func itoa(n int) string                    { return strconv.Itoa(n) }
@@ -75,6 +78,7 @@ func DecodeState(b []byte) (State, error) {
 	if e := json.Unmarshal(b, &s); e != nil {
 		return s, errors.New("配置 JSON 无效")
 	}
+	s = s.MigrateLegacyExits()
 	return s, s.Validate()
 }
 func (a *App) lock() (func(), error) {
@@ -100,7 +104,7 @@ func Find(s State, id string) (Profile, error) {
 	return Profile{}, errors.New("找不到线路 ID")
 }
 func replace(s State, p Profile) State {
-	out := State{Schema: s.Schema, Profiles: append([]Profile(nil), s.Profiles...)}
+	out := s.Clone()
 	for i := range out.Profiles {
 		if out.Profiles[i].ID == p.ID {
 			out.Profiles[i] = p
@@ -111,7 +115,8 @@ func replace(s State, p Profile) State {
 	return out
 }
 func removeProfile(s State, id string) State {
-	out := State{Schema: 1, Profiles: []Profile{}}
+	out := s.Clone()
+	out.Profiles = []Profile{}
 	for _, p := range s.Profiles {
 		if p.ID != id {
 			out.Profiles = append(out.Profiles, p)
@@ -141,6 +146,9 @@ func CheckAvailable(p Profile) error {
 }
 func (a *App) writeProfile(p Profile) error {
 	dir := a.profileDir(p.ID)
+	return writeProfileIn(p, dir)
+}
+func writeProfileIn(p Profile, dir string) error {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return e
 	}
@@ -165,6 +173,7 @@ func (a *App) writeProfile(p Profile) error {
 
 // Commit checks configuration first and rolls state, generated files and services back together.
 func (a *App) Commit(old, next State, force bool) error {
+	next = next.MigrateLegacyExits()
 	if e := next.Validate(); e != nil {
 		return e
 	}
@@ -180,18 +189,29 @@ func (a *App) Commit(old, next State, force bool) error {
 	if !reflect.DeepEqual(current, old) {
 		return errors.New("配置已被其他操作修改，请重新打开菜单")
 	}
-	if _, e = a.serviceManager(); e != nil {
-		return e
-	}
 	changed := map[string]bool{}
 	for _, p := range next.Profiles {
 		prev, err := Find(old, p.ID)
-		if force || err != nil || !reflect.DeepEqual(prev, p) {
+		if force || err != nil || !runtimeEqual(prev, p) {
 			changed[p.ID] = true
 		}
-		if p.Enabled && (err != nil || !prev.Enabled || p.Port != prev.Port || p.Listen != prev.Listen || !reflect.DeepEqual(p.Networks(), prev.Networks())) {
-			if e := CheckAvailable(p); e != nil {
-				return e
+		if p.Enabled {
+			for _, network := range p.Networks() {
+				owned := false
+				for _, active := range old.Profiles {
+					if active.Enabled && active.Port == p.Port && active.Listen == p.Listen && sharesNetwork(active.Networks(), []string{network}) {
+						if active.ID == p.ID {
+							owned = true
+						} else if after, er := Find(next, active.ID); er != nil || !after.Enabled {
+							owned = true
+						}
+					}
+				}
+				if !owned {
+					if e := checkNetworkAvailable(p, network); e != nil {
+						return e
+					}
+				}
 			}
 		}
 	}
@@ -200,44 +220,85 @@ func (a *App) Commit(old, next State, force bool) error {
 			changed[p.ID] = true
 		}
 	}
+	if len(changed) > 0 {
+		if _, e = a.serviceManager(); e != nil {
+			return e
+		}
+	}
 	for _, p := range next.Profiles {
 		if changed[p.ID] {
 			if e := p.Ready(); e != nil {
-				return e
+				return fmt.Errorf("%s (%s): %w", p.Name, p.Protocol, e)
 			}
 			if e := a.EnsureEngine(a.engineName(p)); e != nil {
 				return e
 			}
 		}
 	}
+	// Validate entirely in private staging paths. Invalid edits never touch live files/services.
+	stage, e := os.MkdirTemp(a.Home, ".staging-")
+	if e != nil {
+		return e
+	}
+	defer os.RemoveAll(stage)
+	for _, p := range next.Profiles {
+		if !changed[p.ID] {
+			continue
+		}
+		dir := filepath.Join(stage, p.ID)
+		if e = writeProfileIn(p, dir); e != nil {
+			return e
+		}
+		if p.Kind == "node" {
+			if e = a.checkConfig(filepath.Join(dir, "config.json")); e != nil {
+				return fmt.Errorf("%s (%s): %w", p.Name, p.Protocol, e)
+			}
+		}
+	}
 	oldBytes, _ := JSON(old)
-	if len(changed) > 0 {
+	if !reflect.DeepEqual(old, next) || force {
 		if e := AtomicWrite(filepath.Join(a.Home, "backups", time.Now().UTC().Format("20060102T150405.000000000")+".json"), oldBytes, 0600); e != nil {
 			return e
 		}
 	}
+	filesTouched := map[string]bool{}
+	servicesTouched := map[string]bool{}
 	rollback := func(cause error) error {
 		var failures []error
+		// Free ports held by newly-created services before recovering older services.
 		for _, p := range next.Profiles {
-			if !changed[p.ID] {
+			if _, err := Find(old, p.ID); err != nil && servicesTouched[p.ID] {
+				if er := a.removeService(p); er != nil {
+					failures = append(failures, er)
+				} else {
+					delete(servicesTouched, p.ID)
+				}
+			}
+		}
+		for _, p := range next.Profiles {
+			if !filesTouched[p.ID] && !servicesTouched[p.ID] {
 				continue
 			}
 			if prev, er := Find(old, p.ID); er == nil {
 				if er = a.writeProfile(prev); er != nil {
 					failures = append(failures, er)
 				}
-				if er = a.setService(prev, prev.Enabled); er != nil {
-					failures = append(failures, er)
+				if servicesTouched[p.ID] {
+					if er = a.setService(prev, prev.Enabled); er != nil {
+						failures = append(failures, er)
+					}
 				}
 			} else {
-				if er := a.removeService(p); er != nil {
-					failures = append(failures, er)
+				if servicesTouched[p.ID] {
+					if er := a.removeService(p); er != nil {
+						failures = append(failures, er)
+					}
 				}
 				os.RemoveAll(a.profileDir(p.ID))
 			}
 		}
 		for _, p := range old.Profiles {
-			if changed[p.ID] {
+			if servicesTouched[p.ID] {
 				if _, er := Find(next, p.ID); er != nil {
 					if er = a.writeProfile(p); er != nil {
 						failures = append(failures, er)
@@ -260,19 +321,22 @@ func (a *App) Commit(old, next State, force bool) error {
 		if !changed[p.ID] {
 			continue
 		}
+		filesTouched[p.ID] = true
 		if e := a.writeProfile(p); e != nil {
 			return rollback(e)
-		}
-		if p.Kind == "node" {
-			if e := a.checkConfig(filepath.Join(a.profileDir(p.ID), "config.json")); e != nil {
-				return rollback(e)
-			}
 		}
 	}
 	// Stop removed entries before enabling replacements that may reuse their ports.
 	for _, p := range old.Profiles {
-		if _, er := Find(next, p.ID); er != nil {
+		after, er := Find(next, p.ID)
+		if er != nil {
+			servicesTouched[p.ID] = true
 			if e := a.removeService(p); e != nil {
+				return rollback(e)
+			}
+		} else if p.Enabled && !after.Enabled {
+			servicesTouched[p.ID] = true
+			if e := a.setService(after, false); e != nil {
 				return rollback(e)
 			}
 		}
@@ -286,6 +350,10 @@ func (a *App) Commit(old, next State, force bool) error {
 	}
 	for _, p := range next.Profiles {
 		if changed[p.ID] {
+			if servicesTouched[p.ID] && !p.Enabled {
+				continue
+			}
+			servicesTouched[p.ID] = true
 			if e := a.setService(p, p.Enabled); e != nil {
 				return rollback(e)
 			}
@@ -299,6 +367,37 @@ func (a *App) Commit(old, next State, force bool) error {
 		}
 	}
 	return nil
+}
+
+func runtimeEqual(a, b Profile) bool {
+	a.Name = ""
+	b.Name = ""
+	a.PublicHost = ""
+	b.PublicHost = ""
+	a.PublicPort = 0
+	b.PublicPort = 0
+	a.NAT = false
+	b.NAT = false
+	a.ExitID = ""
+	b.ExitID = ""
+	a.TLSGenerated = false
+	b.TLSGenerated = false
+	return reflect.DeepEqual(a, b)
+}
+func checkNetworkAvailable(p Profile, network string) error {
+	addr := net.JoinHostPort(p.Listen, itoa(p.Port))
+	if network == "tcp" {
+		l, e := net.Listen("tcp", addr)
+		if e != nil {
+			return fmt.Errorf("TCP %d 不可用：%w", p.Port, e)
+		}
+		return l.Close()
+	}
+	l, e := net.ListenPacket("udp", addr)
+	if e != nil {
+		return fmt.Errorf("UDP %d 不可用：%w", p.Port, e)
+	}
+	return l.Close()
 }
 
 func (a *App) Backup(path string) error {

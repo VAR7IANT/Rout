@@ -81,11 +81,11 @@ func TestStatePortsAndCredentials(t *testing.T) {
 	}
 	q := fixture(t, "ss")
 	q.Port = p.Port
-	if e := (State{1, []Profile{p, q}}).Validate(); e == nil {
+	if e := (State{Schema: 1, Profiles: []Profile{p, q}}).Validate(); e == nil {
 		t.Fatal("missed conflict")
 	}
 	q.Enabled = false
-	if e := (State{1, []Profile{p, q}}).Validate(); e != nil {
+	if e := (State{Schema: 1, Profiles: []Profile{p, q}}).Validate(); e != nil {
 		t.Fatal(e)
 	}
 	p.PublicKey = "invalid"

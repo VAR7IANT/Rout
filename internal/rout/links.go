@@ -24,6 +24,9 @@ func URIOutbound(raw string) (M, error) {
 	}
 	u, _ := url.Parse(raw)
 	q := u.Query()
+	if q.Get("pinSHA256") != "" {
+		return nil, errors.New("带证书指纹的链接请使用支持指纹的 HY2 客户端，或导入可信证书配置")
+	}
 	port, _ := strconv.Atoi(u.Port())
 	out := M{"tag": "node", "server": u.Hostname(), "server_port": port}
 	scheme := u.Scheme

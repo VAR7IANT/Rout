@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +40,67 @@ func integrationApp(t *testing.T) *App {
 		}
 	}
 	return a
+}
+
+func TestIntegrationAutomaticHY2NativeURI(t *testing.T) {
+	if os.Getenv("ROUT_SKIP_SINGBOX_RUNTIME") == "1" {
+		t.Skip("runtime explicitly disabled")
+	}
+	binary := os.Getenv("ROUT_TEST_HYSTERIA")
+	if binary == "" {
+		t.Skip("set ROUT_TEST_HYSTERIA for native Hysteria URI and certificate-pin tests")
+	}
+	a := integrationApp(t)
+	u, out := testUI(a, "1\n127.0.0.1\n127.0.0.1\nAuto\n4\nn\ny\n1\nexample.test\n")
+	if e := u.create(); e != nil {
+		t.Fatalf("HY2 creation failed: %v %s", e, out.String())
+	}
+	state, e := a.Load()
+	if e != nil {
+		t.Fatal(e)
+	}
+	p := state.Profiles[0]
+	startEngine(t, a.enginePath("sing-box"), "run", "-c", filepath.Join(a.profileDir(p.ID), "config.json"))
+	hits := &atomic.Int32{}
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); fmt.Fprint(w, "198.51.100.19") }))
+	defer origin.Close()
+	uri, e := p.URI()
+	if e != nil {
+		t.Fatal(e)
+	}
+	port, _ := freePort()
+	conf := configFile(t, M{"server": uri, "socks5": M{"listen": net.JoinHostPort("127.0.0.1", itoa(port))}})
+	startEngine(t, binary, "client", "-c", conf)
+	if _, e = fetchIP("socks5://127.0.0.1:"+itoa(port), origin.URL); e != nil {
+		t.Fatalf("native HY2 URI request failed: %v", e)
+	}
+	// Reject a wrong pin. Never allow a client importer to silently discard pinSHA256.
+	bad, _ := url.Parse(uri)
+	q := bad.Query()
+	q.Set("pinSHA256", strings.Repeat("0", 64))
+	bad.RawQuery = q.Encode()
+	badPort, _ := freePort()
+	badConf := configFile(t, M{"server": bad.String(), "socks5": M{"listen": net.JoinHostPort("127.0.0.1", itoa(badPort))}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "client", "-c", badConf)
+	var log strings.Builder
+	cmd.Stdout = &log
+	cmd.Stderr = &log
+	if e = cmd.Start(); e != nil {
+		t.Fatal(e)
+	}
+	before := hits.Load()
+	err := cmd.Wait()
+	if err == nil {
+		t.Fatal("client with wrong certificate pin started successfully")
+	}
+	if hits.Load() != before {
+		t.Fatal("wrong pin reached origin")
+	}
+	if !strings.Contains(strings.ToLower(log.String()), "certificate") {
+		t.Fatalf("expected a certificate error: %s", log.String())
+	}
 }
 func tlsFixture(t *testing.T) (string, string, *httptest.Server) {
 	t.Helper()
@@ -480,6 +543,49 @@ func TestIntegrationServiceLifecycle(t *testing.T) {
 	if a.Running(p) != "运行中" {
 		t.Fatal("service did not start")
 	}
+	pid := func(node Profile) string {
+		b, e := runOutput(5*time.Second, "systemctl", "show", "--property=MainPID", "--value", serviceName(node)+".service")
+		if e != nil {
+			t.Fatal(e)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	firstPID := pid(p)
+	other := fixture(t, "ss")
+	other.Port, _ = freePort()
+	other.PublicPort = other.Port
+	old, _ = a.Load()
+	if e = a.Commit(old, replace(old, other), false); e != nil {
+		t.Fatal(e)
+	}
+	if pid(p) != firstPID {
+		t.Fatal("creating a node restarted an existing node")
+	}
+	otherPID := pid(other)
+	old, _ = a.Load()
+	metadata := p
+	metadata.Name = "Renamed"
+	metadata.PublicPort++
+	if e = a.Commit(old, replace(old, metadata), false); e != nil {
+		t.Fatal(e)
+	}
+	if pid(p) != firstPID || pid(other) != otherPID {
+		t.Fatal("metadata edit restarted a node")
+	}
+	old, _ = a.Load()
+	registry := UpsertExit(old, Exit{ID: RandomHex(6), Name: "Independent", Proxy: Proxy{"http", "192.0.2.1", 80, "u", "p"}})
+	if e = a.Commit(old, registry, false); e != nil {
+		t.Fatal(e)
+	}
+	if pid(p) != firstPID || pid(other) != otherPID {
+		t.Fatal("adding an independent exit restarted nodes")
+	}
+	if e = a.Restart(p.ID); e != nil {
+		t.Fatal(e)
+	}
+	if pid(p) == firstPID || pid(other) != otherPID {
+		t.Fatal("restart affected the wrong nodes")
+	}
 	hits := &atomic.Int32{}
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); fmt.Fprint(w, "198.51.100.19") }))
 	defer origin.Close()
@@ -493,6 +599,9 @@ func TestIntegrationServiceLifecycle(t *testing.T) {
 	}
 	if e = request(); e != nil {
 		t.Fatal(e)
+	}
+	if pid(other) != otherPID {
+		t.Fatal("rollback restarted an unrelated node")
 	}
 	// Verify live fail-closed behavior with an unavailable proxy endpoint.
 	old, _ = a.Load()
@@ -535,6 +644,9 @@ func TestIntegrationServiceLifecycle(t *testing.T) {
 	}
 	if e = request(); e != nil {
 		t.Fatal(e)
+	}
+	if pid(other) != otherPID {
+		t.Fatal("startup rollback restarted an unrelated node")
 	}
 	for _, enabled := range []bool{false, true} {
 		old, _ = a.Load()

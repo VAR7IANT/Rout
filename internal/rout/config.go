@@ -48,6 +48,9 @@ func serverConfig(p Profile, dir string) (M, error) {
 		in["type"] = "shadowsocks"
 		in["method"] = p.Method
 		in["password"] = p.Password
+		if p.Network != "" {
+			in["network"] = p.Network
+		}
 	case "hy2", "tuic":
 		in["tls"] = M{"enabled": true, "server_name": p.SNI, "certificate_path": filepath.Join(dir, "tls.crt"), "key_path": filepath.Join(dir, "tls.key")}
 		if p.Protocol == "hy2" {

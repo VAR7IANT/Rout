@@ -109,7 +109,7 @@ func (a *App) EnsureEngine(name string) error {
 		return e
 	}
 	defer os.RemoveAll(tmp)
-	fmt.Printf("下载并校验 %s %s…\n", name, engines()[name].Version)
+	a.printf("下载并校验 %s %s…\n", name, engines()[name].Version)
 	archive := filepath.Join(tmp, "engine.tar.gz")
 	if e := download(asset.URL, archive, asset.SHA256); e != nil {
 		return e
@@ -166,7 +166,11 @@ func (a *App) checkConfig(path string) error {
 	return nil
 }
 
-func SelfUpdate() error {
+func SelfUpdate(language ...string) error {
+	a := DefaultApp()
+	if len(language) > 0 {
+		a.Language = language[0]
+	}
 	r, e := httpClient().Get("https://api.github.com/repos/VAR7IANT/Rout/releases/latest")
 	if e != nil {
 		return errors.New("无法查询更新")
@@ -186,7 +190,7 @@ func SelfUpdate() error {
 		return e
 	}
 	if release.Tag == "v"+Version {
-		fmt.Println("已是当前发布版本")
+		a.say("已是当前发布版本")
 		return nil
 	}
 	name := "rout-linux-" + runtime.GOARCH
@@ -245,6 +249,6 @@ func SelfUpdate() error {
 	if e = os.Rename(p, exe); e != nil {
 		return e
 	}
-	fmt.Println("已更新为 " + release.Tag + "，请重新运行 rout；现有服务继续运行")
+	a.printf("已更新为 %s，请重新运行 rout；现有服务继续运行\n", release.Tag)
 	return nil
 }

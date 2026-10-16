@@ -9,14 +9,26 @@ import (
 	"path/filepath"
 )
 
-func Run(args []string) error {
+func Run(args []string) (result error) {
 	a := DefaultApp()
+	defer func() { result = FormatError(a.Language, result) }()
+	var language string
 	flags := flag.NewFlagSet("rout", flag.ContinueOnError)
 	flags.StringVar(&a.Home, "home", a.Home, "configuration directory")
 	flags.StringVar(&a.BinDir, "bin-dir", a.BinDir, "engine directory")
 	flags.StringVar(&a.ServiceMode, "service", "auto", "auto or none (test-only)")
+	flags.StringVar(&language, "lang", "", "en or zh-CN (override saved language)")
 	if e := flags.Parse(args); e != nil {
+		if errors.Is(e, flag.ErrHelp) {
+			return nil
+		}
 		return e
+	}
+	if language != "" {
+		if language != "en" && language != "zh-CN" {
+			return errors.New("语言设置无效")
+		}
+		a.Language = language
 	}
 	args = flags.Args()
 	cmd := "menu"
@@ -28,7 +40,7 @@ func Run(args []string) error {
 		return nil
 	}
 	if cmd == "help" {
-		fmt.Println("rout [--home DIR --bin-dir DIR --service auto|none] [menu|list|status|test ID|export ID [FILE]|on ID|off ID|delete ID|apply|backup FILE|restore FILE|engines|update|uninstall]")
+		fmt.Println("rout [--lang en|zh-CN --home DIR --bin-dir DIR --service auto|none] [menu|list|status|test ID|copy ID|export ID [FILE]|restart ID|on ID|off ID|delete ID|exits|settings|apply|backup FILE|restore FILE|engines|update|uninstall]")
 		return nil
 	}
 	var e error
@@ -43,7 +55,18 @@ func Run(args []string) error {
 	if a.Home == "/" || a.BinDir == "/" || a.Home == a.BinDir {
 		return errors.New("配置和内核目录必须是独立专用目录")
 	}
-	readOnly := cmd == "list" || cmd == "status" || cmd == "export"
+	settings, e := a.LoadSettings()
+	if e != nil {
+		return e
+	}
+	a.Language = settings.Language
+	if language != "" {
+		if language != "en" && language != "zh-CN" {
+			return errors.New("语言设置无效")
+		}
+		a.Language = language
+	}
+	readOnly := cmd == "list" || cmd == "status" || cmd == "export" || cmd == "copy"
 	if os.Geteuid() != 0 && a.ServiceMode != "none" && !readOnly {
 		return errors.New("请使用 sudo rout 或 root 运行")
 	}
@@ -51,8 +74,20 @@ func Run(args []string) error {
 	if cmd == "menu" {
 		return u.menu()
 	}
+	if cmd == "exits" {
+		if e := u.initLanguage(false); e != nil {
+			return e
+		}
+		return u.exits()
+	}
+	if cmd == "settings" {
+		if e := u.initLanguage(false); e != nil {
+			return e
+		}
+		return u.settings()
+	}
 	if cmd == "update" {
-		return SelfUpdate()
+		return SelfUpdate(a.Language)
 	}
 	if cmd == "engines" {
 		for _, name := range []string{"sing-box", "gost"} {
@@ -101,6 +136,10 @@ func Run(args []string) error {
 		return e
 	}
 	switch cmd {
+	case "restart":
+		return a.Restart(p.ID)
+	case "copy":
+		return u.copy(p)
 	case "test":
 		return a.Probe(p)
 	case "export":
@@ -127,7 +166,7 @@ func Run(args []string) error {
 		p.Enabled = cmd == "on"
 		return a.Commit(s, replace(s, p), false)
 	case "delete":
-		if !u.yes("删除 "+p.Name, false) {
+		if !u.yes(fmt.Sprintf(a.T("删除 %s"), p.Name), false) {
 			return u.err
 		}
 		return a.Commit(s, removeProfile(s, p.ID), false)
@@ -167,6 +206,6 @@ func (a *App) Uninstall() error {
 			return e
 		}
 	}
-	fmt.Println("Rout 已卸载")
+	a.say("Rout 已卸载")
 	return nil
 }

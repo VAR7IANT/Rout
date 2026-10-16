@@ -132,10 +132,10 @@ func (a *App) removeService(p Profile) error {
 func (a *App) Running(p Profile) string {
 	m, e := a.serviceManager()
 	if e != nil {
-		return "未知"
+		return a.T("未知")
 	}
 	if m == "none" {
-		return "未托管（测试模式）"
+		return a.T("未托管（测试模式）")
 	}
 	var er error
 	if m == "systemd" {
@@ -144,9 +144,37 @@ func (a *App) Running(p Profile) string {
 		_, er = runOutput(5*time.Second, "rc-service", serviceName(p), "status")
 	}
 	if er != nil {
-		return "未运行"
+		return a.T("未运行")
 	}
-	return "运行中"
+	return a.T("运行中")
+}
+
+func (a *App) Restart(id string) error {
+	unlock, e := a.lock()
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	s, e := a.Load()
+	if e != nil {
+		return e
+	}
+	p, e := Find(s, id)
+	if e != nil {
+		return e
+	}
+	if !p.Enabled {
+		return errors.New("线路未启用")
+	}
+	if e = p.Ready(); e != nil {
+		return e
+	}
+	if p.Kind == "node" {
+		if e = a.checkConfig(filepath.Join(a.profileDir(p.ID), "config.json")); e != nil {
+			return e
+		}
+	}
+	return a.setService(p, true)
 }
 func (a *App) Logs(p Profile) error {
 	m, e := a.serviceManager()

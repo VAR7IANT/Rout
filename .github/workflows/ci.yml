@@ -30,13 +30,16 @@ jobs:
         run: |
           go vet ./...
           go test -race ./...
-          sh -n install.sh scripts/release.sh
+          sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh
           test -z "$(gofmt -l cmd internal)"
       - name: Install pinned engines for integration tests
-        run: go run ./cmd/rout --home "$RUNNER_TEMP/rout-state" --bin-dir "$RUNNER_TEMP/rout-engines" --service none engines
+        run: |
+          go run ./cmd/rout --home "$RUNNER_TEMP/rout-state" --bin-dir "$RUNNER_TEMP/rout-engines" --service none engines
+          sh scripts/test-native-hy2.sh "$RUNNER_TEMP/hysteria"
       - name: Protocol, proxy authentication and TCP/UDP forwarding integration tests
         env:
           ROUT_TEST_ENGINES: ${{ runner.temp }}/rout-engines
+          ROUT_TEST_HYSTERIA: ${{ runner.temp }}/hysteria
         run: go test -race -count=1 -v ./internal/rout
       - name: Service lifecycle, startup rollback and failed-exit isolation
         run: |

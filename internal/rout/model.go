@@ -17,11 +17,12 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 type State struct {
 	Schema   int       `json:"schema"`
 	Profiles []Profile `json:"profiles"`
+	Exits    []Exit    `json:"exits,omitempty"`
 }
 
 type Proxy struct {
@@ -33,28 +34,31 @@ type Proxy struct {
 }
 
 type Profile struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Kind       string `json:"kind"`
-	Enabled    bool   `json:"enabled"`
-	Protocol   string `json:"protocol"`
-	Listen     string `json:"listen"`
-	Port       int    `json:"port"`
-	PublicHost string `json:"public_host"`
-	PublicPort int    `json:"public_port"`
-	NAT        bool   `json:"nat"`
-	SNI        string `json:"sni,omitempty"`
-	UUID       string `json:"uuid,omitempty"`
-	Password   string `json:"password,omitempty"`
-	PrivateKey string `json:"private_key,omitempty"`
-	PublicKey  string `json:"public_key,omitempty"`
-	ShortID    string `json:"short_id,omitempty"`
-	Method     string `json:"method,omitempty"`
-	CertPEM    string `json:"certificate_pem,omitempty"`
-	KeyPEM     string `json:"key_pem,omitempty"`
-	Target     string `json:"target,omitempty"`
-	TargetURI  string `json:"target_uri,omitempty"`
-	Outbound   *Proxy `json:"outbound,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	Enabled      bool   `json:"enabled"`
+	Protocol     string `json:"protocol"`
+	Listen       string `json:"listen"`
+	Port         int    `json:"port"`
+	PublicHost   string `json:"public_host"`
+	PublicPort   int    `json:"public_port"`
+	NAT          bool   `json:"nat"`
+	SNI          string `json:"sni,omitempty"`
+	UUID         string `json:"uuid,omitempty"`
+	Password     string `json:"password,omitempty"`
+	PrivateKey   string `json:"private_key,omitempty"`
+	PublicKey    string `json:"public_key,omitempty"`
+	ShortID      string `json:"short_id,omitempty"`
+	Method       string `json:"method,omitempty"`
+	CertPEM      string `json:"certificate_pem,omitempty"`
+	KeyPEM       string `json:"key_pem,omitempty"`
+	Target       string `json:"target,omitempty"`
+	TargetURI    string `json:"target_uri,omitempty"`
+	Outbound     *Proxy `json:"outbound,omitempty"`
+	ExitID       string `json:"exit_id,omitempty"`
+	Network      string `json:"network,omitempty"`
+	TLSGenerated bool   `json:"tls_generated,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
@@ -179,12 +183,18 @@ func (p Profile) Networks() []string {
 		return []string{"udp"}
 	}
 	if p.Protocol == "ss" {
+		if p.Network != "" {
+			return []string{p.Network}
+		}
 		return []string{"tcp", "udp"}
 	}
 	return []string{"tcp"}
 }
 
 func (p Profile) Validate() error {
+	if p.Network != "" && (p.Protocol != "ss" || (p.Network != "tcp" && p.Network != "udp")) {
+		return errors.New("节点网络限制无效")
+	}
 	if !idPattern.MatchString(p.ID) {
 		return errors.New("线路 ID 无效")
 	}
@@ -302,6 +312,9 @@ func (s State) Validate() error {
 	if s.Schema != 1 {
 		return errors.New("不支持的配置版本")
 	}
+	if e := s.validateExits(); e != nil {
+		return e
+	}
 	ids := map[string]bool{}
 	ports := map[string]string{}
 	for _, p := range s.Profiles {
@@ -418,6 +431,14 @@ func (p Profile) URI() (string, error) {
 		u.Scheme = "hysteria2"
 		u.User = url.User(p.Password)
 		q.Set("sni", p.SNI)
+		if p.TLSGenerated {
+			pin, e := CertificatePin(p.CertPEM)
+			if e != nil {
+				return "", e
+			}
+			q.Set("insecure", "1")
+			q.Set("pinSHA256", pin)
+		}
 	case "tuic":
 		u.Scheme = "tuic"
 		u.User = url.UserPassword(p.UUID, p.Password)

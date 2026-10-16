@@ -130,8 +130,8 @@ func (a *App) Probe(p Profile) error {
 	if !p.Enabled {
 		return errors.New("线路未启用")
 	}
-	fmt.Println("VPS 直连 IPv4：", DetectPublicIP())
-	fmt.Println("正在通过本地节点入口测试完整线路…")
+	a.printf("VPS 直连 IPv4：%s\n", DetectPublicIP())
+	a.say("正在通过本地节点入口测试完整线路…")
 	port, e := freePort()
 	if e != nil {
 		return e
@@ -152,17 +152,17 @@ func (a *App) Probe(p Profile) error {
 		if e != nil {
 			return e
 		}
-		fmt.Println("线路出口 IPv4：", ip)
+		a.printf("线路出口 IPv4：%s\n", ip)
 		ip6, e := fetchIP(proxy, "https://api6.ipify.org")
 		if e != nil {
-			fmt.Println("线路出口 IPv6：不可用（该项不影响 IPv4 结果）")
+			a.say("线路出口 IPv6：不可用（该项不影响 IPv4 结果）")
 		} else {
-			fmt.Println("线路出口 IPv6：", ip6)
+			a.printf("线路出口 IPv6：%s\n", ip6)
 		}
 		return nil
 	})
 	if e == nil {
-		fmt.Println("本地入口、协议握手与出口请求通过；公网端口仍需在外部客户端验证")
+		a.say("本地入口、协议握手与出口请求通过；公网端口仍需在外部客户端验证")
 	}
 	return e
 }
