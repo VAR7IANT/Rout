@@ -34,31 +34,32 @@ type Proxy struct {
 }
 
 type Profile struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Kind         string `json:"kind"`
-	Enabled      bool   `json:"enabled"`
-	Protocol     string `json:"protocol"`
-	Listen       string `json:"listen"`
-	Port         int    `json:"port"`
-	PublicHost   string `json:"public_host"`
-	PublicPort   int    `json:"public_port"`
-	NAT          bool   `json:"nat"`
-	SNI          string `json:"sni,omitempty"`
-	UUID         string `json:"uuid,omitempty"`
-	Password     string `json:"password,omitempty"`
-	PrivateKey   string `json:"private_key,omitempty"`
-	PublicKey    string `json:"public_key,omitempty"`
-	ShortID      string `json:"short_id,omitempty"`
-	Method       string `json:"method,omitempty"`
-	CertPEM      string `json:"certificate_pem,omitempty"`
-	KeyPEM       string `json:"key_pem,omitempty"`
-	Target       string `json:"target,omitempty"`
-	TargetURI    string `json:"target_uri,omitempty"`
-	Outbound     *Proxy `json:"outbound,omitempty"`
-	ExitID       string `json:"exit_id,omitempty"`
-	Network      string `json:"network,omitempty"`
-	TLSGenerated bool   `json:"tls_generated,omitempty"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Kind         string         `json:"kind"`
+	Enabled      bool           `json:"enabled"`
+	Protocol     string         `json:"protocol"`
+	Listen       string         `json:"listen"`
+	Port         int            `json:"port"`
+	PublicHost   string         `json:"public_host"`
+	PublicPort   int            `json:"public_port"`
+	NAT          bool           `json:"nat"`
+	SNI          string         `json:"sni,omitempty"`
+	UUID         string         `json:"uuid,omitempty"`
+	Password     string         `json:"password,omitempty"`
+	PrivateKey   string         `json:"private_key,omitempty"`
+	PublicKey    string         `json:"public_key,omitempty"`
+	ShortID      string         `json:"short_id,omitempty"`
+	Method       string         `json:"method,omitempty"`
+	CertPEM      string         `json:"certificate_pem,omitempty"`
+	KeyPEM       string         `json:"key_pem,omitempty"`
+	Target       string         `json:"target,omitempty"`
+	TargetURI    string         `json:"target_uri,omitempty"`
+	Outbound     *Proxy         `json:"outbound,omitempty"`
+	ExitID       string         `json:"exit_id,omitempty"`
+	Network      string         `json:"network,omitempty"`
+	TLSGenerated bool           `json:"tls_generated,omitempty"`
+	Traffic      *TrafficPolicy `json:"traffic,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
@@ -192,6 +193,11 @@ func (p Profile) Networks() []string {
 }
 
 func (p Profile) Validate() error {
+	if p.Traffic != nil {
+		if e := p.Traffic.Validate(); e != nil {
+			return e
+		}
+	}
 	if p.Network != "" && (p.Protocol != "ss" || (p.Network != "tcp" && p.Network != "udp")) {
 		return errors.New("节点网络限制无效")
 	}
@@ -309,7 +315,7 @@ func (p Profile) Ready() error {
 }
 
 func (s State) Validate() error {
-	if s.Schema != 1 {
+	if s.Schema != 1 && s.Schema != 2 {
 		return errors.New("不支持的配置版本")
 	}
 	if e := s.validateExits(); e != nil {
@@ -318,6 +324,9 @@ func (s State) Validate() error {
 	ids := map[string]bool{}
 	ports := map[string]string{}
 	for _, p := range s.Profiles {
+		if p.trafficPolicy().LimitBytes > 0 && s.Schema != 2 {
+			return errors.New("有限额配置必须使用保护版本，不能降级绕过限额")
+		}
 		if e := p.Validate(); e != nil {
 			return fmt.Errorf("%s: %w", p.Name, e)
 		}

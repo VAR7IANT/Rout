@@ -2,11 +2,15 @@ package rout
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 )
 
 func Run(args []string) (result error) {
@@ -71,7 +75,61 @@ func Run(args []string) (result error) {
 		return errors.New("请使用 sudo rout 或 root 运行")
 	}
 	u := &UI{a: a, in: bufio.NewReader(os.Stdin)}
+	if cmd == "traffic" {
+		if len(args) < 2 {
+			s, e := a.Load()
+			if e != nil {
+				return e
+			}
+			for _, p := range s.Profiles {
+				if e = u.showTraffic(p); e != nil {
+					return e
+				}
+			}
+			return nil
+		}
+		switch args[1] {
+		case "install":
+			return a.InstallTraffic()
+		case "run":
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			return a.RunTraffic(ctx)
+		case "sync":
+			return a.TrafficSync(time.Now(), false)
+		case "guard":
+			if len(args) != 3 {
+				return errors.New("命令需要线路 ID，请运行 rout list")
+			}
+			return a.TrafficGuard(args[2])
+		case "show", "manage":
+			if len(args) != 3 {
+				return errors.New("命令需要线路 ID，请运行 rout list")
+			}
+			s, e := a.Load()
+			if e != nil {
+				return e
+			}
+			p, e := Find(s, args[2])
+			if e != nil {
+				return e
+			}
+			if args[1] == "show" {
+				return u.showTraffic(p)
+			}
+			if e = u.initLanguage(false); e != nil {
+				return e
+			}
+			return u.trafficManage(p)
+		}
+		return errors.New("用法：rout traffic [install|show ID|manage ID]")
+	}
 	if cmd == "menu" {
+		if a.ServiceMode != "none" && !a.trafficActive() {
+			if e = a.InstallTraffic(); e != nil {
+				a.say(a.Error(e))
+			}
+		}
 		return u.menu()
 	}
 	if cmd == "exits" {

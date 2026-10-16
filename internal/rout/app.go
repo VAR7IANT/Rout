@@ -16,6 +16,8 @@ import (
 type App struct {
 	Home, BinDir, ServiceMode string
 	Language                  string
+	trafficMeter              TrafficMeter
+	trafficStop               func(Profile) error
 }
 
 func DefaultApp() *App                     { return &App{Home: "/etc/rout", BinDir: "/opt/rout/bin", ServiceMode: "auto"} }
@@ -173,6 +175,16 @@ func writeProfileIn(p Profile, dir string) error {
 
 // Commit checks configuration first and rolls state, generated files and services back together.
 func (a *App) Commit(old, next State, force bool) error {
+	next = next.Clone()
+	// Ordinary edits, apply and old backups cannot silently cancel a quota.
+	for i, p := range next.Profiles {
+		if prev, er := Find(old, p.ID); er == nil {
+			next.Profiles[i].Traffic = prev.Traffic
+		}
+	}
+	if old.Schema == 2 {
+		next.Schema = 2
+	}
 	next = next.MigrateLegacyExits()
 	if e := next.Validate(); e != nil {
 		return e
@@ -191,6 +203,9 @@ func (a *App) Commit(old, next State, force bool) error {
 	}
 	changed := map[string]bool{}
 	for _, p := range next.Profiles {
+		if p.trafficPolicy().LimitBytes > 0 && !a.trafficActive() {
+			return errors.New("请先运行 rout traffic install，未启用流量监控")
+		}
 		prev, err := Find(old, p.ID)
 		if force || err != nil || !runtimeEqual(prev, p) {
 			changed[p.ID] = true
@@ -312,6 +327,11 @@ func (a *App) Commit(old, next State, force bool) error {
 		if er := AtomicWrite(filepath.Join(a.Home, "state.json"), oldBytes, 0600); er != nil {
 			failures = append(failures, er)
 		}
+		if a.trafficActive() {
+			if er := a.syncTraffic(old, time.Now(), false); er != nil {
+				failures = append(failures, er)
+			}
+		}
 		if len(failures) > 0 {
 			return fmt.Errorf("操作失败：%w；恢复时还有错误：%v，请检查 rout status", cause, failures)
 		}
@@ -348,6 +368,11 @@ func (a *App) Commit(old, next State, force bool) error {
 	if e = AtomicWrite(filepath.Join(a.Home, "state.json"), b, 0600); e != nil {
 		return rollback(e)
 	}
+	if a.trafficActive() {
+		if e = a.syncTraffic(next, time.Now(), false); e != nil {
+			return rollback(e)
+		}
+	}
 	for _, p := range next.Profiles {
 		if changed[p.ID] {
 			if servicesTouched[p.ID] && !p.Enabled {
@@ -361,6 +386,11 @@ func (a *App) Commit(old, next State, force bool) error {
 	}
 	for _, p := range old.Profiles {
 		if _, er := Find(next, p.ID); er != nil {
+			if a.trafficActive() {
+				if e = a.removeTraffic(p); e != nil {
+					return e
+				}
+			}
 			if e := os.RemoveAll(a.profileDir(p.ID)); e != nil {
 				return e
 			}
@@ -370,6 +400,8 @@ func (a *App) Commit(old, next State, force bool) error {
 }
 
 func runtimeEqual(a, b Profile) bool {
+	a.Traffic = nil
+	b.Traffic = nil
 	a.Name = ""
 	b.Name = ""
 	a.PublicHost = ""
@@ -423,6 +455,13 @@ func (a *App) Restore(path string) error {
 	old, e := a.Load()
 	if e != nil {
 		return e
+	}
+	for _, p := range old.Profiles {
+		if p.trafficPolicy().LimitBytes > 0 {
+			if _, er := Find(next, p.ID); er != nil {
+				return errors.New("备份缺少有限额节点，请先显式取消限额或删除节点")
+			}
+		}
 	}
 	return a.Commit(old, next, true)
 }

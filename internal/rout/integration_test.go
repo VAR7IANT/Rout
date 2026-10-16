@@ -319,6 +319,9 @@ func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
 	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
 		for _, mode := range []string{"direct", "socks5", "http"} {
 			t.Run(protocol+"/"+mode, func(t *testing.T) {
+				isolated := *a
+				isolated.Home = t.TempDir()
+				a := &isolated
 				p := fixture(t, protocol)
 				p.Port, _ = freePort()
 				p.PublicHost = "127.0.0.1"
@@ -336,6 +339,7 @@ func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
 				if e := p.Validate(); e != nil {
 					t.Fatal(e)
 				}
+				attachProtocolMeter(t, a, p)
 				if e := a.writeProfile(p); e != nil {
 					t.Fatal(e)
 				}
@@ -369,7 +373,7 @@ func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
 					if ip != "198.51.100.19" {
 						return fmt.Errorf("unexpected response")
 					}
-					return nil
+					return assertProtocolQuota(t, a, p, proxy, endpoint)
 				})
 				if e != nil {
 					t.Fatal(e)

@@ -41,6 +41,16 @@ func (a *App) setService(p Profile, enabled bool) error {
 	if e != nil || m == "none" {
 		return e
 	}
+	if enabled && p.trafficPolicy().LimitBytes > 0 {
+		db, er := a.loadTraffic()
+		if er != nil {
+			return er
+		}
+		r, ok := db.Records[p.ID]
+		if !ok || r.Blocked != "" || r.Pending {
+			enabled = false
+		}
+	}
 	name := serviceName(p)
 	engine := a.enginePath(a.engineName(p))
 	conf := filepath.Join(a.profileDir(p.ID), "config.json")
@@ -54,6 +64,10 @@ func (a *App) setService(p Profile, enabled bool) error {
 			quoted = append(quoted, unitQuote(arg))
 		}
 		unit := "[Unit]\nDescription=Rout " + p.ID + "\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=" + strings.Join(quoted, " ") + "\nRestart=on-failure\nRestartSec=3\nLimitNOFILE=65536\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\n\n[Install]\nWantedBy=multi-user.target\n"
+		if guard := a.trafficGuardCommand(p, unitQuote); guard != "" {
+			unit = strings.Replace(unit, "After=network-online.target", "Requires="+a.trafficService()+".service\nAfter="+a.trafficService()+".service network-online.target", 1)
+			unit = strings.Replace(unit, "ExecStart=", "ExecStartPre="+guard+"\nExecStart=", 1)
+		}
 		if e = AtomicWrite(filepath.Join("/etc/systemd/system", name+".service"), []byte(unit), 0644); e != nil {
 			return e
 		}
@@ -80,6 +94,10 @@ func (a *App) setService(p Profile, enabled bool) error {
 	}
 	argstr := strings.Join(quoted, " ")
 	script := "#!/sbin/openrc-run\nname=" + shellQuote(name) + "\nsupervisor=supervise-daemon\ncommand=" + shellQuote(engine) + "\ncommand_args=" + shellQuote(argstr) + "\nrespawn_delay=3\nrespawn_max=5\noutput_log=" + shellQuote("/var/log/"+name+".log") + "\nerror_log=" + shellQuote("/var/log/"+name+".log") + "\npidfile=" + shellQuote("/run/"+name+".pid") + "\n\ndepend() { need net; }\nstart_pre() { umask 077; touch \"$output_log\"; chmod 600 \"$output_log\"; }\n"
+	if guard := a.trafficGuardCommand(p, shellQuote); guard != "" {
+		script = strings.Replace(script, "need net;", "need net "+a.trafficService()+";", 1)
+		script = strings.Replace(script, "start_pre() {", "start_pre() { "+guard+" || return 1;", 1)
+	}
 	if e = AtomicWrite(filepath.Join("/etc/init.d", name), []byte(script), 0755); e != nil {
 		return e
 	}
@@ -165,6 +183,9 @@ func (a *App) Restart(id string) error {
 	}
 	if !p.Enabled {
 		return errors.New("线路未启用")
+	}
+	if e = a.TrafficGuard(p.ID); e != nil {
+		return e
 	}
 	if e = p.Ready(); e != nil {
 		return e

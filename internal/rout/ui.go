@@ -730,7 +730,7 @@ func (u *UI) manage() error {
 	if e != nil || p.ID == "" {
 		return e
 	}
-	v := u.choose("1.修改名称  2.修改端口或地址  3.选择出口  4.启用或停用  5.日志  6.删除  7.复制或导出链接  8.测试  9.重置凭据  10.更新证书  11.重启  0.返回", []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}, "0")
+	v := u.choose("1.修改名称  2.修改端口或地址  3.选择出口  4.启用或停用  5.日志  6.删除  7.复制或导出链接  8.测试  9.重置凭据  10.更新证书  11.重启  12.流量管理  0.返回", []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}, "0")
 	if u.err != nil {
 		return u.err
 	}
@@ -793,6 +793,8 @@ func (u *UI) manage() error {
 		p.TLSGenerated = false
 	case "11":
 		return u.a.Restart(p.ID)
+	case "12":
+		return u.trafficManage(p)
 	}
 	if u.err != nil {
 		return u.err
