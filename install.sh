@@ -3,7 +3,7 @@ set -eu
 umask 077
 
 REPO=VAR7IANT/Rout
-VERSION=${ROUT_VERSION:-v0.2.0}
+VERSION=${ROUT_VERSION:-v0.2.1}
 DEST=${ROUT_INSTALL_DIR:-/usr/local/bin}
 
 fail() { printf '%s\n' "错误 / Error: $*" >&2; exit 1; }
@@ -37,4 +37,14 @@ trap 'rm -rf "$TMP"; rm -f "$STAGED"' EXIT HUP INT TERM
 cp "$TMP/$ASSET" "$STAGED"
 chmod 755 "$STAGED"
 mv -f "$STAGED" "$DEST/rout"
+if [ "$DEST" = /usr/local/bin ] && [ "${ROUT_SETUP_TRAFFIC:-1}" = 1 ]; then
+    if ! command -v nft >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then apk add --no-cache nftables
+        elif command -v apt-get >/dev/null 2>&1; then apt-get update; apt-get install -y nftables
+        fi
+    fi
+    if ! "$DEST/rout" traffic install; then
+        printf '%s\n' '流量统计尚未启用；现有无限额节点继续运行。修复 nftables 后运行 rout traffic install / Traffic monitoring unavailable; unlimited nodes keep running. Fix nftables and run rout traffic install' >&2
+    fi
+fi
 printf '%s\n' '安装完成 / Installed. Run rout to select 简体中文 or English' '首次创建时自动校验所需内核 / Required engines are downloaded and verified on first use'

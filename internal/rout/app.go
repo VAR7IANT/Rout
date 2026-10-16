@@ -400,6 +400,8 @@ func (a *App) Commit(old, next State, force bool) error {
 }
 
 func runtimeEqual(a, b Profile) bool {
+	a.CreatedAt = nil
+	b.CreatedAt = nil
 	a.Traffic = nil
 	b.Traffic = nil
 	a.Name = ""

@@ -12,7 +12,7 @@ sudo sh /tmp/rout-install.sh
 sudo rout
 ```
 
-On Alpine or when already logged in as root, omit `sudo`. The installer downloads a release binary and checks SHA256 before replacing the executable. It does not create a node or change routing until you open the menu. The current installer targets `v0.2.0`; see [release instructions](#development-and-releases). Existing installations can run `sudo rout update`; updating the manager alone does not restart existing nodes.
+On Alpine or when already logged in as root, omit `sudo`. The installer downloads a release binary and checks SHA256 before replacing the executable. The current installer targets `v0.2.1`; see [release instructions](#development-and-releases). It also installs `nftables` and enables lightweight accounting for the default installation directory. This attaches private listener counters without restarting existing nodes or changing their unlimited default. It does not create a node, enable a finite quota, or change the default route. Restricted hosts can keep proxy features but must not assume statistics/quotas are available. Existing installations can run `sudo rout update`, then `sudo rout traffic install`; read [upgrade and rollback safety](docs/UPGRADING.md).
 
 ## Three workflows
 
@@ -55,10 +55,22 @@ The selected listen port must also be allowed by the VPS/provider firewall. Rout
 
 ## Management
 
+### Traffic management (v0.2.1)
+
+All nodes default to **unlimited**, including upgraded nodes. Monitoring counts upload and download separately and charges their sum, using decimal MB/GB/TB. Node Management -> Traffic management shows exact known bytes, quota/percentage, manual and quota-pause state, billing window and next reset. Limits are opt-in and per node; existing monthly usage is not ignored when enabling one. Legacy pre-monitoring history is unavailable and explicitly marked incomplete.
+
+The kernel nftables gate cuts off new and existing entry traffic when a finite quota is exhausted; the monitor then stops only that node's service. Per-node billing defaults to day 1/server-local timezone, with days 1–31 and IANA timezones supported. A new cycle restores quota-paused nodes, never manually paused ones. Manual clearing requires two confirmations. Unknown usage after kernel loss or corrupted state protects finite nodes instead of silently issuing a fresh allowance; unlimited nodes are never fault-stopped.
+
+This meters encrypted **client-facing L3 admission bytes**, not application payload, both physical proxy legs, or the VPS provider invoice. Provider bills can differ. See the full [measurement, precision, persistence, fault and test boundaries](docs/TRAFFIC.md), [configuration/upgrade guide](docs/UPGRADING.md) and [changelog](CHANGELOG.md). nftables/CAP_NET_ADMIN are required for accounting and quotas; there is no unverified sing-box statistics API fallback.
+
 ```sh
 rout                         # Bilingual menu; saved language
 rout --lang en               # English for this run
 rout settings                # Language and server defaults
+rout traffic install         # Install/start lightweight accounting, no existing-node restart
+rout traffic                 # All node usage and protection state
+rout traffic show ID
+rout traffic manage ID       # Limits, billing day/timezone, reset, manual pause/resume
 rout exits                   # Add/test/edit/delete/bind independent exits
 rout list                    # All nodes: status, ports, exit and complete URI
 rout status
@@ -86,7 +98,7 @@ Changes are locked against concurrent writers. Configuration and certificate val
 
 ### Compatibility and migration
 
-Schema 1 and all node IDs, ports, keys, credentials, certificate contents and service names are retained. Legacy per-node `outbound` proxies are deduplicated into reusable exits **in memory on read**, using stable IDs. Merely upgrading, opening menus or changing language does not rewrite/restart existing nodes. The next successful state-changing operation saves the registry; the original outbound values are mirrored on each node so older Rout versions can still understand its runtime exit. Existing backups remain loadable. Backups include the exit registry but not machine-local language/default settings.
+All node IDs, ports, keys, credentials, certificate contents and service names are retained. Unlimited-only configurations remain schema 1. Enabling a finite quota deliberately seals schema 2 so an old manager cannot ignore limits and rewrite unguarded services; see the rollback guide. Legacy per-node `outbound` proxies are deduplicated into reusable exits **in memory on read**, using stable IDs. Merely updating the manager or changing language does not restart existing nodes. The next successful state-changing operation saves the registry; outbound values are still mirrored for compatibility. Existing backups remain loadable without resetting current usage or silently cancelling an existing quota. Backups include the exit registry/limit configuration but not live traffic snapshots or machine-local language/default settings.
 
 Engine versions are locked in `internal/rout/engines.lock.json`: sing-box v1.14.3 and GOST v3.3.0, with per-architecture SHA256 values. Engines are downloaded on demand. Manager updates do not restart active services; after updating, use `rout apply` when ready to validate and switch existing services to the manager's pinned engines. Keep a backup for version rollback.
 
@@ -106,7 +118,7 @@ ROUT_TEST_ENGINES=/tmp/rout-engines go test -race -count=1 -v ./internal/rout
 sh scripts/release.sh
 ```
 
-The integration suite uses local origins, test HTTP/SOCKS proxies and disposable credentials. It checks actual encrypted traffic for all five node protocols, both authenticated proxy exits, TCP/UDP forwarding, UI-driven HY2 generation, native Hysteria URI import, and rejection of a wrong certificate pin. Native-client tests use a separately checksum-pinned test binary, never installed by Rout:
+The integration suite uses local origins, test HTTP/SOCKS proxies and disposable credentials. It checks actual encrypted traffic for all five node protocols, both authenticated proxy exits, TCP/UDP forwarding, UI-driven HY2 generation, native Hysteria URI import, and rejection of a wrong certificate pin. CI additionally runs real kernel accounting/quota tests in a disposable network namespace, killed-monitor/lease tests and root/systemd guarded lifecycle tests. Native-client tests use a separately checksum-pinned test binary, never installed by Rout:
 
 ```sh
 sh scripts/test-native-hy2.sh /tmp/hysteria
@@ -118,8 +130,8 @@ A host permitting sing-box's Linux network discovery is required. `ROUT_SKIP_SIN
 CI runs unit/race/static checks, verified-engine integration tests, actual systemd lifecycle/rollback tests and cross-compilation on every push. A successful push to `main` publishes the compiled version as a release **only after** all checks pass. An existing release is preserved. Bump `Version` and the installer's default version for a new release. Explicit version tags are also supported and must match the compiled version:
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 The `--service none` flag is for development: it saves generated configuration but intentionally does not start services. It must not be used as a production deployment mode.

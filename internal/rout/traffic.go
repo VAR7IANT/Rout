@@ -129,9 +129,16 @@ func (r TrafficRecord) totals() (uint64, uint64, uint64, error) {
 }
 
 type TrafficState struct {
-	Version int                      `json:"version"`
-	Records map[string]TrafficRecord `json:"records"`
-	Updated time.Time                `json:"updated"`
+	Version  int                      `json:"version"`
+	Records  map[string]TrafficRecord `json:"records"`
+	Updated  time.Time                `json:"updated"`
+	Checksum string                   `json:"checksum,omitempty"`
+}
+
+func trafficChecksum(s TrafficState) string {
+	s.Checksum = ""
+	b, _ := json.Marshal(s)
+	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 
 func (a *App) loadTraffic() (TrafficState, error) {
@@ -152,6 +159,9 @@ func (a *App) loadTraffic() (TrafficState, error) {
 	if s.Version != 1 || s.Records == nil || decoder.Decode(new(any)) != io.EOF {
 		return s, errors.New("流量状态损坏，有限额节点保持保护暂停")
 	}
+	if s.Checksum != trafficChecksum(s) {
+		return s, errors.New("流量状态损坏，有限额节点保持保护暂停")
+	}
 	for id, r := range s.Records {
 		if !idPattern.MatchString(id) || r.Next.IsZero() || !r.Next.After(r.Start) {
 			return s, errors.New("流量状态损坏，有限额节点保持保护暂停")
@@ -163,6 +173,7 @@ func (a *App) loadTraffic() (TrafficState, error) {
 	return s, nil
 }
 func (a *App) saveTraffic(s TrafficState) error {
+	s.Checksum = trafficChecksum(s)
 	b, e := JSON(s)
 	if e != nil {
 		return e
@@ -189,7 +200,7 @@ func trafficSchedule(p TrafficPolicy, now time.Time) string {
 }
 func newTrafficRecord(p Profile, now time.Time, boot string) TrafficRecord {
 	s, n := trafficWindow(now, p.trafficPolicy())
-	return TrafficRecord{Start: s, Next: n, Seen: now, Observed: now, Boot: boot, Schedule: trafficSchedule(p.trafficPolicy(), now)}
+	return TrafficRecord{Start: s, Next: n, Seen: now, Observed: now, Boot: boot, Schedule: trafficSchedule(p.trafficPolicy(), now), Incomplete: p.CreatedAt == nil}
 }
 func (r *TrafficRecord) reset(now time.Time, p TrafficPolicy, manual bool) {
 	r.BaseUp = r.RawUp
@@ -333,7 +344,11 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error 
 		oldBlocked := r.Blocked
 		rollover := r.advance(now, policy)
 		shapeChanged := r.Shape != trafficShape(p)
-		rebuild := !healthy || shapeChanged || (rollover && limited)
+		quotaNew := limited && r.Consumed >= policy.LimitBytes && r.Blocked != "quota"
+		if quotaNew {
+			r.Blocked = "quota"
+		}
+		rebuild := !healthy || shapeChanged || (rollover && limited) || quotaNew
 		if shutdown && limited {
 			r.Blocked = "fault"
 			rebuild = true
@@ -434,10 +449,7 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error 
 func (a *App) TrafficSync(now time.Time, shutdown bool) error {
 	unlock, e := a.lock()
 	if e != nil {
-		if !shutdown {
-			return a.trafficHeartbeat(now)
-		}
-		return e
+		return a.trafficHeartbeat(now, shutdown)
 	}
 	defer unlock()
 	state, e := a.Load()
@@ -448,9 +460,9 @@ func (a *App) TrafficSync(now time.Time, shutdown bool) error {
 }
 
 // A slow engine download/service operation must not expire OTHER nodes' leases.
-// This path checkpoints verified absolute counters but never changes policy, cycles,
-// rules or services. The separate meter lock serializes it with policy transactions.
-func (a *App) trafficHeartbeat(now time.Time) error {
+// This path never changes policy/cycles. Except for an explicit shutdown it only
+// checkpoints counters and renews permits. The meter lock serializes transactions.
+func (a *App) trafficHeartbeat(now time.Time, shutdown bool) error {
 	unlock, e := a.trafficLock()
 	if e != nil {
 		return e
@@ -485,7 +497,15 @@ func (a *App) trafficHeartbeat(now time.Time) error {
 			r.Seen = now
 		}
 		if p.trafficPolicy().LimitBytes > 0 {
-			if r.Consumed >= p.trafficPolicy().LimitBytes {
+			if shutdown {
+				r.Blocked = "fault"
+				if e = a.meter().Freeze(p); e == nil {
+					if sealed, er := a.meter().Read(p); er == nil {
+						_ = mergeTraffic(&r, sealed)
+						r.Rules = sealed.Hash
+					}
+				}
+			} else if r.Consumed >= p.trafficPolicy().LimitBytes {
 				r.Blocked = "quota"
 			} else if r.Blocked == "" {
 				renew = append(renew, p)
@@ -496,6 +516,14 @@ func (a *App) trafficHeartbeat(now time.Time) error {
 	db.Updated = now
 	if e = a.saveTraffic(db); e != nil {
 		return e
+	}
+	if shutdown {
+		for _, p := range state.Profiles {
+			if p.trafficPolicy().LimitBytes > 0 {
+				_ = a.stopTrafficNode(p)
+			}
+		}
+		return nil
 	}
 	for _, p := range renew {
 		if e = a.meter().Renew(p); e != nil {
@@ -532,7 +560,19 @@ func (a *App) ConfigureTraffic(id string, policy TrafficPolicy, reset bool, now 
 		return e
 	}
 	if e = a.syncTrafficInner(state, now, false); e != nil {
-		return e
+		if !reset && policy.LimitBytes > 0 {
+			return e
+		}
+		// Recovery is only permitted after explicit reset/unlimited confirmation.
+		if _, er := a.loadTraffic(); er == nil {
+			return e
+		}
+		if e = a.recoverTraffic(state, now); e != nil {
+			return e
+		}
+		if e = a.syncTrafficInner(state, now, false); e != nil {
+			return e
+		}
 	}
 	db, e := a.loadTraffic()
 	if e != nil {
@@ -586,6 +626,7 @@ func (a *App) ConfigureTraffic(id string, policy TrafficPolicy, reset bool, now 
 	}
 	if policy.LimitBytes > 0 && r.Consumed >= policy.LimitBytes {
 		r.Blocked = "quota"
+		r.Consumed = policy.LimitBytes
 	}
 	// Keep the journal closed until both policy and kernel generation are durable/installed.
 	state = replace(state, p)
@@ -689,4 +730,43 @@ func (a *App) removeTraffic(p Profile) error {
 		return e
 	}
 	return a.meter().Delete(p)
+}
+func (a *App) recoverTraffic(state State, now time.Time) error {
+	path := filepath.Join(a.Home, "traffic.json")
+	b, e := os.ReadFile(path)
+	if e != nil {
+		return e
+	}
+	if e = AtomicWrite(filepath.Join(a.Home, "backups", "traffic-corrupt-"+time.Now().UTC().Format("20060102T150405.000000000")+".json"), b, 0600); e != nil {
+		return e
+	}
+	boot, e := bootID()
+	if e != nil {
+		return e
+	}
+	db := TrafficState{Version: 1, Records: map[string]TrafficRecord{}, Updated: now}
+	for _, p := range state.Profiles {
+		r := newTrafficRecord(p, now, boot)
+		r.Incomplete = true
+		s, e := a.meter().Read(p)
+		if e != nil {
+			return e
+		}
+		r.RawUp = s.Up
+		r.RawDown = s.Down
+		r.BaseUp = s.Up
+		r.BaseDown = s.Down
+		r.Consumed = s.Consumed
+		r.Rules = s.Hash
+		r.Shape = trafficShape(p)
+		if p.trafficPolicy().LimitBytes > 0 {
+			r.Blocked = "fault"
+			if e = a.meter().Freeze(p); e != nil {
+				return e
+			}
+			_ = a.stopTrafficNode(p)
+		}
+		db.Records[p.ID] = r
+	}
+	return a.saveTraffic(db)
 }

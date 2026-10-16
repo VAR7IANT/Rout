@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type UI struct {
@@ -496,6 +497,8 @@ func (u *UI) relay() error {
 		return e
 	}
 	p := Profile{ID: RandomHex(6), Name: u.ask("线路名称", "Relay"), Kind: "relay", Enabled: true, Target: target, Protocol: network}
+	now := time.Now()
+	p.CreatedAt = &now
 	if strings.Contains(raw, "://") {
 		p.TargetURI = raw
 	}
@@ -821,6 +824,11 @@ func (u *UI) menu() error {
 			return nil
 		}
 		return e
+	}
+	if u.a.ServiceMode != "none" && !u.a.trafficActive() {
+		if e := u.a.InstallTraffic(); e != nil {
+			u.say(u.a.Error(e))
+		}
 	}
 	for {
 		u.printf("\nRout %s\n1.创建节点\n2.节点中转\n3.出口管理\n4.节点管理\n5.检测线路\n6.备份与恢复\n7.更新\n8.卸载\n9.设置与语言\n0.退出\n", Version)

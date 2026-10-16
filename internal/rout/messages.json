@@ -251,5 +251,7 @@
  "清零本期上传和下载并解除流量保护暂停":"Reset this cycle's upload/download and clear the quota pause",
  "输入 RESET 再次确认清零":"Type RESET to confirm resetting usage again",
  "清零已取消":"Reset cancelled",
+ "旧节点或计量缺口无法补算历史流量；不确认清零则有限额节点将保护暂停":"Historical traffic cannot be reconstructed for legacy nodes or metering gaps; without a confirmed reset the limited node stays protectively paused",
+ "从现在开始重新计量此节点":"Start this node's accounting again from now",
  "1.修改名称  2.修改端口或地址  3.选择出口  4.启用或停用  5.日志  6.删除  7.复制或导出链接  8.测试  9.重置凭据  10.更新证书  11.重启  12.流量管理  0.返回":"1.Rename  2.Edit ports/address  3.Select exit  4.Enable/disable  5.Logs  6.Delete  7.Copy/export link  8.Test  9.Reset credentials  10.Update certificate  11.Restart  12.Traffic management  0.Back"
 }

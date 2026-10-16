@@ -40,7 +40,8 @@ func (u *UI) showTraffic(p Profile) error {
 	if e != nil {
 		return e
 	}
-	u.printf("本期上传：%s\n本期下载：%s\n双向合计：%s\n", FormatTraffic(up), FormatTraffic(down), FormatTraffic(total))
+	exact := func(n uint64) string { return fmt.Sprintf("%s (%d B)", FormatTraffic(n), n) }
+	u.printf("本期上传：%s\n本期下载：%s\n双向合计：%s\n", exact(up), exact(down), exact(total))
 	if policy.LimitBytes > 0 {
 		u.printf("已使用百分比：%s\n", fmt.Sprintf("%.2f%%", float64(total)/float64(policy.LimitBytes)*100))
 	} else {
@@ -90,6 +91,20 @@ func (u *UI) trafficManage(p Profile) error {
 		}
 		if !u.yes("启用或修改此节点限额，达到上限将断流", false) {
 			return u.err
+		}
+		db, e := u.a.loadTraffic()
+		if e != nil {
+			return e
+		}
+		if db.Records[p.ID].Incomplete {
+			u.say("旧节点或计量缺口无法补算历史流量；不确认清零则有限额节点将保护暂停")
+			if u.yes("从现在开始重新计量此节点", false) {
+				if u.ask("输入 RESET 再次确认清零", "") == "RESET" {
+					reset = true
+				} else {
+					return errors.New("清零已取消")
+				}
+			}
 		}
 	case "3":
 		if !u.yes("取消此节点流量限制并恢复无限流量", false) {

@@ -66,6 +66,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: rout-linux
@@ -79,5 +80,7 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $tag already exists; keeping its verified assets"
           else
-            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Rout $tag" --generate-notes
+            awk -v heading="## v$ROUT_VERSION" '$0 == heading { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md > release-notes.md
+            printf '\nAccounting scope, fault policy and real-host acceptance boundaries: https://github.com/%s/blob/main/docs/TRAFFIC.md\n' "$GITHUB_REPOSITORY" >> release-notes.md
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Rout $tag" --notes-file release-notes.md
           fi

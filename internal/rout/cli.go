@@ -125,11 +125,6 @@ func Run(args []string) (result error) {
 		return errors.New("用法：rout traffic [install|show ID|manage ID]")
 	}
 	if cmd == "menu" {
-		if a.ServiceMode != "none" && !a.trafficActive() {
-			if e = a.InstallTraffic(); e != nil {
-				a.say(a.Error(e))
-			}
-		}
 		return u.menu()
 	}
 	if cmd == "exits" {

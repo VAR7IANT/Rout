@@ -234,29 +234,33 @@ func pingTCP(c net.Conn) error {
 	return e
 }
 func TestKernelExistingTCPConnectionAndSharedProcessIsolation(t *testing.T) {
-	a := kernelApp(t)
-	p := kernelProfile(t, a, "127.0.0.1", "tcp")
-	q := kernelProfile(t, a, "127.0.0.1", "tcp")
-	c := tcpEcho(t, p)
-	other := tcpEcho(t, q)
-	if e := pingTCP(c); e != nil {
-		t.Fatal(e)
-	}
-	if e := pingTCP(other); e != nil {
-		t.Fatal(e)
-	}
-	if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 1, BillingDay: 1}, false, time.Now()); e != nil {
-		t.Fatal(e)
-	}
-	if e := pingTCP(c); e == nil {
-		t.Fatal("existing TCP stream survived quota gate")
-	}
-	if newConn, e := net.DialTimeout("tcp", net.JoinHostPort(p.Listen, itoa(p.Port)), 250*time.Millisecond); e == nil {
-		newConn.Close()
-		t.Fatal("new TCP connection passed quota gate")
-	}
-	if e := pingTCP(other); e != nil {
-		t.Fatal("quota affected another listener in same process", e)
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		t.Run(host, func(t *testing.T) {
+			a := kernelApp(t)
+			p := kernelProfile(t, a, host, "tcp")
+			q := kernelProfile(t, a, host, "tcp")
+			c := tcpEcho(t, p)
+			other := tcpEcho(t, q)
+			if e := pingTCP(c); e != nil {
+				t.Fatal(e)
+			}
+			if e := pingTCP(other); e != nil {
+				t.Fatal(e)
+			}
+			if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 1, BillingDay: 1}, false, time.Now()); e != nil {
+				t.Fatal(e)
+			}
+			if e := pingTCP(c); e == nil {
+				t.Fatal("existing TCP stream survived quota gate")
+			}
+			if newConn, e := net.DialTimeout("tcp", net.JoinHostPort(p.Listen, itoa(p.Port)), 250*time.Millisecond); e == nil {
+				newConn.Close()
+				t.Fatal("new TCP connection passed quota gate")
+			}
+			if e := pingTCP(other); e != nil {
+				t.Fatal("quota affected another listener in same process", e)
+			}
+		})
 	}
 }
 func TestKernelLocalNATMapping(t *testing.T) {

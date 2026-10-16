@@ -324,3 +324,56 @@ func TestTrafficStateCorruptionDiskFailureAndUIConfirmation(t *testing.T) {
 		t.Fatal("English UI missing")
 	}
 }
+func TestTrafficLegacyPartialCycleAndIntegrityRecovery(t *testing.T) {
+	a, m, p := trafficTestApp(t)
+	legacy := p
+	legacy.CreatedAt = nil
+	r := newTrafficRecord(legacy, time.Now(), "boot")
+	if !r.Incomplete {
+		t.Fatal("legacy history was presented as complete")
+	}
+	if newTrafficRecord(p, time.Now(), "boot").Incomplete {
+		t.Fatal("new monitored node unnecessarily incomplete")
+	}
+	path := filepath.Join(a.Home, "traffic.json")
+	db, e := a.loadTraffic()
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Structurally valid JSON with a modified number is still corrupt.
+	r = db.Records[p.ID]
+	r.RawUp = 123
+	db.Records[p.ID] = r
+	b, _ := JSON(db)
+	if e = AtomicWrite(path, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = a.loadTraffic(); e == nil {
+		t.Fatal("checksum did not detect altered usage")
+	}
+	if e = a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 1000, BillingDay: 1}, true, time.Now()); e != nil {
+		t.Fatal("explicit reset did not recover readable corrupt state", e)
+	}
+	db, e = a.loadTraffic()
+	if e != nil || db.Records[p.ID].Incomplete || db.Records[p.ID].Blocked != "" {
+		t.Fatal("explicit recovery failed", e)
+	}
+	files, _ := filepath.Glob(filepath.Join(a.Home, "backups", "traffic-corrupt-*.json"))
+	if len(files) != 1 {
+		t.Fatal("corrupt evidence not quarantined")
+	}
+	// A counter/consumed reset is a fault, not a fresh budget.
+	s := m.values[p.ID]
+	s.Consumed = 10
+	m.values[p.ID] = s
+	if e = a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	s.Consumed = 0
+	m.values[p.ID] = s
+	_ = a.TrafficSync(time.Now(), false)
+	db, _ = a.loadTraffic()
+	if db.Records[p.ID].Blocked != "fault" {
+		t.Fatal("quota counter rollback granted new allowance")
+	}
+}

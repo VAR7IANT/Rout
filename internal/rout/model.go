@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.2.0"
+const Version = "0.2.1"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -60,6 +60,7 @@ type Profile struct {
 	Network      string         `json:"network,omitempty"`
 	TLSGenerated bool           `json:"tls_generated,omitempty"`
 	Traffic      *TrafficPolicy `json:"traffic,omitempty"`
+	CreatedAt    *time.Time     `json:"created_at,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
@@ -81,6 +82,8 @@ func RandomPassword(n int) string {
 }
 func NewProfile(protocol string) (Profile, error) {
 	p := Profile{ID: RandomHex(6), Name: protocol, Kind: "node", Enabled: true, Protocol: protocol, Listen: "0.0.0.0", Password: RandomPassword(24), Method: "2022-blake3-aes-128-gcm", SNI: "addons.mozilla.org"}
+	now := time.Now()
+	p.CreatedAt = &now
 	b := make([]byte, 16)
 	if _, e := rand.Read(b); e != nil {
 		return p, e
