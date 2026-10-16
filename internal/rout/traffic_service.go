@@ -159,3 +159,28 @@ func (a *App) RunTraffic(ctx context.Context) error {
 		}
 	}
 }
+func (a *App) removeTrafficMonitor() error {
+	if !a.trafficActive() {
+		return nil
+	}
+	m, e := a.serviceManager()
+	if e != nil || m == "none" {
+		return e
+	}
+	name := a.trafficService()
+	if m == "systemd" {
+		if e = command("systemctl", "disable", "--now", name+".service"); e != nil {
+			return e
+		}
+		if e = os.Remove(filepath.Join("/etc/systemd/system", name+".service")); e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		return command("systemctl", "daemon-reload")
+	}
+	_ = command("rc-service", name, "stop")
+	_ = command("rc-update", "del", name, "default")
+	if e = os.Remove(filepath.Join("/etc/init.d", name)); e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	return nil
+}

@@ -52,6 +52,7 @@ jobs:
           go build -o "$RUNNER_TEMP/rout-manager" ./cmd/rout
           go test -race -c -o "$RUNNER_TEMP/rout-kernel.test" ./internal/rout
           sudo env ROUT_TEST_NFT=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" unshare --net sh -c 'ip link set lo up; exec "$1" -test.run "^(TestKernel|TestIntegrationProtocolsAndProxyExit)" -test.v' sh "$RUNNER_TEMP/rout-kernel.test"
+          sudo env ROUT_TEST_TRAFFIC_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" "$RUNNER_TEMP/rout-kernel.test" -test.run '^TestIntegrationTrafficServiceGuard$' -test.v
       - name: Build both Linux architectures
         run: sh scripts/release.sh
       - uses: actions/upload-artifact@v4

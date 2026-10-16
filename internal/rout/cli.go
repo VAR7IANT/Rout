@@ -44,7 +44,7 @@ func Run(args []string) (result error) {
 		return nil
 	}
 	if cmd == "help" {
-		fmt.Println("rout [--lang en|zh-CN --home DIR --bin-dir DIR --service auto|none] [menu|list|status|test ID|copy ID|export ID [FILE]|restart ID|on ID|off ID|delete ID|exits|settings|apply|backup FILE|restore FILE|engines|update|uninstall]")
+		fmt.Println("rout [--lang en|zh-CN --home DIR --bin-dir DIR --service auto|none] [menu|list|status|test ID|copy ID|export ID [FILE]|restart ID|on ID|off ID|delete ID|logs ID|exits|settings|traffic [install|show ID|manage ID]|apply|backup FILE|restore FILE|engines|update|uninstall]")
 		return nil
 	}
 	var e error
@@ -243,6 +243,9 @@ func (a *App) Uninstall() error {
 		return e
 	}
 	if e = a.Commit(s, State{Schema: 1, Profiles: []Profile{}}, false); e != nil {
+		return e
+	}
+	if e = a.removeTrafficMonitor(); e != nil {
 		return e
 	}
 	if e = os.RemoveAll(a.Home); e != nil {

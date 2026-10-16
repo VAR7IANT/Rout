@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	_ "time/tzdata"
 )
@@ -266,7 +268,26 @@ func (a *App) stopTrafficNode(p Profile) error {
 }
 
 // Called with the normal configuration lock held. No unbounded retries/HTTP calls.
+func (a *App) trafficLock() (func(), error) {
+	f, e := os.OpenFile(filepath.Join(a.Home, ".traffic.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if e != nil {
+		return nil, e
+	}
+	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
+		f.Close()
+		return nil, errors.New("另一个 rout 正在修改配置，请稍后重试")
+	}
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+}
 func (a *App) syncTraffic(state State, now time.Time, shutdown bool) error {
+	unlock, e := a.trafficLock()
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	return a.syncTrafficInner(state, now, shutdown)
+}
+func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error {
 	m := a.meter()
 	boot, e := bootID()
 	if e != nil {
@@ -413,6 +434,9 @@ func (a *App) syncTraffic(state State, now time.Time, shutdown bool) error {
 func (a *App) TrafficSync(now time.Time, shutdown bool) error {
 	unlock, e := a.lock()
 	if e != nil {
+		if !shutdown {
+			return a.trafficHeartbeat(now)
+		}
 		return e
 	}
 	defer unlock()
@@ -421,6 +445,64 @@ func (a *App) TrafficSync(now time.Time, shutdown bool) error {
 		return e
 	}
 	return a.syncTraffic(state, now, shutdown)
+}
+
+// A slow engine download/service operation must not expire OTHER nodes' leases.
+// This path checkpoints verified absolute counters but never changes policy, cycles,
+// rules or services. The separate meter lock serializes it with policy transactions.
+func (a *App) trafficHeartbeat(now time.Time) error {
+	unlock, e := a.trafficLock()
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	state, e := a.Load()
+	if e != nil {
+		return e
+	}
+	db, e := a.loadTraffic()
+	if e != nil {
+		return e
+	}
+	boot, e := bootID()
+	if e != nil {
+		return e
+	}
+	var renew []Profile
+	for _, p := range state.Profiles {
+		r, ok := db.Records[p.ID]
+		if !ok || r.Pending || r.Boot != boot || r.Shape != trafficShape(p) {
+			continue
+		}
+		s, e := a.meter().Read(p)
+		if e != nil || s.Hash != r.Rules {
+			continue
+		}
+		if e = mergeTraffic(&r, s); e != nil {
+			continue
+		}
+		if now.After(r.Seen) {
+			r.Seen = now
+		}
+		if p.trafficPolicy().LimitBytes > 0 {
+			if r.Consumed >= p.trafficPolicy().LimitBytes {
+				r.Blocked = "quota"
+			} else if r.Blocked == "" {
+				renew = append(renew, p)
+			}
+		}
+		db.Records[p.ID] = r
+	}
+	db.Updated = now
+	if e = a.saveTraffic(db); e != nil {
+		return e
+	}
+	for _, p := range renew {
+		if e = a.meter().Renew(p); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 // Only this explicit operation may weaken a policy or clear a quota. Normal apply/restore cannot.
@@ -436,6 +518,11 @@ func (a *App) ConfigureTraffic(id string, policy TrafficPolicy, reset bool, now 
 		return e
 	}
 	defer unlock()
+	meterUnlock, e := a.trafficLock()
+	if e != nil {
+		return e
+	}
+	defer meterUnlock()
 	state, e := a.Load()
 	if e != nil {
 		return e
@@ -444,7 +531,7 @@ func (a *App) ConfigureTraffic(id string, policy TrafficPolicy, reset bool, now 
 	if e != nil {
 		return e
 	}
-	if e = a.syncTraffic(state, now, false); e != nil {
+	if e = a.syncTrafficInner(state, now, false); e != nil {
 		return e
 	}
 	db, e := a.loadTraffic()
@@ -559,6 +646,21 @@ func (a *App) TrafficGuard(id string) error {
 		return e
 	}
 	if snap.Hash != r.Rules || snap.Consumed >= p.trafficPolicy().LimitBytes {
+		return errors.New("流量保护暂停，不能通过重启绕过限额")
+	}
+	config, e := serverConfig(p, a.profileDir(p.ID))
+	if e != nil {
+		return e
+	}
+	expected, e := JSON(config)
+	if e != nil {
+		return e
+	}
+	actual, e := os.ReadFile(filepath.Join(a.profileDir(p.ID), "config.json"))
+	if e != nil {
+		return e
+	}
+	if !bytes.Equal(expected, actual) {
 		return errors.New("流量保护暂停，不能通过重启绕过限额")
 	}
 	return nil

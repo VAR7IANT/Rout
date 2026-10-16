@@ -266,7 +266,7 @@ func TestKernelLocalNATMapping(t *testing.T) {
 	_ = local
 	publicPort, _ := freePort()
 	table := "rout_nat_test_" + p.ID
-	script := fmt.Sprintf("table ip %s { chain out { type nat hook output priority -100; policy accept; ip daddr 127.0.0.2 udp dport %d dnat to 127.0.0.1:%d; } }\n", table, publicPort, p.Port)
+	script := fmt.Sprintf("table ip %s {\n chain out {\n type nat hook output priority -100; policy accept;\n ip daddr 127.0.0.2 udp dport %d dnat to 127.0.0.1:%d;\n }\n}\n", table, publicPort, p.Port)
 	if e := nftApply(script); e != nil {
 		t.Fatal(e)
 	}
@@ -386,6 +386,14 @@ func TestKernelMonitorCrashLeaseAndWarmRecovery(t *testing.T) {
 	cmd := start()
 	time.Sleep(500 * time.Millisecond)
 	sendUDP(t, c, got, 100, true)
+	// An unrelated long-running config operation must not expire finite leases.
+	unlock, e := a.lock()
+	if e != nil {
+		t.Fatal(e)
+	}
+	time.Sleep(16 * time.Second)
+	sendUDP(t, c, got, 100, true)
+	unlock()
 	if e := cmd.Process.Kill(); e != nil {
 		t.Fatal(e)
 	}
