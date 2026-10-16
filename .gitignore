@@ -1,0 +1,4 @@
+/dist/
+/rout
+*.test
+coverage.out
