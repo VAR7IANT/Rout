@@ -9,7 +9,7 @@
 - Fix lease starvation: service start/stop runs outside the traffic lock, renewal failures no longer become permanent faults, all leases are renewed in one nft transaction (100 nodes: 3.5 s → 51 ms per poll), reads are batched with per-node fallback
 - Unlimited nodes fail open on meter errors and are never paused; orphaned Rout tables are cleaned up; unchanged checkpoints are not rewritten
 - Health checks require a stable process with listening sockets; init-system output is included in errors; unchanged unit files are not rewritten
-- systemd engines run with a capability bounding set and kernel protections (verified for all five protocols and TCP/UDP relays); OpenRC respawns and logs are bounded
+- systemd engines run with a capability bounding set and kernel protections (verified for all five protocols and TCP/UDP relays); OpenRC respawns and logs are bounded, and OpenRC nodes order softly after the network (`use net`) so a missing or restarting net provider can neither block nor stop them
 - HY2/TUIC certificates: validity in list/status/doctor, warnings before expiry, `rout cert renew ID`, 10-year self-signed certificates; one expired certificate no longer blocks `rout apply` for other nodes
 - Shadowsocks 2022 links follow SIP002 (percent-encoded userinfo); reject UDP-only Shadowsocks with a TCP-only exit; Reality targets are checked for TLS 1.3/HTTP/2 from the server
 - IPv4 and IPv6 public address detection and tests work independently (IPv6-only hosts supported)

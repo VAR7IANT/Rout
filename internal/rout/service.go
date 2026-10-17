@@ -86,9 +86,12 @@ func (a *App) openrcScript(p Profile) string {
 	if p.Kind == "relay" {
 		args = []string{"-C", conf}
 	}
-	need, guard := "need net", ""
+	// Soft network ordering like systemd's Wants=/After=: start after the network when
+	// it is configured, but neither block forever nor stop with a networking restart.
+	// Finite nodes keep a hard dependency on their monitor.
+	need, guard := "use net", ""
 	if g := a.trafficGuardCommand(p, shellQuote); g != "" {
-		need += " " + a.trafficService()
+		need = "use net; need " + a.trafficService()
 		guard = g + " || return 1; "
 	}
 	// supervise-daemon appends to one private log; it is rotated once at each start and

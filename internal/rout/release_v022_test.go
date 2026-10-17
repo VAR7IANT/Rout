@@ -322,8 +322,11 @@ func TestRenderedServiceDefinitions(t *testing.T) {
 			t.Fatal("OpenRC log/respawn bounds missing")
 		}
 	}
-	if !strings.Contains(a.openrcScript(limited), "|| return 1;") {
-		t.Fatal("OpenRC guard missing")
+	if script := a.openrcScript(limited); !strings.Contains(script, "|| return 1;") || !strings.Contains(script, "use net; need rout-traffic-") {
+		t.Fatal("OpenRC guard or monitor dependency missing")
+	}
+	if script := a.openrcScript(fixture(t, "ss")); !strings.Contains(script, "depend() { use net; }") {
+		t.Fatal("OpenRC must not hard-require the net provider")
 	}
 }
 

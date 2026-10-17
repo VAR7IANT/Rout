@@ -70,7 +70,6 @@ jobs:
             apk add --no-cache openrc >/dev/null
             printf "auto lo\niface lo inet loopback\n" > /etc/network/interfaces
             mkdir -p /run/openrc && touch /run/openrc/softlevel
-            rc-service networking start || true
             /w/rout-static --home /tmp/state --bin-dir /tmp/engines --service none engines
             cd /w && ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^(TestIntegrationProtocolsAndProxyExit|TestIntegrationGOSTTCPAndUDP)$" -test.v
             ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v || { rc-status -a; tail -n 30 /var/log/rout-*.log 2>/dev/null; exit 1; }'
