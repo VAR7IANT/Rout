@@ -28,7 +28,7 @@ func FindExit(s State, id string) (Exit, error) {
 			return e, nil
 		}
 	}
-	return Exit{}, errors.New("找不到出口 ID")
+	return Exit{}, errors.New("找不到出站代理")
 }
 func (s State) MigrateLegacyExits() State {
 	out := s.Clone()
@@ -68,10 +68,10 @@ func (s State) validateExits() error {
 	ids := map[string]bool{}
 	for _, e := range s.Exits {
 		if !idPattern.MatchString(e.ID) || strings.TrimSpace(e.Name) == "" || len(e.Name) > 160 || strings.ContainsAny(e.Name, "\r\n\x00") {
-			return errors.New("出口名称或 ID 无效")
+			return errors.New("出站代理名称或 ID 无效")
 		}
 		if ids[e.ID] {
-			return errors.New("出口 ID 重复")
+			return errors.New("出站代理 ID 重复")
 		}
 		ids[e.ID] = true
 		if er := e.Proxy.Validate(); er != nil {
@@ -87,7 +87,7 @@ func (s State) validateExits() error {
 			return err
 		}
 		if p.Kind != "node" || p.Outbound == nil || !reflect.DeepEqual(*p.Outbound, e.Proxy) {
-			return errors.New("出口引用与节点配置不一致")
+			return errors.New("节点引用的出站代理与配置不一致")
 		}
 	}
 	return nil
@@ -119,7 +119,7 @@ func BindExit(s State, nodeID, exitID string) (State, error) {
 		return s, err
 	}
 	if p.Kind != "node" {
-		return s, errors.New("原样转发线路请在落地节点配置出口")
+		return s, errors.New("中转节点不使用出站代理；如需出站代理，请在目标节点上设置")
 	}
 	p.ExitID = exitID
 	p.Outbound = nil
@@ -139,7 +139,7 @@ func DeleteExit(s State, id string) (State, error) {
 	}
 	for _, p := range s.Profiles {
 		if p.ExitID == id {
-			return s, errors.New("出口仍被节点使用，请先解除绑定")
+			return s, errors.New("出站代理仍被节点使用，请先改为其他出站或直连")
 		}
 	}
 	out := s.Clone()

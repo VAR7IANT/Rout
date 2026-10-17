@@ -9,12 +9,15 @@ import (
 
 // Restrained terminal styling: colors only on a real TTY, never with NO_COLOR or
 // TERM=dumb, never in captured/test output. Everything stays readable without color.
+func colorEnabled(tty bool) bool {
+	return tty && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+}
 func (u *UI) colorOn() bool {
-	if u.out != nil || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
-		return false
+	if u.out != nil {
+		return colorEnabled(u.forceColor) // tests may simulate a color terminal
 	}
 	st, e := os.Stdout.Stat()
-	return e == nil && st.Mode()&os.ModeCharDevice != 0
+	return colorEnabled(e == nil && st.Mode()&os.ModeCharDevice != 0)
 }
 func (u *UI) paint(code, s string) string {
 	if !u.colorOn() {
@@ -60,9 +63,18 @@ func pad(s string, width int) string {
 }
 
 // menuItem keys are stable identifiers; numbers are assigned only for display.
-type menuItem struct{ key, label string }
+type menuItem struct{ key, label, note string }
 
-func item(key, label string) menuItem { return menuItem{key, label} }
+func item(key, label string) menuItem { return menuItem{key: key, label: label} }
+
+// itemNote adds a one-line explanation printed under the label.
+func itemNote(key, label, note string) menuItem { return menuItem{key, label, note} }
+func (u *UI) printItem(n string, it menuItem) {
+	fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", fmt.Sprintf("%2s", n)), u.a.T(it.label))
+	if it.note != "" {
+		fmt.Fprintf(u.writer(), "      %s\n", u.dim(u.a.T(it.note)))
+	}
+}
 
 // menu renders a vertical numbered menu and returns the selected key. "0" always means
 // Back (or Exit at top level) and returns "".
@@ -74,9 +86,14 @@ func (u *UI) menu(title string, items []menuItem, back string) string {
 	for i, it := range items {
 		n := itoa(i + 1)
 		allowed = append(allowed, n)
-		fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", fmt.Sprintf("%2s", n)), u.a.T(it.label))
+		u.printItem(n, it)
 	}
 	fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", " 0"), u.a.T(back))
+	hint := "输入编号 · 0 或 b 返回 · q 退出 Rout"
+	if back == "退出" {
+		hint = "输入编号 · 0 或 q 退出 Rout"
+	}
+	fmt.Fprintln(u.writer(), "  "+u.dim(u.a.T(hint)))
 	v := u.choose("选择", allowed, "0")
 	if v == "" || v == "0" {
 		return ""
@@ -97,7 +114,7 @@ func (u *UI) option(prompt string, items []menuItem, def string) string {
 		if it.key == def {
 			defNumber = n
 		}
-		fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", fmt.Sprintf("%2s", n)), u.a.T(it.label))
+		u.printItem(n, it)
 	}
 	v := u.choose("选择", allowed, defNumber)
 	n := 0

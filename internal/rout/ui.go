@@ -24,6 +24,10 @@ type UI struct {
 	detectIP     func() string
 	probeProxy   func(Proxy) (string, error)
 	checkReality func(string) error
+	// Presentation state: the logo appears once per session; tests can force it,
+	// simulate a color terminal or fix the width.
+	logoShown, forceLogo, forceColor bool
+	termWidth                        int
 }
 
 func (u *UI) writer() io.Writer {
@@ -92,7 +96,19 @@ func (u *UI) secret(prompt string) string {
 }
 func (u *UI) choose(prompt string, allowed []string, def string) string {
 	for u.err == nil {
-		s := u.ask(prompt, def)
+		s := normalizeInput(u.ask(prompt, def))
+		if u.err != nil {
+			return ""
+		}
+		switch menuShortcut(s) {
+		case "quit":
+			u.err = errQuit
+			return ""
+		case "back":
+			if contains(allowed, "0") {
+				return "0"
+			}
+		}
 		for _, v := range allowed {
 			if s == v {
 				return s
@@ -101,23 +117,6 @@ func (u *UI) choose(prompt string, allowed []string, def string) string {
 		u.say("请选择菜单中的编号")
 	}
 	return ""
-}
-func (u *UI) yes(prompt string, def bool) bool {
-	d := "n"
-	if def {
-		d = "y"
-	}
-	for u.err == nil {
-		s := strings.ToLower(u.ask(u.a.T(prompt)+" y/n", d))
-		if s == "y" || s == "yes" {
-			return true
-		}
-		if s == "n" || s == "no" {
-			return false
-		}
-		u.say("请输入 y 或 n")
-	}
-	return false
 }
 func (u *UI) port(prompt string, def int) int {
 	for u.err == nil {
@@ -221,7 +220,7 @@ func (u *UI) askServer(reuse bool) (ServerSetup, error) {
 			def = itoa(s.LocalStart) + "-" + itoa(s.LocalEnd)
 		}
 		for u.err == nil {
-			start, end, e := ParsePortRange(u.ask("允许的本地端口范围", def))
+			start, end, e := ParsePortRange(u.ask("商家分配的内部端口范围（本机监听端口，如 20000-20019）", def))
 			if e != nil {
 				u.say(e.Error())
 				continue
@@ -234,11 +233,11 @@ func (u *UI) askServer(reuse bool) (ServerSetup, error) {
 		if !validPort(start) {
 			start = s.LocalStart
 		}
-		s.PublicStart = u.port("对应公网起始端口（端口相同则保持默认）", start)
+		s.PublicStart = u.port(fmt.Sprintf(u.a.T("内部端口 %d 对应的公网端口（两者相同就直接回车）"), s.LocalStart), start)
 		if s.Network == "" {
 			s.Network = "both"
 		}
-		s.Network = u.option("商家允许的网络", []menuItem{item("both", "TCP＋UDP"), item("tcp", "仅 TCP"), item("udp", "仅 UDP")}, s.Network)
+		s.Network = u.option("商家允许的网络", []menuItem{item("both", "TCP+UDP"), item("tcp", "仅 TCP"), item("udp", "仅 UDP")}, s.Network)
 	}
 	if u.err != nil {
 		return s, u.err
@@ -262,10 +261,10 @@ func (u *UI) saveServer(server ServerSetup) error {
 func ProtocolLabel(p string) string {
 	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
 }
-func (u *UI) exitLabel(s State, p Profile) string {
-	if p.Kind == "relay" {
-		return u.a.T("转发到 ") + p.Target
-	}
+
+// outboundLabel names the outbound proxy a node uses ("Direct connection" if none).
+// Relays have no outbound proxy: their destination is shown instead.
+func (u *UI) outboundLabel(s State, p Profile) string {
 	if p.ExitID != "" {
 		if e, er := FindExit(s, p.ExitID); er == nil {
 			return e.Name + " (" + strings.ToUpper(e.Proxy.Protocol) + ")"
@@ -274,21 +273,85 @@ func (u *UI) exitLabel(s State, p Profile) string {
 	if p.Outbound != nil {
 		return strings.ToUpper(p.Outbound.Protocol) + " " + net.JoinHostPort(p.Outbound.Host, itoa(p.Outbound.Port))
 	}
-	return u.a.T("VPS 直连")
+	return u.a.T("直连")
 }
 
-// nodeCard is a credential-free two-line summary that fits narrow/mobile terminals.
-func (u *UI) nodeCard(s State, i int, p Profile) {
-	state := u.a.T("启用")
+// usage summarizes a node's traffic for list views; db may be nil (not monitored).
+func (u *UI) usage(db *TrafficState, p Profile) string {
+	policy := p.trafficPolicy()
+	if db == nil {
+		if policy.LimitBytes > 0 {
+			return fmt.Sprintf(u.a.T("限额 %s（流量统计未启用）"), FormatTraffic(policy.LimitBytes))
+		}
+		return u.a.T("不限流量（流量统计未启用）")
+	}
+	quota := u.a.T("不限流量")
+	if policy.LimitBytes > 0 {
+		quota = fmt.Sprintf(u.a.T("限额 %s"), FormatTraffic(policy.LimitBytes))
+	}
+	r, ok := db.Records[p.ID]
+	if !ok {
+		return quota
+	}
+	_, _, total, e := r.totals()
+	if e != nil {
+		return quota
+	}
+	line := fmt.Sprintf(u.a.T("已用 %s"), FormatTraffic(total))
+	if policy.LimitBytes > 0 {
+		left := uint64(0)
+		if total < policy.LimitBytes {
+			left = policy.LimitBytes - total
+		}
+		line = fmt.Sprintf(u.a.T("已用 %s / %s，剩余 %s"), FormatTraffic(total), FormatTraffic(policy.LimitBytes), FormatTraffic(left))
+	} else {
+		line += " · " + u.a.T("不限流量")
+	}
+	switch r.Blocked {
+	case blockQuota:
+		line += " · " + u.paint("33", u.a.T("已达上限，已暂停"))
+	case blockFault:
+		line += " · " + u.paint("33", u.a.T("计量故障，已暂停"))
+	case blockSealed:
+		line += " · " + u.a.T("等待流量监控")
+	}
+	return line
+}
+func (u *UI) trafficDB() *TrafficState {
+	if !u.a.trafficActive() {
+		return nil
+	}
+	db, e := u.a.loadTraffic()
+	if e != nil {
+		return nil
+	}
+	return &db
+}
+
+// nodeStatus is one word: Running, Stopped or Disabled.
+func (u *UI) nodeStatus(p Profile) string {
 	if !p.Enabled {
-		state = u.a.T("停用")
+		return u.a.T("已停用")
 	}
-	kind := ProtocolLabel(p.Protocol)
+	return u.a.Running(p)
+}
+
+// nodeCard is a credential-free summary that fits narrow/mobile terminals.
+func (u *UI) nodeCard(s State, i int, p Profile, db *TrafficState) {
 	if p.Kind == "relay" {
-		kind = u.a.T("中转") + " " + kind
+		u.relayCard(i, p)
+		return
 	}
-	fmt.Fprintf(u.writer(), "  %s %s %s\n", u.paint("36", fmt.Sprintf("%2d.", i)), u.bold(p.Name), u.dim("["+p.ID+"]"))
-	line := fmt.Sprintf("%s · %s/%s · %s %d · %s %s · %s %s", kind, state, u.a.Running(p), u.a.T("本地"), p.Port, u.a.T("公网"), net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)), u.a.T("出口"), u.exitLabel(s, p))
+	prefix := "   "
+	if i > 0 {
+		prefix = u.paint("36", fmt.Sprintf("%2d.", i))
+	}
+	fmt.Fprintf(u.writer(), "  %s %s %s\n", prefix, u.bold(p.Name), u.dim("["+p.ID+"]"))
+	fmt.Fprintf(u.writer(), "      %s · %s · %s %d · %s %s\n", ProtocolLabel(p.Protocol), u.nodeStatus(p), u.a.T("监听端口"), p.Port, u.a.T("公网"), net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
+	line := u.a.T("出站：") + u.outboundLabel(s, p)
+	if use := u.usage(db, p); use != "" {
+		line += " · " + use
+	}
 	fmt.Fprintln(u.writer(), "      "+line)
 	if days, ok := p.CertificateDays(time.Now()); ok {
 		if days < 0 {
@@ -300,113 +363,159 @@ func (u *UI) nodeCard(s State, i int, p Profile) {
 }
 func (u *UI) viewNodes(s State) {
 	if len(s.Profiles) == 0 {
-		u.say("暂无节点或线路")
+		u.say("暂无节点")
 		return
 	}
+	db := u.trafficDB()
 	for i, p := range s.Profiles {
-		u.nodeCard(s, i+1, p)
+		u.nodeCard(s, i+1, p, db)
 	}
 }
 
-// list is the explicit `rout list` view: cards plus each complete share link.
+// list is the explicit `rout list` view: every node and relay with its complete link.
 func (u *UI) list(s State) {
 	if len(s.Profiles) == 0 {
-		u.say("暂无节点或线路")
+		u.say("暂无节点")
 		return
 	}
+	db := u.trafficDB()
 	for i, p := range s.Profiles {
-		u.nodeCard(s, i+1, p)
+		u.nodeCard(s, i+1, p, db)
 		if uri, e := p.URI(); e == nil {
 			fmt.Fprintln(u.writer(), "      "+uri)
-		} else {
-			fmt.Fprintln(u.writer(), "      "+u.a.T("手动端口转发：使用原客户端的协议和认证信息"))
+		} else if p.Kind == "relay" {
+			fmt.Fprintln(u.writer(), "      "+u.a.T("客户端连接地址：")+relayEndpoint(p))
 		}
 	}
+}
+func nodesOnly(s State) State {
+	out := s.Clone()
+	out.Profiles = nil
+	for _, p := range s.Profiles {
+		if p.Kind == "node" {
+			out.Profiles = append(out.Profiles, p)
+		}
+	}
+	return out
 }
 
 // pick shows credential-free cards; links appear only when explicitly requested.
 func (u *UI) pick(s State, nodeOnly bool) (Profile, error) {
-	choices := s.Clone()
-	choices.Profiles = nil
-	for _, p := range s.Profiles {
-		if !nodeOnly || p.Kind == "node" {
-			choices.Profiles = append(choices.Profiles, p)
-		}
+	choices := s
+	if nodeOnly {
+		choices = nodesOnly(s)
 	}
 	if len(choices.Profiles) == 0 {
 		return Profile{}, errors.New("没有可选节点，请先创建节点")
 	}
 	u.viewNodes(choices)
+	n := u.number("选择节点编号（0 返回）", len(choices.Profiles))
+	if n <= 0 {
+		return Profile{}, nil
+	}
+	return choices.Profiles[n-1], nil
+}
+
+// pickMany selects several entries ("1 3", "1,3" or "all"); empty means cancel.
+func (u *UI) pickMany(s State, prompt string) []Profile {
+	if len(s.Profiles) == 0 {
+		u.say("暂无节点")
+		return nil
+	}
+	u.viewNodes(s)
 	for u.err == nil {
-		v := u.ask("选择节点编号（0 返回）", "0")
-		if v == "0" {
-			return Profile{}, nil
+		raw := normalizeInput(u.ask(prompt, ""))
+		if u.err != nil || raw == "" || raw == "0" || menuShortcut(raw) == "back" {
+			return nil
 		}
-		n, e := strconv.Atoi(v)
-		if e == nil && n > 0 && n <= len(choices.Profiles) {
-			return choices.Profiles[n-1], nil
+		if menuShortcut(raw) == "quit" {
+			u.err = errQuit
+			return nil
+		}
+		if raw == "all" || raw == "全部" {
+			return append([]Profile(nil), s.Profiles...)
+		}
+		var out []Profile
+		seen := map[int]bool{}
+		ok := true
+		for _, f := range strings.Fields(strings.ReplaceAll(raw, ",", " ")) {
+			n, e := strconv.Atoi(f)
+			if e != nil || n < 1 || n > len(s.Profiles) || seen[n] {
+				ok = false
+				break
+			}
+			seen[n] = true
+			out = append(out, s.Profiles[n-1])
+		}
+		if ok && len(out) > 0 {
+			return out
 		}
 		u.say("编号无效")
 	}
-	return Profile{}, u.err
+	return nil
 }
-func (u *UI) exitUsers(s State, id string) int {
-	n := 0
+func (u *UI) exitUsers(s State, id string) []Profile {
+	var out []Profile
 	for _, p := range s.Profiles {
 		if p.ExitID == id {
-			n++
+			out = append(out, p)
 		}
 	}
-	return n
-}
-func (u *UI) exitLine(s State, i int, e Exit) {
-	use := u.a.T("未使用")
-	if n := u.exitUsers(s, e.ID); n > 0 {
-		use = fmt.Sprintf(u.a.T("%d 个节点使用"), n)
-	}
-	fmt.Fprintf(u.writer(), "  %s %s  %s %s · %s\n", u.paint("36", fmt.Sprintf("%2d.", i)), u.bold(e.Name), strings.ToUpper(e.Proxy.Protocol), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), use)
+	return out
 }
 
-// pickExitIndex selects an existing exit by its displayed number. IDs stay internal.
-func (u *UI) pickExitIndex(s State) (Exit, bool) {
+// outboundLine renders "Name — PROTOCOL — host:port — usage".
+func (u *UI) outboundLine(s State, i int, e Exit) {
+	use := u.a.T("未分配")
+	if n := len(u.exitUsers(s, e.ID)); n > 0 {
+		use = fmt.Sprintf(u.a.T("%d 个节点使用"), n)
+	}
+	fmt.Fprintf(u.writer(), "  %s %s — %s — %s — %s\n", u.paint("36", fmt.Sprintf("%2d.", i)), u.bold(e.Name), strings.ToUpper(e.Proxy.Protocol), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), u.dim(use))
+}
+
+// pickProxy selects an existing outbound proxy by its displayed number.
+func (u *UI) pickProxy(s State) (Exit, bool) {
 	if len(s.Exits) == 0 {
-		u.say("暂无出口，请先添加出口")
+		u.say("暂无出站代理，请先创建")
 		return Exit{}, false
 	}
 	for i, e := range s.Exits {
-		u.exitLine(s, i+1, e)
+		u.outboundLine(s, i+1, e)
 	}
-	for u.err == nil {
-		n, e := strconv.Atoi(u.ask("选择出口编号（0 返回）", "0"))
-		if e == nil && n == 0 {
-			return Exit{}, false
-		}
-		if e == nil && n > 0 && n <= len(s.Exits) {
-			return s.Exits[n-1], true
-		}
-		u.say("编号无效")
+	n := u.number("选择出站代理编号（0 返回）", len(s.Exits))
+	if n <= 0 {
+		return Exit{}, false
 	}
-	return Exit{}, false
+	return s.Exits[n-1], true
 }
 
-// pickExit chooses an outbound for a node; 0 is the direct VPS exit.
-func (u *UI) pickExit(s State) (string, error) {
-	fmt.Fprintf(u.writer(), "  %s %s\n", u.paint("36", " 0."), u.a.T("VPS 直连"))
+// pickOutbound chooses what a node uses: one of the proxies, or Direct connection as
+// the last numbered entry. ok=false means the user went back.
+func (u *UI) pickOutbound(s State, current string) (string, bool) {
 	for i, e := range s.Exits {
-		u.exitLine(s, i+1, e)
+		u.outboundLine(s, i+1, e)
 	}
-	for u.err == nil {
-		v := u.ask("选择出口编号", "0")
-		n, e := strconv.Atoi(v)
-		if e == nil && n >= 0 && n <= len(s.Exits) {
-			if n == 0 {
-				return "", nil
-			}
-			return s.Exits[n-1].ID, nil
+	direct := len(s.Exits) + 1
+	fmt.Fprintf(u.writer(), "  %s %s\n", u.paint("36", fmt.Sprintf("%2d.", direct)), u.bold(u.a.T("直连（不使用出站代理）")))
+	def := itoa(direct)
+	for i, e := range s.Exits {
+		if e.ID == current {
+			def = itoa(i + 1)
 		}
-		u.say("编号无效")
 	}
-	return "", u.err
+	allowed := []string{"0"}
+	for i := 1; i <= direct; i++ {
+		allowed = append(allowed, itoa(i))
+	}
+	v := u.choose("选择出站（0 返回）", allowed, def)
+	n, _ := strconv.Atoi(v)
+	if u.err != nil || n == 0 {
+		return "", false
+	}
+	if n == direct {
+		return "", true
+	}
+	return s.Exits[n-1].ID, true
 }
 
 // uniqueName keeps generated batch names distinct from every existing node.
@@ -512,10 +621,10 @@ func (u *UI) create() error {
 	}
 	exitID := ""
 	if len(old.Exits) > 0 {
-		u.say("选择节点出口：")
-		exitID, e = u.pickExit(old)
-		if e != nil {
-			return e
+		u.say("这批节点的出站（同一批节点使用相同出站）：")
+		var ok bool
+		if exitID, ok = u.pickOutbound(old, ""); !ok {
+			return u.err
 		}
 		if exitID != "" {
 			ex, er := FindExit(old, exitID)
@@ -557,7 +666,7 @@ func (u *UI) create() error {
 		}
 		if manual {
 			for u.err == nil {
-				p.Port = u.port(p.Name+" "+u.a.T("本地端口"), p.Port)
+				p.Port = u.port(p.Name+" "+u.a.T("监听端口"), p.Port)
 				p.PublicPort = p.Port
 				if setup.NAT {
 					p.PublicPort = setup.PublicStart + p.Port - setup.LocalStart
@@ -622,110 +731,78 @@ func (u *UI) readCertificate() (string, string, error) {
 	}
 	return string(c), string(k), nil
 }
-func (u *UI) relay() error {
-	old, e := u.a.Load()
-	if e != nil {
-		return e
-	}
-	setup, e := u.serverSetup()
-	if e != nil {
-		return e
-	}
-	raw := u.secret("粘贴落地节点链接，或填写目标 IP:端口")
-	if u.err != nil {
-		return u.err
-	}
-	target, network, e := ParseTarget(raw)
-	if e != nil {
-		return e
-	}
-	p := Profile{ID: RandomHex(6), Name: uniqueName(old, u.ask("线路名称", "Relay")), Kind: "relay", Enabled: true, Target: target, Protocol: network}
-	now := time.Now()
-	p.CreatedAt = &now
-	if strings.Contains(raw, "://") {
-		p.TargetURI = raw
-	}
-	if !strings.Contains(raw, "://") || network == "both" {
-		p.Protocol = u.option("转发网络", []menuItem{item("tcp", "TCP"), item("udp", "UDP"), item("both", "TCP＋UDP")}, "tcp")
-	}
-	p, e = PlanPort(p, setup, old)
-	if e != nil {
-		return e
-	}
-	if u.yes("手动指定中转端口", false) {
-		for u.err == nil {
-			p.Port = u.port("本地端口", p.Port)
-			p.PublicPort = p.Port
-			if setup.NAT {
-				p.PublicPort = setup.PublicStart + p.Port - setup.LocalStart
-			}
-			if AllowedPort(p, setup) {
-				break
-			}
-			u.say("端口超出 NAT 分配范围")
-		}
-	}
-	if u.err != nil {
-		return u.err
-	}
-	if e = u.a.Commit(old, replace(old, p), false); e != nil {
-		return e
-	}
-	u.good("中转线路已创建")
-	if uri, e := p.URI(); e == nil {
-		fmt.Fprintln(u.writer(), uri)
-	} else {
-		u.printf("将原客户端连接地址改为 %s，端口改为 %d，保留原 SNI 等参数\n", p.PublicHost, p.PublicPort)
-	}
-	return u.saveServer(setup)
-}
-func (u *UI) bind() error {
-	s, e := u.a.Load()
-	if e != nil {
-		return e
-	}
-	p, e := u.pick(s, true)
-	if e != nil || p.ID == "" {
-		return e
-	}
-	return u.bindProfile(s, p)
-}
+
+// bindProfile sets one node's outbound proxy (or direct connection).
 func (u *UI) bindProfile(old State, p Profile) error {
 	if p.Kind != "node" {
-		return errors.New("原样转发线路请在落地节点配置出口")
+		return errors.New("中转节点没有出站代理：它把流量原样转发到目标")
 	}
-	u.printf("当前出口：%s\n", u.exitLabel(old, p))
-	id, e := u.pickExit(old)
-	if e != nil {
-		return e
+	u.printf("当前出站：%s\n", u.outboundLabel(old, p))
+	id, ok := u.pickOutbound(old, p.ExitID)
+	if !ok {
+		return u.err
 	}
-	if id == p.ExitID {
-		u.say("出口未改变")
+	return u.assignOutbound(old, []Profile{p}, id)
+}
+
+// assignOutbound binds the chosen nodes, and only those, to one outbound in a single
+// transaction. A proxy is tested once before any node changes.
+func (u *UI) assignOutbound(old State, nodes []Profile, id string) error {
+	var changed []Profile
+	for _, p := range nodes {
+		if p.Kind != "node" || p.ExitID == id {
+			continue
+		}
+		// Rejected combinations are skipped up front instead of failing the whole batch.
+		if id != "" {
+			probe := p
+			probe.Outbound = &Proxy{}
+			if e := probe.CheckCompatibility(); e != nil {
+				u.warnf("%s: %s", p.Name, u.a.Error(e))
+				continue
+			}
+		}
+		changed = append(changed, p)
+	}
+	if len(changed) == 0 {
+		u.say("出站未改变")
 		return nil
 	}
+	label := u.a.T("直连")
 	if id != "" {
-		ex, er := FindExit(old, id)
-		if er != nil {
-			return er
+		ex, e := FindExit(old, id)
+		if e != nil {
+			return e
 		}
-		ip, er := u.testExit(ex.Proxy)
-		if er != nil {
-			return er
+		label = ex.Name
+		u.say("正在测试出站代理…")
+		ip, e := u.testExit(ex.Proxy)
+		if e != nil {
+			return e
 		}
 		u.printf("实际出口 IP：%s\n", ip)
 	}
-	next, e := BindExit(old, p.ID, id)
-	if e != nil {
+	next := old
+	var names []string
+	for _, p := range changed {
+		var e error
+		if next, e = BindExit(next, p.ID, id); e != nil {
+			return e
+		}
+		names = append(names, p.Name)
+	}
+	u.printf("将以下节点的出站改为 %s：%s（会重启这些节点）\n", label, strings.Join(names, "、"))
+	if !u.yes("确认修改", true) {
+		return u.err
+	}
+	if e := u.a.Commit(old, next, false); e != nil {
 		return e
 	}
-	if e = u.a.Commit(old, next, false); e != nil {
-		return e
-	}
-	u.good("出口已更新")
+	u.good("出站已更新")
 	return nil
 }
 func (u *UI) proxyInput() (Proxy, error) {
-	protocol := u.option("出口协议", []menuItem{item("socks5", "SOCKS5"), item("http", "HTTP CONNECT")}, "socks5")
+	protocol := u.option("代理协议", []menuItem{item("socks5", "SOCKS5"), item("http", "HTTP CONNECT")}, "socks5")
 	for u.err == nil {
 		raw := u.secret("输入代理 IP:端口:用户名:密码（IPv6 使用 [地址]:端口:用户名:密码）")
 		if u.err != nil {
@@ -746,41 +823,57 @@ func (u *UI) testExit(p Proxy) (string, error) {
 	return u.a.ProbeProxy(p)
 }
 
-// exits is the outbound manager. Exits are chosen by displayed number; their stable
-// IDs remain the persistent references in the configuration.
-func (u *UI) exits() error {
+// outbounds is Outbound Proxy Management. Proxies are chosen by displayed number;
+// their stable IDs remain the persistent references in the configuration.
+func (u *UI) outbounds() error {
 	for {
 		s, e := u.a.Load()
 		if e != nil {
 			return e
 		}
-		u.heading("出口管理")
+		u.heading("出站代理")
+		u.say("出站代理决定节点访问互联网时使用的出口；不设置则为直连。中转节点不使用出站代理。")
 		if len(s.Exits) == 0 {
-			u.say("暂无出口")
+			u.say("暂无出站代理")
 		}
 		for i, ex := range s.Exits {
-			u.exitLine(s, i+1, ex)
+			u.outboundLine(s, i+1, ex)
 		}
-		v := u.menu("", []menuItem{item("add", "添加出口"), item("test", "测试出口"), item("edit", "修改出口"), item("delete", "删除出口"), item("bind", "绑定或解绑节点")}, "返回")
+		direct := 0
+		for _, p := range u.exitUsers(s, "") {
+			if p.Kind == "node" {
+				direct++
+			}
+		}
+		use := u.a.T("未分配")
+		if direct > 0 {
+			use = fmt.Sprintf(u.a.T("%d 个节点使用"), direct)
+		}
+		fmt.Fprintf(u.writer(), "  %s %s — %s — %s\n", u.paint("36", "  ·"), u.bold(u.a.T("直连")), u.a.T("内置，不经过代理"), u.dim(use))
+		v := u.menu("", []menuItem{item("add", "创建出站代理"), item("edit", "编辑出站代理"), item("test", "测试出站代理"), item("delete", "删除出站代理"), item("assign", "分配给节点")}, "返回")
+		if u.err != nil || v == "" {
+			return u.err
+		}
+		if e = u.outboundAction(s, v); e != nil {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
+				return e
+			}
+			u.fail(u.a.Error(e))
+		}
 		if u.err != nil {
 			return u.err
 		}
-		if v == "" {
-			return nil
-		}
-		if e = u.exitAction(s, v); e != nil {
-			return e
-		}
 	}
 }
-func (u *UI) exitAction(s State, v string) error {
+func proxyName(p Proxy) string { return strings.ToUpper(p.Protocol) + "-" + p.Host }
+func (u *UI) outboundAction(s State, v string) error {
 	switch v {
 	case "add":
-		name := u.ask("出口名称", "Exit")
 		p, e := u.proxyInput()
 		if e != nil {
 			return e
 		}
+		name := u.ask("出站代理名称", proxyName(p))
 		if u.err != nil {
 			return u.err
 		}
@@ -788,26 +881,37 @@ func (u *UI) exitAction(s State, v string) error {
 		if e = u.a.Commit(s, next, false); e != nil {
 			return e
 		}
-		u.good("出口已保存，可测试后绑定到多个节点；未改变任何节点出口")
+		u.good("出站代理已保存；未改变任何节点。可在『分配给节点』中使用")
 		return nil
-	case "bind":
-		return u.bind()
+	case "assign":
+		u.say("1. 选择出站")
+		id, ok := u.pickOutbound(s, "")
+		if !ok {
+			return u.err
+		}
+		u.say("2. 选择要使用它的节点")
+		nodes := u.pickMany(nodesOnly(s), "节点编号，可多选，如 1 3，或 all（0 返回）")
+		if len(nodes) == 0 {
+			return u.err
+		}
+		return u.assignOutbound(s, nodes, id)
 	}
-	ex, ok := u.pickExitIndex(s)
+	ex, ok := u.pickProxy(s)
 	if !ok {
 		return u.err
 	}
+	users := u.exitUsers(s, ex.ID)
 	switch v {
 	case "test":
-		u.say("正在测试出口…")
+		u.say("正在测试出站代理…")
 		ip, e := u.testExit(ex.Proxy)
 		if e != nil {
 			return e
 		}
-		u.good(fmt.Sprintf(u.a.T("出口可用，实际出口 IP：%s"), ip))
+		u.good(fmt.Sprintf(u.a.T("出站代理可用，实际出口 IP：%s"), ip))
 	case "edit":
-		ex.Name = u.ask("出口名称", ex.Name)
-		previousProxy := ex.Proxy
+		ex.Name = u.ask("出站代理名称", ex.Name)
+		previous := ex.Proxy
 		if u.yes("修改代理地址或认证信息", false) {
 			var e error
 			if ex.Proxy, e = u.proxyInput(); e != nil {
@@ -817,35 +921,37 @@ func (u *UI) exitAction(s State, v string) error {
 		if u.err != nil {
 			return u.err
 		}
-		users := u.exitUsers(s, ex.ID)
-		if ex.Proxy != previousProxy && users > 0 {
+		if ex.Proxy != previous && len(users) > 0 {
 			if _, e := u.testExit(ex.Proxy); e != nil {
 				return e
 			}
-		}
-		prompt := "保存出口修改"
-		if ex.Proxy != previousProxy && users > 0 {
-			prompt = fmt.Sprintf(u.a.T("保存出口修改（将重启使用该出口的 %d 个节点）"), users)
-		}
-		if !u.yes(prompt, false) {
-			return u.err
+			if !u.yes(fmt.Sprintf(u.a.T("保存修改（将重启使用它的 %d 个节点）"), len(users)), true) {
+				return u.err
+			}
 		}
 		if e := u.a.Commit(s, UpsertExit(s, ex), false); e != nil {
 			return e
 		}
-		u.good("出口已更新")
+		u.good("出站代理已更新")
 	case "delete":
+		if len(users) > 0 {
+			var names []string
+			for _, p := range users {
+				names = append(names, p.Name)
+			}
+			return fmt.Errorf(u.a.T("出站代理仍被以下节点使用：%s；请先在『分配给节点』中改为其他出站或直连"), strings.Join(names, "、"))
+		}
 		next, e := DeleteExit(s, ex.ID)
 		if e != nil {
 			return e
 		}
-		if !u.yes(fmt.Sprintf(u.a.T("删除出口 %s"), ex.Name), false) {
+		if !u.yes(fmt.Sprintf(u.a.T("删除出站代理 %s"), ex.Name), false) {
 			return u.err
 		}
 		if e = u.a.Commit(s, next, false); e != nil {
 			return e
 		}
-		u.good("出口已删除")
+		u.good("出站代理已删除")
 	}
 	return nil
 }
@@ -926,7 +1032,7 @@ func (u *UI) exportAll(s State) error {
 	return nil
 }
 func (u *UI) links() error {
-	v := u.menu("导出链接", []menuItem{item("one", "单个节点链接（可复制）"), item("all", "全部节点链接"), item("client", "sing-box 客户端配置")}, "返回")
+	v := u.menu("连接链接", []menuItem{item("one", "查看或复制单个节点链接"), item("all", "查看全部节点链接"), item("client", "导出 sing-box 客户端配置")}, "返回")
 	if v == "" {
 		return u.err
 	}
@@ -947,21 +1053,19 @@ func (u *UI) links() error {
 	return u.copy(p)
 }
 
-// manage is the node manager: global actions first, per-node actions in a submenu.
+// manage is Node Management (proxy nodes; relays have their own menu).
 func (u *UI) manage() error {
 	for {
-		v := u.menu("节点管理", []menuItem{item("view", "查看节点"), item("add", "添加节点"), item("edit", "编辑节点"), item("delete", "删除节点"), item("restart", "重启节点"), item("links", "导出链接")}, "返回")
-		if u.err != nil {
+		v := u.menu("节点管理", []menuItem{item("view", "查看节点"), item("add", "创建节点"), item("edit", "编辑节点"), item("delete", "删除节点"), item("restart", "重启节点"), item("links", "连接链接")}, "返回")
+		if u.err != nil || v == "" {
 			return u.err
 		}
 		var e error
 		switch v {
-		case "":
-			return nil
 		case "view":
 			var s State
 			if s, e = u.a.Load(); e == nil {
-				u.viewNodes(s)
+				u.viewNodes(nodesOnly(s))
 			}
 		case "add":
 			e = u.create()
@@ -971,7 +1075,7 @@ func (u *UI) manage() error {
 			var s State
 			var p Profile
 			if s, e = u.a.Load(); e == nil {
-				if p, e = u.pick(s, false); e == nil && p.ID != "" {
+				if p, e = u.pick(s, true); e == nil && p.ID != "" {
 					switch v {
 					case "edit":
 						e = u.nodeMenu(p.ID)
@@ -990,7 +1094,7 @@ func (u *UI) manage() error {
 			}
 		}
 		if e != nil {
-			if errors.Is(e, io.EOF) {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
 				return e
 			}
 			u.fail(u.a.Error(e))
@@ -1001,7 +1105,7 @@ func (u *UI) manage() error {
 	}
 }
 
-// nodeMenu shows only the operations that apply to the selected entry.
+// nodeMenu shows only the operations that apply to the selected node.
 func (u *UI) nodeMenu(id string) error {
 	for {
 		s, e := u.a.Load()
@@ -1012,32 +1116,25 @@ func (u *UI) nodeMenu(id string) error {
 		if e != nil {
 			return e
 		}
+		if p.Kind == "relay" {
+			return u.relayEdit(p.ID)
+		}
 		u.heading(p.Name)
-		u.nodeCard(s, 0, p)
+		u.nodeCard(s, 0, p, u.trafficDB())
 		toggle := "停用节点"
 		if !p.Enabled {
 			toggle = "启用节点"
 		}
-		items := []menuItem{item("link", "查看或复制链接"), item("name", "修改名称"), item("address", "修改端口或地址")}
-		if p.Kind == "node" {
-			items = append(items, item("exit", "选择出口"))
-		}
-		items = append(items, item("toggle", toggle), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量管理"))
-		if p.Kind == "node" {
-			items = append(items, item("credentials", "重置凭据"))
-		}
+		items := []menuItem{item("link", "查看或复制连接链接"), item("name", "重命名"), item("address", "修改端口或公网地址"), item("exit", "选择出站代理"), item("toggle", toggle), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据")}
 		if _, ok := p.CertificateExpiry(); ok {
 			items = append(items, item("cert", "证书管理"))
 		}
 		v := u.menu("", items, "返回")
-		if u.err != nil {
+		if u.err != nil || v == "" {
 			return u.err
 		}
-		if v == "" {
-			return nil
-		}
 		if e = u.nodeAction(s, p, v); e != nil {
-			if errors.Is(e, io.EOF) {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
 				return e
 			}
 			u.fail(u.a.Error(e))
@@ -1046,6 +1143,52 @@ func (u *UI) nodeMenu(id string) error {
 			return u.err
 		}
 	}
+}
+
+// nodeAddress edits the listening port or the public endpoint. On a regular VPS the
+// public port follows the listening port; on NAT it is the provider's mapping.
+func (u *UI) nodeAddress(p *Profile) error {
+	v := u.option("修改哪一项？", []menuItem{
+		itemNote("port", "监听端口", "本服务器上节点实际监听的端口"),
+		itemNote("public", "公网地址和端口", "客户端连接使用的地址；写入分享链接，不会重启节点"),
+	}, "port")
+	if u.err != nil {
+		return u.err
+	}
+	settings, e := u.a.LoadSettings()
+	if e != nil {
+		return e
+	}
+	if v == "public" {
+		for u.err == nil {
+			p.PublicHost = u.ask("公网 IP 或域名", p.PublicHost)
+			if validHost(p.PublicHost) {
+				break
+			}
+			u.say("地址或端口无效")
+		}
+		p.PublicPort = u.askPortValue("公网端口", p.PublicPort)
+		return u.err
+	}
+	oldPort := p.Port
+	p.Port = u.askPortValue("监听端口", p.Port)
+	if u.err != nil {
+		return u.err
+	}
+	if !p.NAT {
+		if p.PublicPort == oldPort {
+			p.PublicPort = p.Port
+		}
+		return nil
+	}
+	def := 0
+	if settings.Server != nil && settings.Server.NAT && p.Port >= settings.Server.LocalStart && p.Port <= settings.Server.LocalEnd {
+		def = settings.Server.PublicStart + p.Port - settings.Server.LocalStart
+	} else if settings.Server != nil && settings.Server.NAT {
+		u.warnf("端口 %d 不在已保存的 NAT 范围 %d-%d 内，请确认商家确实映射了此端口", p.Port, settings.Server.LocalStart, settings.Server.LocalEnd)
+	}
+	p.PublicPort = u.askPortValue(fmt.Sprintf(u.a.T("商家映射到内部端口 %d 的公网端口"), p.Port), def)
+	return u.err
 }
 func (u *UI) nodeAction(s State, p Profile, v string) error {
 	switch v {
@@ -1064,20 +1207,16 @@ func (u *UI) nodeAction(s State, p Profile, v string) error {
 	case "name":
 		p.Name = u.ask("节点名称", p.Name)
 	case "address":
-		p.PublicHost = u.ask("公网连接 IP 或域名", p.PublicHost)
-		p.Port = u.port("本地端口", p.Port)
-		p.PublicPort = u.port("公网端口", p.PublicPort)
-		settings, e := u.a.LoadSettings()
-		if e != nil {
+		if e := u.nodeAddress(&p); e != nil {
 			return e
 		}
-		if p.NAT && settings.Server != nil && settings.Server.NAT && !AllowedPort(p, *settings.Server) {
-			return errors.New("端口超出 NAT 分配范围")
-		}
 	case "toggle":
+		if p.Enabled && !u.yes(fmt.Sprintf(u.a.T("停用 %s（服务会停止，客户端将无法连接）"), p.Name), true) {
+			return u.err
+		}
 		p.Enabled = !p.Enabled
 	case "credentials":
-		if !u.yes("重置后需要重新导入客户端链接", false) {
+		if !u.yes("重置后旧链接立即失效，需要重新导入客户端链接", false) {
 			return u.err
 		}
 		fresh, e := NewProfile(p.Protocol)
@@ -1097,7 +1236,7 @@ func (u *UI) nodeAction(s State, p Profile, v string) error {
 		return e
 	}
 	u.good("已保存")
-	if v == "credentials" {
+	if v == "credentials" || v == "address" {
 		return u.copy(p)
 	}
 	return nil
@@ -1139,62 +1278,189 @@ func (u *UI) certificate(s State, p Profile) error {
 	u.good("证书已更新；请重新导入以下链接")
 	return u.copy(p)
 }
+
+// trafficMenu is Traffic and Limits: an overview of every node, then one node.
 func (u *UI) trafficMenu() error {
 	s, e := u.a.Load()
 	if e != nil {
 		return e
 	}
-	p, e := u.pick(s, false)
-	if e != nil || p.ID == "" {
-		return e
+	u.heading("流量与限额")
+	if !u.a.trafficActive() {
+		u.warn("流量统计未启用：运行 rout traffic install（需要 nftables）")
 	}
-	return u.trafficManage(p)
+	if len(s.Profiles) == 0 {
+		u.say("暂无节点")
+		return nil
+	}
+	db := u.trafficDB()
+	for i, p := range s.Profiles {
+		use := u.usage(db, p)
+		if use == "" {
+			use = u.a.T("暂无数据")
+		}
+		fmt.Fprintf(u.writer(), "  %s %s  %s\n", u.paint("36", fmt.Sprintf("%2d.", i+1)), u.bold(p.Name), use)
+	}
+	n := u.number("选择节点编号查看或设置限额（0 返回）", len(s.Profiles))
+	if n <= 0 {
+		return u.err
+	}
+	return u.trafficManage(s.Profiles[n-1])
 }
-func (u *UI) settings() error {
-	v := u.menu("设置与语言", []menuItem{item("language", "切换语言"), item("server", "服务器默认设置"), item("backups", "自动备份保留数量")}, "返回")
-	switch v {
-	case "language":
-		return u.initLanguage(true)
-	case "server":
-		s, e := u.askServer(false) // Edit every field, starting from the saved values.
-		if e != nil {
-			return e
+
+// services is Service Management for every node and relay plus the traffic monitor.
+func (u *UI) services() error {
+	for {
+		v := u.menu("服务管理", []menuItem{item("status", "服务状态"), item("restart", "重启节点或中转"), item("toggle", "启动或停止节点或中转"), item("logs", "查看日志"), item("apply", "重新应用全部配置"), item("monitor", "安装或更新流量监控服务")}, "返回")
+		if u.err != nil || v == "" {
+			return u.err
 		}
-		return u.saveServer(s)
-	case "backups":
-		saved, e := u.a.LoadSettings()
-		if e != nil {
-			return e
-		}
-		keep := saved.BackupKeep
-		if keep == 0 {
-			keep = defaultBackupKeep
-		}
-		for u.err == nil {
-			n, e := strconv.Atoi(u.ask("保留最近的自动备份数量（1–1000）", itoa(keep)))
-			if e == nil && n >= 1 && n <= 1000 {
-				saved.BackupKeep = n
-				break
+		s, e := u.a.Load()
+		if e == nil {
+			switch v {
+			case "status":
+				if len(s.Profiles) == 0 {
+					u.say("暂无节点")
+				}
+				for _, p := range s.Profiles {
+					kind := ProtocolLabel(p.Protocol)
+					if p.Kind == "relay" {
+						kind = u.a.T("中转")
+					}
+					fmt.Fprintf(u.writer(), "  %s  %s  %s\n", pad(p.Name, 24), pad(kind, 8), u.nodeStatus(p))
+				}
+				if u.a.trafficActive() {
+					m, _ := u.a.serviceManager()
+					state := u.a.T("未运行")
+					if m == "none" || serviceActive(m, u.a.trafficService()) {
+						state = u.a.T("运行中")
+					}
+					fmt.Fprintf(u.writer(), "  %s  %s\n", pad(u.a.T("流量监控"), 34), state)
+				}
+			case "apply":
+				if u.yes("重新校验并应用全部配置（会依次重启所有节点和中转）", false) {
+					if e = u.a.Commit(s, s, true); e == nil {
+						u.good("已重新应用")
+					}
+				}
+			case "monitor":
+				if e = u.a.InstallTraffic(); e == nil {
+					u.good("流量监控服务已就绪")
+				}
+			default:
+				var p Profile
+				if p, e = u.pick(s, false); e == nil && p.ID != "" {
+					switch v {
+					case "restart":
+						if e = u.a.Restart(p.ID); e == nil {
+							u.good("已重启")
+						}
+					case "logs":
+						e = u.a.Logs(p)
+					case "toggle":
+						if p.Enabled && !u.yes(fmt.Sprintf(u.a.T("停用 %s（服务会停止，客户端将无法连接）"), p.Name), true) {
+							break
+						}
+						p.Enabled = !p.Enabled
+						if e = u.a.Commit(s, replace(s, p), false); e == nil {
+							u.good("已保存")
+						}
+					}
+				}
 			}
-			u.say("请输入 1–1000")
+		}
+		if e != nil {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
+				return e
+			}
+			u.fail(u.a.Error(e))
 		}
 		if u.err != nil {
 			return u.err
 		}
-		if saved.Language == "" {
-			saved.Language = u.a.Language
-		}
-		return u.a.SaveSettings(saved)
 	}
-	return u.err
+}
+func (u *UI) settings() error {
+	for {
+		v := u.menu("设置", []menuItem{item("language", "语言 / Language"), item("server", "服务器类型与默认设置（VPS / NAT）"), item("backups", "自动备份保留数量"), item("backup", "备份与恢复"), item("uninstall", "卸载 Rout")}, "返回")
+		if u.err != nil || v == "" {
+			return u.err
+		}
+		var e error
+		switch v {
+		case "language":
+			e = u.initLanguage(true)
+		case "server":
+			var setup ServerSetup
+			if setup, e = u.askServer(false); e == nil {
+				if e = u.saveServer(setup); e == nil {
+					u.good("服务器设置已保存；现有节点不受影响")
+				}
+			}
+		case "backups":
+			e = u.backupRetention()
+		case "backup":
+			e = u.backupMenu()
+		case "uninstall":
+			if u.confirmWord("卸载会删除所有节点、中转、出站代理、配置、备份和 Rout 程序；其他软件不受影响", "uninstall") {
+				if e = u.a.Uninstall(); e == nil {
+					u.err = errQuit
+				}
+			} else {
+				u.say("已取消")
+			}
+		}
+		if e != nil {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
+				return e
+			}
+			u.fail(u.a.Error(e))
+		}
+		if u.err != nil {
+			return u.err
+		}
+	}
+}
+func (u *UI) backupRetention() error {
+	saved, e := u.a.LoadSettings()
+	if e != nil {
+		return e
+	}
+	keep := saved.BackupKeep
+	if keep == 0 {
+		keep = defaultBackupKeep
+	}
+	for u.err == nil {
+		n, e := strconv.Atoi(strings.TrimSpace(u.ask("保留最近的自动备份数量（1–1000）", itoa(keep))))
+		if e == nil && n >= 1 && n <= 1000 {
+			saved.BackupKeep = n
+			break
+		}
+		u.say("请输入 1–1000")
+	}
+	if u.err != nil {
+		return u.err
+	}
+	if saved.Language == "" {
+		saved.Language = u.a.Language
+	}
+	return u.a.SaveSettings(saved)
 }
 
+// defaultBackupPath lives outside the configuration directory, which uninstall removes.
+func (u *UI) defaultBackupPath() string {
+	dir := "/root"
+	if u.a.Home != "/etc/rout" {
+		dir = filepath.Dir(u.a.Home)
+	}
+	return filepath.Join(dir, "rout-backup-"+time.Now().Format("20060102")+".json")
+}
 func (u *UI) backupMenu() error {
 	v := u.menu("备份与恢复", []menuItem{item("backup", "创建备份"), item("restore", "从备份恢复")}, "返回")
 	if v == "" {
 		return u.err
 	}
-	path := u.ask("备份文件路径", filepath.Join(u.a.Home, "rout-backup.json"))
+	path := u.ask("备份文件路径", u.defaultBackupPath())
 	if u.err != nil {
 		return u.err
 	}
@@ -1205,7 +1471,7 @@ func (u *UI) backupMenu() error {
 		u.good("备份已保存（包含认证信息和私钥，请妥善保管）")
 		return nil
 	}
-	if !u.yes("使用备份替换当前配置", false) {
+	if !u.yes("使用备份替换当前配置（当前配置会先自动备份）", false) {
 		return u.err
 	}
 	if e := u.a.Restore(path); e != nil {
@@ -1214,14 +1480,48 @@ func (u *UI) backupMenu() error {
 	u.good("配置已恢复")
 	return nil
 }
+func (u *UI) updates() error {
+	v := u.menu("更新", []menuItem{item("rout", "更新 Rout（拒绝降级，现有节点继续运行）"), item("engines", "检查并修复内核程序（sing-box / GOST）")}, "返回")
+	switch v {
+	case "rout":
+		return SelfUpdate(u.a.Language)
+	case "engines":
+		for _, name := range []string{"sing-box", "gost"} {
+			if e := u.a.EnsureEngine(name); e != nil {
+				return e
+			}
+		}
+		u.good("内核程序已就绪并通过校验")
+	}
+	return u.err
+}
+
+// summary is one status line above the main menu.
+func (u *UI) summary(s State) string {
+	nodes, relays, running, paused := 0, 0, 0, 0
+	db := u.trafficDB()
+	for _, p := range s.Profiles {
+		if p.Kind == "relay" {
+			relays++
+		} else {
+			nodes++
+		}
+		if p.Enabled && u.a.Running(p) == u.a.T("运行中") {
+			running++
+		}
+		if db != nil && db.Records[p.ID].Blocked != "" && p.trafficPolicy().LimitBytes > 0 {
+			paused++
+		}
+	}
+	line := fmt.Sprintf(u.a.T("%d 个节点 · %d 个中转 · %d 个运行中"), nodes, relays, running)
+	if paused > 0 {
+		line += " · " + fmt.Sprintf(u.a.T("%d 个因流量暂停"), paused)
+	}
+	return line
+}
 
 // notices lists conditions that need attention, shown once when the menu opens.
-func (u *UI) notices() {
-	s, e := u.a.Load()
-	if e != nil {
-		u.fail(u.a.Error(e))
-		return
-	}
+func (u *UI) notices(s State) {
 	now := time.Now()
 	limited := false
 	for _, p := range s.Profiles {
@@ -1244,7 +1544,7 @@ func (u *UI) notices() {
 		for _, p := range s.Profiles {
 			switch db.Records[p.ID].Blocked {
 			case blockFault:
-				u.warnf("%s 因计量缺口暂停，可在流量管理中选择保留已知用量并恢复", p.Name)
+				u.warnf("%s 因计量缺口暂停，可在 流量与限额 中选择保留已知用量并恢复", p.Name)
 			case blockQuota:
 				u.warnf("%s 已达流量上限，将在下个账单周期恢复", p.Name)
 			}
@@ -1252,9 +1552,10 @@ func (u *UI) notices() {
 	}
 }
 func (u *UI) menu0() []menuItem {
-	return []menuItem{item("create", "创建节点"), item("nodes", "节点管理"), item("exits", "出口管理"), item("relay", "节点中转"), item("traffic", "流量管理"), item("doctor", "系统诊断"), item("backup", "备份与恢复"), item("settings", "设置与语言"), item("update", "更新 Rout"), item("uninstall", "卸载")}
+	return []menuItem{item("nodes", "节点管理"), item("relays", "中转管理"), item("outbounds", "出站代理"), item("traffic", "流量与限额"), item("services", "服务管理"), item("settings", "设置"), item("doctor", "诊断"), item("updates", "更新")}
 }
 func (u *UI) mainMenu() error {
+	u.showLogo()
 	if e := u.initLanguage(false); e != nil {
 		if errors.Is(e, io.EOF) {
 			return nil
@@ -1268,11 +1569,19 @@ func (u *UI) mainMenu() error {
 			}
 		}
 	}
-	u.notices()
+	if s, e := u.a.Load(); e != nil {
+		u.fail(u.a.Error(e))
+	} else {
+		u.notices(s)
+	}
 	for {
-		v := u.menu("Rout "+Version, u.menu0(), "退出")
+		title := "Rout " + Version
+		if s, e := u.a.Load(); e == nil {
+			title += "  ·  " + u.summary(s)
+		}
+		v := u.menu(title, u.menu0(), "退出")
 		if u.err != nil {
-			if errors.Is(u.err, io.EOF) {
+			if errors.Is(u.err, io.EOF) || errors.Is(u.err, errQuit) {
 				return nil
 			}
 			return u.err
@@ -1281,39 +1590,31 @@ func (u *UI) mainMenu() error {
 		switch v {
 		case "":
 			return nil
-		case "create":
-			e = u.create()
 		case "nodes":
 			e = u.manage()
-		case "exits":
-			e = u.exits()
-		case "relay":
-			e = u.relay()
+		case "relays":
+			e = u.relays()
+		case "outbounds":
+			e = u.outbounds()
 		case "traffic":
 			e = u.trafficMenu()
-		case "doctor":
-			e = u.doctor(false)
-		case "backup":
-			e = u.backupMenu()
+		case "services":
+			e = u.services()
 		case "settings":
 			e = u.settings()
-		case "update":
-			e = SelfUpdate(u.a.Language)
-		case "uninstall":
-			if u.yes("卸载所有 Rout 节点、配置和程序（不影响其他工具）", false) {
-				if e = u.a.Uninstall(); e == nil {
-					return nil
-				}
-			}
+		case "doctor":
+			e = u.doctor(false)
+		case "updates":
+			e = u.updates()
 		}
 		if e != nil {
-			if errors.Is(e, io.EOF) {
+			if errors.Is(e, io.EOF) || errors.Is(e, errQuit) {
 				return nil
 			}
 			u.fail(u.a.Error(e))
 		}
 		if u.err != nil {
-			if errors.Is(u.err, io.EOF) {
+			if errors.Is(u.err, io.EOF) || errors.Is(u.err, errQuit) {
 				return nil
 			}
 			return u.err

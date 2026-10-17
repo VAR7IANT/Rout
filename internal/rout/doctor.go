@@ -94,7 +94,7 @@ func (u *UI) doctor(fix bool) error {
 	if _, e = a.LoadSettings(); e != nil {
 		d.bad("设置无法读取：%s", a.Error(e))
 	}
-	d.ok("配置有效：%d 个节点或线路，%d 个出口", len(s.Profiles), len(s.Exits))
+	d.ok("配置有效：%d 个节点或中转，%d 个出站代理", len(s.Profiles), len(s.Exits))
 	d.permissions()
 
 	u.heading("内核")
@@ -135,7 +135,7 @@ func (u *UI) doctor(fix bool) error {
 		d.profile(s, p, manager, now)
 	}
 	if len(s.Profiles) == 0 {
-		u.say("暂无节点或线路")
+		u.say("暂无节点")
 	}
 
 	u.heading("流量统计")
@@ -279,7 +279,7 @@ func (d *doctorRun) traffic(s State, manager string) {
 		case blockQuota:
 			d.warn("%s：已达流量上限", label)
 		case blockFault:
-			d.warn("%s：计量缺口保护暂停（流量管理 → 保留已知用量并恢复）", label)
+			d.warn("%s：计量缺口保护暂停（流量与限额 → 保留已知用量并恢复）", label)
 		case blockSealed:
 			d.warn("%s：等待流量监控校验检查点后恢复", label)
 		}

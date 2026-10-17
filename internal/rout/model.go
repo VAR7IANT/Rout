@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.2.2"
+const Version = "0.3.0"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -58,6 +58,7 @@ type Profile struct {
 	Outbound     *Proxy         `json:"outbound,omitempty"`
 	ExitID       string         `json:"exit_id,omitempty"`
 	Network      string         `json:"network,omitempty"`
+	RelayMode    string         `json:"relay_mode,omitempty"` // relay destination: "local"/"remote"; inferred when empty (pre-v0.3)
 	TLSGenerated bool           `json:"tls_generated,omitempty"`
 	Traffic      *TrafficPolicy `json:"traffic,omitempty"`
 	CreatedAt    *time.Time     `json:"created_at,omitempty"`
@@ -205,7 +206,7 @@ func (p Profile) Validate() error {
 		return errors.New("节点网络限制无效")
 	}
 	if !idPattern.MatchString(p.ID) {
-		return errors.New("线路 ID 无效")
+		return errors.New("节点 ID 无效")
 	}
 	if strings.TrimSpace(p.Name) == "" || len(p.Name) > 160 || strings.ContainsAny(p.Name, "\r\n\x00") {
 		return errors.New("节点名称无效")
@@ -217,20 +218,25 @@ func (p Profile) Validate() error {
 		if p.Protocol != "tcp" && p.Protocol != "udp" && p.Protocol != "both" {
 			return errors.New("转发类型无效")
 		}
+		if p.RelayMode != "" && p.RelayMode != relayLocal && p.RelayMode != relayRemote {
+			return errors.New("中转目标类型无效")
+		}
 		h, n, e := ParseEndpoint(p.Target)
 		if e != nil {
 			return e
 		}
 		localIP := net.ParseIP(h)
 		if (strings.EqualFold(h, p.PublicHost) && n == p.PublicPort) || (n == p.Port && (h == p.Listen || h == "localhost" || (localIP != nil && localIP.IsLoopback()))) {
-			return errors.New("目标地址指向本线路，会形成循环")
+			return errors.New("目标地址指向本中转自身，会形成转发循环")
 		}
 		if p.TargetURI != "" {
 			target, network, e := ParseTarget(p.TargetURI)
 			if e != nil {
 				return e
 			}
-			if target != p.Target {
+			// A local relay may reuse a managed node's link only to build its share link;
+			// the target is then 127.0.0.1, not the address inside that link.
+			if target != p.Target && p.RelayMode != relayLocal {
 				return errors.New("目标与节点链接不一致")
 			}
 			if network != "both" && p.Protocol != network {
@@ -238,12 +244,12 @@ func (p Profile) Validate() error {
 			}
 		}
 		if p.Outbound != nil {
-			return errors.New("原样转发线路不能绑定代理出口")
+			return errors.New("中转节点不能使用出站代理")
 		}
 		return nil
 	}
 	if p.Kind != "node" {
-		return errors.New("线路类型无效")
+		return errors.New("节点类型无效")
 	}
 	if p.Outbound != nil {
 		if e := p.Outbound.Validate(); e != nil {
@@ -306,7 +312,7 @@ func (p Profile) Validate() error {
 // edited entries only, so an existing state file always stays loadable and repairable.
 func (p Profile) CheckCompatibility() error {
 	if p.Kind == "node" && p.Protocol == "ss" && p.Network == "udp" && p.Outbound != nil {
-		return errors.New("仅 UDP 的 Shadowsocks 不能使用代理出口（出口仅转发 TCP），请使用 TCP＋UDP 映射或改为 VPS 直连")
+		return errors.New("仅 UDP 的 Shadowsocks 不能使用出站代理（出站代理只转发 TCP），请使用 TCP＋UDP 映射或改为直连")
 	}
 	return nil
 }
@@ -343,7 +349,7 @@ func (s State) Validate() error {
 			return fmt.Errorf("%s: %w", p.Name, e)
 		}
 		if ids[p.ID] {
-			return errors.New("线路 ID 重复")
+			return errors.New("节点 ID 重复")
 		}
 		ids[p.ID] = true
 		// Reserve the same network/port across addresses: conservative and portable.
@@ -417,13 +423,41 @@ func RewriteURI(raw, host string, port int, name string) (string, error) {
 	u.Host = net.JoinHostPort(host, strconv.Itoa(port))
 	u.RawQuery = q.Encode()
 	u.Fragment = name
-	return u.String(), nil
+	// Keep the credentials exactly as written: re-encoding would drop SIP002's
+	// required percent-encoding of "+", "/" and "=" in AEAD-2022 keys.
+	return withRawUserinfo(u.String(), raw), nil
+}
+
+// userinfoSpan locates the userinfo inside scheme://userinfo@host/...
+func userinfoSpan(s string) (start, end int, ok bool) {
+	i := strings.Index(s, "://")
+	if i < 0 {
+		return 0, 0, false
+	}
+	rest := s[i+3:]
+	stop := strings.IndexAny(rest, "/?#")
+	if stop < 0 {
+		stop = len(rest)
+	}
+	at := strings.LastIndex(rest[:stop], "@")
+	if at < 0 {
+		return 0, 0, false
+	}
+	return i + 3, i + 3 + at, true
+}
+func withRawUserinfo(out, original string) string {
+	from, to, ok1 := userinfoSpan(original)
+	start, end, ok2 := userinfoSpan(out)
+	if !ok1 || !ok2 {
+		return out
+	}
+	return out[:start] + original[from:to] + out[end:]
 }
 
 func (p Profile) URI() (string, error) {
 	if p.Kind == "relay" {
 		if p.TargetURI == "" {
-			return "", errors.New("此线路使用手动目标地址，没有原始协议链接")
+			return "", errors.New("此中转没有目标节点的分享链接；客户端请直接连接中转入口")
 		}
 		return RewriteURI(p.TargetURI, p.PublicHost, p.PublicPort, p.Name)
 	}

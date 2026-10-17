@@ -66,13 +66,17 @@ func ParseTrafficLimit(s string) (uint64, error) {
 	}
 	return v.Num().Uint64(), nil
 }
+
+// FormatTraffic shows decimal units with at most two decimals (100 GB, 38.25 GB).
+// It truncates rather than rounds, so usage never appears to reach a limit early.
 func FormatTraffic(n uint64) string {
 	for _, u := range []struct {
 		name string
 		n    uint64
 	}{{"TB", 1_000_000_000_000}, {"GB", 1_000_000_000}, {"MB", 1_000_000}} {
 		if n >= u.n {
-			return fmt.Sprintf("%.3f %s", float64(n)/float64(u.n), u.name)
+			v := fmt.Sprintf("%d.%02d", n/u.n, n%u.n*100/u.n)
+			return strings.TrimSuffix(strings.TrimRight(v, "0"), ".") + " " + u.name
 		}
 	}
 	return fmt.Sprintf("%d B", n)

@@ -202,12 +202,12 @@ func (a *App) ProbeProxy(p Proxy) (string, error) {
 }
 func (a *App) Probe(p Profile) error {
 	if !p.Enabled {
-		return errors.New("线路未启用")
+		return errors.New("节点已停用")
 	}
 	v4, v6 := DetectPublicIPs()
-	a.printf("VPS 直连 IPv4：%s\n", orUnavailable(a, v4))
-	a.printf("VPS 直连 IPv6：%s\n", orUnavailable(a, v6))
-	a.say("正在通过本地节点入口测试完整线路…")
+	a.printf("本服务器公网 IPv4：%s\n", orUnavailable(a, v4))
+	a.printf("本服务器公网 IPv6：%s\n", orUnavailable(a, v6))
+	a.say("正在通过本地入口测试完整连接…")
 	port, e := freePort()
 	if e != nil {
 		return e
@@ -239,11 +239,11 @@ func (a *App) Probe(p Profile) error {
 				if first == nil {
 					first = e
 				}
-				a.printf("线路出口 %s：不可用\n", family.label)
+				a.printf("经此节点的出口 %s：不可用\n", family.label)
 				continue
 			}
 			ok = true
-			a.printf("线路出口 %s：%s\n", family.label, ip)
+			a.printf("经此节点的出口 %s：%s\n", family.label, ip)
 		}
 		if !ok {
 			return first
@@ -251,7 +251,7 @@ func (a *App) Probe(p Profile) error {
 		return nil
 	})
 	if e == nil {
-		a.say("本地入口、协议握手与出口请求通过；公网端口仍需在外部客户端验证")
+		a.say("本地入口、协议握手与出站请求均已通过；公网端口仍需用外部客户端验证")
 	}
 	return e
 }

@@ -322,7 +322,7 @@ func TestKernelTwoNodesShareOneExit(t *testing.T) {
 		if e := a.writeProfile(p); e != nil {
 			t.Fatal(e)
 		}
-		startEngine(t, a.enginePath("sing-box"), "run", "-c", filepath.Join(a.profileDir(p.ID), "config.json"))
+		startEngine(t, profileSockets(p), a.enginePath("sing-box"), "run", "-c", filepath.Join(a.profileDir(p.ID), "config.json"))
 	}
 	request := func(p Profile) error {
 		port, _ := freePort()
@@ -767,7 +767,7 @@ func TestKernelRelayPathCountedOncePerNode(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	startEngine(t, a.enginePath("gost"), "-C", configFile(t, c))
+	startEngine(t, profileSockets(relay), a.enginePath("gost"), "-C", configFile(t, c))
 	conn, e := net.Dial("udp", net.JoinHostPort("127.0.0.1", itoa(port)))
 	if e != nil {
 		t.Fatal(e)

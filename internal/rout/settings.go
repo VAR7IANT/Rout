@@ -15,6 +15,8 @@ type Settings struct {
 	Server   *ServerSetup `json:"server,omitempty"`
 	// Automatic pre-change backups to keep; 0 means the default (20).
 	BackupKeep int `json:"backup_keep,omitempty"`
+	// Last relay destination type chosen ("local"/"remote"), offered as the default.
+	RelayMode string `json:"relay_mode,omitempty"`
 }
 type ServerSetup struct {
 	NAT         bool   `json:"nat"`

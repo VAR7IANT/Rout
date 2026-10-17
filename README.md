@@ -1,10 +1,10 @@
 # Rout
 
-Create proxy nodes, relay existing servers and manage reusable proxy exits on a regular VPS or a NAT VPS — from one small, dependency-free binary with a bilingual terminal menu (**简体中文** / **English**).
+Create proxy nodes, relay traffic to this or another server and manage reusable outbound proxies on a regular VPS or a NAT VPS — from one small, dependency-free binary with a bilingual terminal menu (**简体中文** / **English**).
 
 - Five node protocols: **VLESS Reality, AnyTLS Reality, Shadowsocks 2022, Hysteria2, TUIC v5**
-- TCP/UDP relays that keep the original node's credentials
-- Reusable **SOCKS5 / HTTP CONNECT exits** shared by many nodes, with no direct-IP fallback
+- Guided TCP/UDP relays to a service on this server or to a remote server, with a full path preview, loop checks and the original node's credentials kept
+- Reusable **SOCKS5 / HTTP CONNECT outbound proxies** shared by many nodes, with no silent direct-IP fallback
 - Exact per-node **traffic accounting and hard monthly quotas** in the kernel (nftables)
 - **systemd and OpenRC**, IPv4-only, IPv6-only and dual-stack hosts, NAT port ranges
 
@@ -17,7 +17,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.2.2`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -29,16 +29,20 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-  1  Create nodes          → server type once, a base name once, pick protocols
-  2  Manage nodes          → view / add / edit / delete / restart / export links
-  3  Manage exits          → add, test, edit, delete, bind exits by number
-  4  Relay a node
-  5  Traffic management
-  6  Diagnostics
-  ...
+  1  Manage nodes          → view / create / edit / delete / restart / connection links
+  2  Relays                → view / create / edit / test / delete
+  3  Outbound proxies      → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
+  4  Traffic and limits    → usage of every node; limit in GB, billing day, reset, pause
+  5  Services
+  6  Settings              → language, server type and defaults, backups, uninstall
+  7  Diagnostics
+  8  Updates
+  0  Quit
 ```
 
-Creating `Tokyo` with VLESS, SS and HY2 produces `Tokyo-VLESS`, `Tokyo-SS` and `Tokyo-HY2`, each with its own service, generated credentials and a complete share link. A repeated name becomes `Tokyo-VLESS-2`. Every menu lists numbered choices; `0` always goes back (or exits).
+The interactive menu opens with a ROUT banner once per session: the logo in a blue gradient on 256-colour terminals, with "Support by VAR7IANT" and the running version centered beneath it, or a one-line title on terminals narrower than 39 columns. It is never printed for commands, pipes or scripts, and `NO_COLOR` or `TERM=dumb` disables all colour.
+
+Creating `Tokyo` with VLESS, SS and HY2 produces `Tokyo-VLESS`, `Tokyo-SS` and `Tokyo-HY2`, each with its own service, generated credentials and a complete share link. A repeated name becomes `Tokyo-VLESS-2`. Every menu lists numbered choices: `0` or `b` goes back and `q` quits Rout from any menu. Answers are case-insensitive (`y`, `Y`, `yes`, `YES`; full-width input works too). Enter takes the default shown in capitals: `[Y/n]` for ordinary confirmations, `[y/N]` for deletions. Irreversible actions (manual traffic reset, uninstall) require typing the word shown, such as `reset`.
 
 ## Supported protocols
 
@@ -54,30 +58,49 @@ When a Reality protocol is selected, Rout checks from the server that the SNI ta
 
 ## NAT and VPS setup
 
-The first creation asks once whether the machine is a regular VPS or a NAT VPS, then saves the answer. Later batches show the saved settings in one line and ask only `Use the saved server settings? y/n [y]`. Edit them under Settings → Server defaults. Changing settings never modifies existing nodes.
+The first creation asks once whether the machine is a regular VPS or a NAT VPS, then saves the answer. Later batches and relays show the saved settings in one line and ask only `Use the saved server settings [Y/n]`. Edit them under Settings → Server type and defaults. Changing settings never modifies existing nodes.
 
 - **Regular VPS:** free ports are chosen automatically; manual ports are optional.
-- **NAT VPS:** enter the provider-assigned local port range, the matching first public port and the allowed transport (TCP, UDP or both). Rout assigns ports **only inside the range**, keeps the public/local offset, skips occupied ports, rejects HY2/TUIC on TCP-only mappings and switches SS to the available transport. A UDP-only Shadowsocks node only carries UDP application traffic and cannot use a proxy exit.
+- **NAT VPS:** enter the provider-assigned **internal** port range (the ports this server listens on), the matching first public port and the allowed transport (TCP, UDP or both). Rout assigns ports **only inside the range**, keeps the public/local offset, skips occupied ports, rejects HY2/TUIC on TCP-only mappings and switches SS to the available transport. A UDP-only Shadowsocks node only carries UDP application traffic and cannot use an outbound proxy.
 - Public address detection queries IPv4 and IPv6 independently; IPv6-only hosts work without IPv4 and listen on `::`.
 
 Rout cannot create provider mappings or open external firewalls. A local test does not prove the public port is reachable: verify the link from an external client.
 
-Only traffic through a managed node uses its exit. SSH, package updates and other services keep their normal path. Rout never enables TUN, changes the default route, flushes firewall rules or touches `/etc/sing-box`.
+Only traffic through a managed node uses its outbound proxy. SSH, package updates and other services keep their normal path. Rout never enables TUN, changes the default route, flushes firewall rules or touches `/etc/sing-box`.
 
-## Exits (outbound proxies)
+## Relays
 
-Manage exits → **Add**: choose SOCKS5 or HTTP CONNECT, then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Exits are listed and selected **by number**, with name, protocol, address and how many nodes use them; their stable internal IDs never need to be typed.
+Relays → **Create relay** walks through four steps and shows the whole path before anything changes:
 
-- **Test** shows the observed exit IP (IPv4, falling back to IPv6).
-- **Bind or unbind** a node (or pick the exit while creating nodes). Binding tests the exit through a temporary local proxy first.
-- **Edit** updates every bound node transactionally; renaming alone restarts nothing.
-- **Delete** asks for confirmation and is refused while any node uses the exit, so nothing silently falls back to the VPS IP.
+1. **Where the traffic goes:** *Local machine* (a service on this server) or *Remote relay server* (another server). The last choice is remembered.
+2. **Entry on the current server:** Rout reuses the saved server defaults and shows the planned listening address, a free listening port and the public entry once; press Enter to use them, or answer `n` to enter the listening address (`0.0.0.0`/`::` mean all interfaces, not a public address) and port yourself. On a regular VPS the public port equals the listening port. On a NAT VPS the public port is the one the provider maps to that internal port; the two may differ, the saved range offset is used for planned ports, and a port you choose yourself asks for its mapping.
+3. **Destination:** local relays default to `127.0.0.1` and list this server's nodes by listening port. Remote relays require an explicit host (IPv4, IPv6 without brackets, or a domain) and port, or a pasted share link; the current server's public IP is never filled in.
+4. **Transport:** TCP, UDP or TCP+UDP, explained in the menu and limited to what a NAT mapping allows.
 
-Exits are TCP-only: UDP through an exit is rejected rather than leaked.
+```text
+Client → 203.0.113.10:40005 (public entry) → 0.0.0.0:20005 (listening) → 198.51.100.7:8443 (destination) · UDP
+```
+
+Checks before saving: address and port validity, NAT range, port conflicts, and forwarding loops (the relay's own listening port or public entry, or a chain of local relays leading back to it). Forwarding to another port on the same server is allowed, and a destination that merely shares the server's public IP is not treated as a loop: on NAT VPS hosts that IP is shared. When the destination is the public entry of a node on this server, Rout offers to switch to `127.0.0.1:<listening port>` instead, because NAT hosts usually cannot hairpin. Reachability: a local destination is checked for a listening socket; a remote TCP destination gets a real connection attempt, which proves the port is reachable, not that the proxy protocol works. UDP has no handshake and is never reported as verified.
+
+After saving, Rout prints the client endpoint and, when the destination is a known node or a pasted link, a share link rewritten to the relay entry. **Test relay** repeats the checks and can run a full protocol test through the relay. **Edit relay** changes destination, entry, transport, name or state; **Delete relay** defaults to No. Relays created by older versions keep working; their destination type is inferred.
+
+## Outbound proxies
+
+Outbound proxies decide how a node reaches the internet. **Direct connection** (no proxy) is built in. Relays have no outbound proxy: they forward traffic unchanged to their destination.
+
+Outbound proxies → **Create**: choose SOCKS5 or HTTP CONNECT, then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Proxies are listed and selected **by number** (`Name — PROTOCOL — host:port — usage`), with Direct connection offered as the last choice. Their stable internal IDs never change and never need to be typed.
+
+- **Test** shows the observed outgoing IP (IPv4, falling back to IPv6).
+- **Assign to nodes** changes only the nodes you pick, in one transaction, after testing the proxy once. Nodes that cannot use a proxy (UDP-only Shadowsocks) are skipped with the reason. You can also pick the outbound while creating nodes.
+- **Edit** updates every node using the proxy transactionally; renaming alone restarts nothing.
+- **Delete** is refused while any node uses the proxy, and names those nodes, so nothing silently falls back to the VPS IP.
+
+Outbound proxies carry TCP only: UDP through a proxy is rejected rather than leaked.
 
 ## Node links
 
-Manage nodes → Export links: one node's link (with an OSC52 copy request), **all links**, or a sing-box client configuration (local proxy `127.0.0.1:2080`). Selection menus show names, ports and status but never credentials. Share links contain client credentials; do not post screenshots of them.
+Manage nodes → Connection links: one node's link (with an OSC52 copy request), **all links**, or a sing-box client configuration (local proxy `127.0.0.1:2080`). Selection menus show names, ports and status but never credentials. Share links contain client credentials; do not post screenshots of them.
 
 ```sh
 rout export ID             # one link
@@ -88,13 +111,15 @@ rout list                  # every node with its complete link
 
 ## Traffic accounting, limits and monthly reset
 
-All nodes are **unlimited by default**. With accounting installed, every listener is metered in the kernel: upload + download at the node's entry, bytes in decimal MB/GB/TB, including NAT, and counted once even when nodes share an exit. Limits are optional and per node. A finite limit is enforced by a kernel quota that drops the packet that would exceed it, including on existing connections; the monitor then stops only that node. Each node has a billing day (1–31, clamped to short months) and an IANA timezone; a new cycle restores quota-paused nodes but never manually paused ones. Unlimited nodes are never blocked by accounting faults.
+All nodes are **unlimited by default**. With accounting installed, every listener is metered in the kernel: upload + download at the node's entry, bytes in decimal MB/GB/TB, including NAT, and counted once even when nodes share an outbound proxy. Limits are optional and per node. A finite limit is enforced by a kernel quota that drops the packet that would exceed it, including on existing connections; the monitor then stops only that node. Each node has a billing day (1–31, clamped to short months) and an IANA timezone; a new cycle restores quota-paused nodes but never manually paused ones. Unlimited nodes are never blocked by accounting faults.
 
 **Recovery behavior (v0.2.2):**
 
 - **Normal monitor restart or reboot:** at graceful shutdown the monitor closes the node's kernel gate *before* writing its final checkpoint ("sealed"). On start it verifies the seal and resumes automatically with exact usage and the exact remaining budget. Nothing is reset and no quota is granted.
 - **Quota-exhausted nodes** stay paused across restarts until the next cycle.
-- **Unexpected crash or power loss:** the last uncheckpointed seconds are unknown, so the node stays paused (fail-closed). Traffic management → **Resume with known usage** (or `rout traffic recover ID`) resumes it while keeping all known usage; the cycle stays marked as having a gap and its total is a lower bound. Alternatively confirm a reset (`y`, then `RESET`) or wait for the next cycle.
+- **Unexpected crash or power loss:** the last uncheckpointed seconds are unknown, so the node stays paused (fail-closed). Traffic management → **Resume with known usage** (or `rout traffic recover ID`) resumes it while keeping all known usage; the cycle stays marked as having a gap and its total is a lower bound. Alternatively reset this cycle (type `reset` to confirm) or wait for the next cycle.
+
+Traffic and limits shows upload, download, total (upload + download), limit, remaining and the next reset date for each node. **Set limit** takes GB: a plain number means GB (`100` = 100 GB, `1.5` = 1.5 GB), `500 MB` and `2 TB` also work, and `0` or an empty answer on a node without a limit means unlimited. Units are decimal (1 GB = 1,000,000,000 bytes). Setting or changing a limit never resets usage and needs no extra confirmation; only **Reset this cycle** does, by typing `reset`.
 
 See [docs/TRAFFIC.md](docs/TRAFFIC.md) for the exact measurement points, precision and fault model. Accounting requires nftables and `CAP_NET_ADMIN`; OpenVZ and some LXC containers do not grant it. In that case Rout reports accounting as unavailable instead of showing zero, and unlimited nodes keep working.
 
@@ -119,10 +144,10 @@ The same actions are under Manage nodes → Edit node → Certificate. An expire
 rout                          # interactive menu
 rout list | status            # nodes with links | service state
 rout doctor [--fix]           # diagnostics
-rout test ID                  # local entry → protocol → exit, IPv4 and IPv6
+rout test ID                  # local entry → protocol → outbound proxy, IPv4 and IPv6
 rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
-rout exits | settings
+rout relays | outbounds | settings   # `exits` still works as an alias
 rout traffic                  # usage of all nodes
 rout traffic show|manage|recover ID
 rout traffic install          # install/update accounting (no node restarts)
@@ -139,7 +164,7 @@ Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`
 - Configuration `/etc/rout` (0700; files 0600): `state.json`, `traffic.json`, `settings.json` (language, server defaults, `backup_keep`).
 - Automatic pre-change backups in `/etc/rout/backups`, keeping the newest **20** by default (configurable 1–1000 in Settings). The newest backup is never removed, and explicit `rout backup` files are never pruned. Backups contain credentials and private keys.
 - Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256 (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
-- One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, exit label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
+- One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, outbound label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
 - systemd units restrict engines with a capability bounding set (`CAP_NET_BIND_SERVICE`; HY2/TUIC also keep `CAP_NET_ADMIN` for QUIC socket buffers), `ProtectSystem=strict`, kernel/cgroup/clock protections, `RestrictNamespaces` and `RestrictAddressFamilies`. Engines therefore cannot change Rout's quota tables. New units apply on the next change or `rout apply`.
 - OpenRC services use `supervise-daemon` with bounded respawns and private logs in `/var/log/rout-<ID>.log`, rotated at 5 MB.
 - Changes are serialized by file locks with bounded waits, validated in private staging directories and rolled back on failure.
@@ -175,10 +200,10 @@ go build -o rout ./cmd/rout
 ROUT_TEST_ENGINES=/tmp/rout-engines go test -race -count=1 -v ./internal/rout
 ```
 
-Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, both exit types and TCP/UDP relays (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`.
+Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, both outbound proxy types and TCP/UDP relays, including relays built through the interactive flow (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`.
 
 CI runs everything above plus `govulncheck` and cross-compilation on every push. **Releases are published only from an explicit version tag** that matches the compiled version and `install.sh`; pushes to `main` never publish.
 
 ```sh
-git tag v0.2.2 && git push origin v0.2.2
+git tag v0.3.0 && git push origin v0.3.0
 ```

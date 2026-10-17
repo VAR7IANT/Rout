@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.0
+
+- Guided relay creation: Local machine or Remote relay server (remembered), the entry on the current server (listening address/port, and on NAT the separate mapped public port), the destination (local defaults to `127.0.0.1`; remote requires an explicit host and port and never reuses this server's public IP), then TCP, UDP or TCP+UDP with explanations
+- Relay preview with the full path (client → public entry → listening port → destination, transport) before saving; client endpoint and rewritten share link after saving
+- Relay checks: validation, NAT range, port conflicts, forwarding loops (own port, own public entry, chains of local relays; also enforced on commit); same-host forwarding allowed and a shared public IP never treated as a loop; real TCP reachability test; UDP never claimed as verified; offer to switch a relay aimed at this server's own node to `127.0.0.1`
+- Relays menu: view, create, edit, test, delete; old relays load unchanged with an inferred type
+- Relay entry reuses the saved server defaults: the planned listening address, free port and public endpoint are shown once and confirmed with Enter; answering `n` overrides address and port, and editing a relay's entry asks for each value. New ports are checked free for both TCP and UDP before the transport is chosen
+- New main menu: Nodes, Relays, Outbound proxies, Traffic and limits, Services, Settings, Diagnostics, Updates, Quit; `b` goes back and `q` quits from any menu; numeric input unchanged
+- ROUT banner once per interactive session (six-row logo in a blue gradient, "Support by VAR7IANT" and the version centered beneath it, narrow-terminal fallback); never for commands or pipes; honours `NO_COLOR` and `TERM=dumb`
+- Terminology: "outbound proxy" replaces "exit"; "Quit" replaces "Exit"; relay destination, outbound proxy, listening port and public port are named consistently in Chinese and English
+- Outbound proxies: numbered list with Direct connection; create, edit, test, delete, assign to chosen nodes in one transaction; IDs unchanged; nodes that cannot use a proxy (UDP-only Shadowsocks) are skipped with the reason
+- One input normalizer for every prompt: case-insensitive and full-width tolerant; `[Y/n]` defaults for ordinary prompts, `[y/N]` for deletions; typed words (`reset`, `uninstall`) for irreversible actions
+- Traffic limits in GB: a plain number is GB, MB/TB suffixes accepted, `0` or empty means unlimited; no reset word when setting a limit; the view shows upload, download, total, limit, remaining and next reset with the decimal-unit note
+- Node cards show protocol, status, listening port, public endpoint, outbound, usage and limit
+- Fix: relay share links rewritten from Shadowsocks 2022 links lost SIP002 percent-encoding of the key
+- Traffic display truncates instead of rounding, so usage never appears to reach a limit early; nodes without accounting show their limit state
+- Tests: engine integration tests wait for the engine's listeners (polled every 100 ms, 5 s limit, early-exit detection with logs) instead of a fixed 120 ms delay, which was flaky on cold hosts
+
 ## v0.2.2
 
 - Fix Alpine/musl hosts: the pinned default sing-box build is glibc-linked and could not run there; Rout now selects the pinned, checksum-verified static musl build when the glibc loader is absent, and replaces an installed engine that cannot execute (run `rout apply` or `rout engines` on affected hosts)

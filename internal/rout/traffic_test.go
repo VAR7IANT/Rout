@@ -287,10 +287,25 @@ func TestTrafficStateCorruptionDiskFailureAndUIConfirmation(t *testing.T) {
 	if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 1000, BillingDay: 1}, false, now); e != nil {
 		t.Fatal(e)
 	}
-	u, _ := testUI(a, "5\ny\nNO\n")
+	// Menu: 1 limit, 2 billing, 3 reset, 4 pause. A wrong confirmation word cancels.
+	snap := m.values[p.ID]
+	snap.Up, snap.Consumed = 400, 400
+	m.values[p.ID] = snap
+	_ = a.TrafficSync(now, false)
+	u, out := testUI(a, "3\nNO\n")
 	s, _ := a.Load()
-	if e := u.trafficManage(s.Profiles[0]); e == nil {
-		t.Fatal("reset lacked second confirmation")
+	if e := u.trafficManage(s.Profiles[0]); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, total, _ := record(t, a, p.ID).totals(); total != 400 || !strings.Contains(out.String(), "Type reset to confirm") {
+		t.Fatal("reset ran without its typed confirmation", total)
+	}
+	u, _ = testUI(a, "3\nReSeT\n")
+	if e := u.trafficManage(s.Profiles[0]); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, total, _ := record(t, a, p.ID).totals(); total != 0 {
+		t.Fatal("case-insensitive reset confirmation did not reset", total)
 	}
 	path := filepath.Join(a.Home, "traffic.json")
 	b, _ := os.ReadFile(path)
@@ -326,11 +341,11 @@ func TestTrafficStateCorruptionDiskFailureAndUIConfirmation(t *testing.T) {
 	if e := os.Rename(path+".saved", path); e != nil {
 		t.Fatal(e)
 	}
-	u, out := testUI(a, "")
+	u, out = testUI(a, "")
 	if e := u.showTraffic(s.Profiles[0]); e != nil {
 		t.Fatal(e)
 	}
-	if !strings.Contains(out.String(), "Traffic limit") {
+	if !strings.Contains(out.String(), "Limit") || !strings.Contains(out.String(), "Remaining") || !strings.Contains(out.String(), "Next reset") {
 		t.Fatal("English UI missing")
 	}
 }

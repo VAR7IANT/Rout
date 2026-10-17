@@ -186,7 +186,7 @@ func Find(s State, id string) (Profile, error) {
 			return p, nil
 		}
 	}
-	return Profile{}, errors.New("找不到线路 ID")
+	return Profile{}, errors.New("找不到节点 ID")
 }
 func replace(s State, p Profile) State {
 	out := s.Clone()
@@ -298,6 +298,11 @@ func (a *App) Commit(old, next State, force bool) error {
 		if edited[p.ID] {
 			if e := p.CheckCompatibility(); e != nil {
 				return fmt.Errorf("%s: %w", p.Name, e)
+			}
+			if p.Kind == "relay" && p.Enabled {
+				if e := relayLoop(next, p, localIPs()); e != nil {
+					return fmt.Errorf("%s: %w", p.Name, e)
+				}
 			}
 		}
 		if p.Enabled {
@@ -526,6 +531,8 @@ func runtimeEqual(a, b Profile) bool {
 	b.ExitID = ""
 	a.TLSGenerated = false
 	b.TLSGenerated = false
+	a.RelayMode = ""
+	b.RelayMode = ""
 	return reflect.DeepEqual(a, b)
 }
 func checkNetworkAvailable(p Profile, network string) error {

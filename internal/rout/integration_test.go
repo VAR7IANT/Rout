@@ -60,7 +60,7 @@ func TestIntegrationAutomaticHY2NativeURI(t *testing.T) {
 		t.Fatal(e)
 	}
 	p := state.Profiles[0]
-	startEngine(t, a.enginePath("sing-box"), "run", "-c", filepath.Join(a.profileDir(p.ID), "config.json"))
+	startEngine(t, profileSockets(p), a.enginePath("sing-box"), "run", "-c", filepath.Join(a.profileDir(p.ID), "config.json"))
 	hits := &atomic.Int32{}
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); fmt.Fprint(w, "198.51.100.19") }))
 	defer origin.Close()
@@ -70,7 +70,7 @@ func TestIntegrationAutomaticHY2NativeURI(t *testing.T) {
 	}
 	port, _ := freePort()
 	conf := configFile(t, M{"server": uri, "socks5": M{"listen": net.JoinHostPort("127.0.0.1", itoa(port))}})
-	startEngine(t, binary, "client", "-c", conf)
+	startEngine(t, []engineSocket{{"tcp", port}}, binary, "client", "-c", conf)
 	if _, e = fetchIP("socks5://127.0.0.1:"+itoa(port), origin.URL); e != nil {
 		t.Fatalf("native HY2 URI request failed: %v", e)
 	}
@@ -130,7 +130,30 @@ func tlsFixture(t *testing.T) (string, string, *httptest.Server) {
 	t.Cleanup(s.Close)
 	return cert, secret, s
 }
-func startEngine(t *testing.T, path string, args ...string) {
+
+// engineSocket is a listener an engine must bind before a test may use it.
+type engineSocket struct {
+	network string
+	port    int
+}
+
+func profileSockets(p Profile) []engineSocket {
+	var out []engineSocket
+	for _, n := range p.Networks() {
+		out = append(out, engineSocket{n, p.Port})
+	}
+	return out
+}
+
+const (
+	engineReadyTimeout = 5 * time.Second
+	engineReadyPoll    = 100 * time.Millisecond
+)
+
+// startEngine runs an engine for the rest of the test and returns as soon as every
+// ready socket is bound. An engine that exits early, or is not ready within
+// engineReadyTimeout, fails the test with its log; the process is always reaped.
+func startEngine(t *testing.T, ready []engineSocket, path string, args ...string) {
 	t.Helper()
 	logPath := filepath.Join(t.TempDir(), "engine.log")
 	log, e := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0600)
@@ -141,11 +164,12 @@ func startEngine(t *testing.T, path string, args ...string) {
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if e = cmd.Start(); e != nil {
+		log.Close()
 		t.Fatal(e)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	exited := false
+	exited, logged := false, false
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		if !exited {
@@ -155,18 +179,40 @@ func startEngine(t *testing.T, path string, args ...string) {
 			}
 		}
 		log.Close()
-		if t.Failed() {
+		if t.Failed() && !logged {
 			b, _ := os.ReadFile(logPath)
 			t.Log(string(b))
 		}
 	})
-	time.Sleep(120 * time.Millisecond)
-	select {
-	case e := <-done:
-		exited = true
-		b, _ := os.ReadFile(logPath)
-		t.Fatalf("engine exited %v: %s", e, b)
-	default:
+	missing := func() []string {
+		var out []string
+		for _, s := range ready {
+			if !socketBound(s.network, s.port) {
+				out = append(out, fmt.Sprintf("%s/%d", s.network, s.port))
+			}
+		}
+		return out
+	}
+	started := time.Now()
+	deadline := started.Add(engineReadyTimeout)
+	for {
+		select {
+		case e := <-done:
+			exited, logged = true, true
+			b, _ := os.ReadFile(logPath)
+			t.Fatalf("%s exited after %v before it was ready: %v\n%s", filepath.Base(path), time.Since(started).Round(time.Millisecond), e, b)
+		default:
+		}
+		wait := missing()
+		if len(wait) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			logged = true
+			b, _ := os.ReadFile(logPath)
+			t.Fatalf("%s not ready after %v; not listening on %s\n%s", filepath.Base(path), engineReadyTimeout, strings.Join(wait, ", "), b)
+		}
+		time.Sleep(engineReadyPoll)
 	}
 }
 func configFile(t *testing.T, c M) string {
@@ -355,7 +401,7 @@ func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
 					out, _ := runOutput(time.Second, a.enginePath("sing-box"), "check", "-c", path)
 					t.Fatalf("%v: %s", e, out)
 				}
-				startEngine(t, a.enginePath("sing-box"), "run", "-c", path)
+				startEngine(t, profileSockets(p), a.enginePath("sing-box"), "run", "-c", path)
 				port, _ := freePort()
 				client, e := ClientConfig(p, "127.0.0.1", p.Port, port)
 				if e != nil {
@@ -433,7 +479,7 @@ func TestIntegrationGOSTTCPAndUDP(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			startEngine(t, a.enginePath("gost"), "-C", configFile(t, c))
+			startEngine(t, profileSockets(p), a.enginePath("gost"), "-C", configFile(t, c))
 			conn, e := net.DialTimeout(network, net.JoinHostPort("127.0.0.1", itoa(port)), time.Second)
 			if e != nil {
 				t.Fatal(e)

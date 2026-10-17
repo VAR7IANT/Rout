@@ -320,7 +320,7 @@ func (a *App) Restart(id string) error {
 		return e
 	}
 	if !p.Enabled {
-		return errors.New("线路未启用")
+		return errors.New("节点已停用")
 	}
 	if e = a.TrafficGuard(p.ID); e != nil {
 		return e

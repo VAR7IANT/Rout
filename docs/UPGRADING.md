@@ -1,6 +1,13 @@
-# Upgrading to v0.2.2 and rollback safety
+# Upgrading and rollback safety
 
-## From v0.2.1
+## To v0.3.0
+
+Run `sudo rout update` (from v0.2.2) or rerun the README installer; from v0.2.1, also follow the steps below. The upgrade restarts only the traffic monitor: limited nodes are sealed and resume automatically with their usage, and other nodes keep running.
+
+
+The interactive menus and wording change; stored data does not. `state.json` keeps its schema and every existing ID. A relay gains an optional `relay_mode` (`local`/`remote`) only when it is created or edited; relays without it keep working and their type is inferred from the destination (loopback = local). `settings.json` may gain `relay_mode` (the last relay type chosen). Older versions ignore both fields, so rolling back keeps every node, relay and outbound proxy. `rout exits` remains an alias of `rout outbounds`. Recording a relay's type never restarts it.
+
+## From v0.2.1 (introduced in v0.2.2)
 
 1. Optional but recommended: `sudo rout backup /root/rout-before-022.json` (contains credentials/private keys; protect it).
 2. Run `sudo rout update` (this run still uses the v0.2.1 updater), or rerun the README installer.
@@ -19,7 +26,7 @@ Behavior changes to be aware of:
 - Newly generated HY2/TUIC self-signed certificates are valid for 10 years (existing certificates are untouched; renew them with `rout cert renew ID`).
 - Automatic backups keep the newest 20 (Settings → Automatic backup retention).
 - Lock contention now waits (up to 30 s for configuration changes) instead of failing immediately.
-- New UDP-only Shadowsocks nodes cannot be bound to a proxy exit (it could never carry traffic). An existing entry still loads; unbind it or use a TCP+UDP mapping.
+- New UDP-only Shadowsocks nodes cannot be bound to an outbound proxy (it could never carry traffic). An existing entry still loads; switch it to Direct connection or use a TCP+UDP mapping.
 - Pushes to `main` no longer publish releases; releases come from version tags.
 
 ## Files

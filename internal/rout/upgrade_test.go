@@ -45,7 +45,7 @@ func TestLanguagePersistenceAndSwitch(t *testing.T) {
 	if e != nil || s.Language != "en" {
 		t.Fatal("language not persisted")
 	}
-	if !strings.Contains(out.String(), "Manage exits") {
+	if !strings.Contains(out.String(), "Outbound proxies") || !strings.Contains(out.String(), "Quit") {
 		t.Fatal("English menu missing")
 	}
 	a.Language = ""
@@ -56,7 +56,7 @@ func TestLanguagePersistenceAndSwitch(t *testing.T) {
 	if strings.Contains(out.String(), "Select language") {
 		t.Fatal("asked for language twice")
 	}
-	u, _ = testUI(a, "1\n1\n")
+	u, _ = testUI(a, "1\n1\n0\n")
 	if e = u.settings(); e != nil {
 		t.Fatal(e)
 	}
@@ -86,7 +86,7 @@ func TestCreateBatchAsksCommonFieldsOnce(t *testing.T) {
 			t.Fatal("incorrect generated name")
 		}
 	}
-	if strings.Count(out.String(), "Server type") != 1 || strings.Count(out.String(), "Base node name") != 1 || strings.Count(out.String(), "Public connection IP") != 1 {
+	if strings.Count(out.String(), "Server type") != 1 || strings.Count(out.String(), "Base node name") != 1 || strings.Count(out.String(), "Public IP or domain") != 1 {
 		t.Fatal("common setup repeated")
 	}
 	p := s.Profiles[2]
@@ -177,15 +177,15 @@ func TestNATPlanningAndBatch(t *testing.T) {
 	if len(actual.Profiles) != 2 || !actual.Profiles[0].NAT {
 		t.Fatal("NAT creation failed")
 	}
-	if strings.Count(out.String(), "Server type") != 1 || strings.Count(out.String(), "Allowed local port range") != 1 {
+	if strings.Count(out.String(), "Server type") != 1 || strings.Count(out.String(), "Internal port range assigned") != 1 {
 		t.Fatal("NAT setup repeated")
 	}
 }
 func TestIndependentReusableExitsAndMigration(t *testing.T) {
 	a := testApp(t)
 	a.ServiceMode = "auto" // Exit-only edits do not require an init system or engine.
-	u, out := testUI(a, "1\nUS-ISP\n1\n192.0.2.10:6719:user:p:a@ss%\n0\n")
-	if e := u.exits(); e != nil {
+	u, out := testUI(a, "1\n1\n192.0.2.10:6719:user:p:a@ss%\nUS-ISP\n0\n")
+	if e := u.outbounds(); e != nil {
 		t.Fatalf("%v\n%s", e, out.String())
 	}
 	s, e := a.Load()
@@ -303,9 +303,9 @@ func TestExitPreflightFailurePreservesNodes(t *testing.T) {
 	}
 	stateBefore, _ := os.ReadFile(filepath.Join(a.Home, "state.json"))
 	configBefore, _ := os.ReadFile(filepath.Join(a.profileDir(p.ID), "config.json"))
-	u, _ := testUI(a, "3\n1\n\ny\n1\n192.0.2.11:6719:new:bad\n")
+	u, out := testUI(a, "2\n1\n\ny\n1\n192.0.2.11:6719:new:bad\n0\n")
 	u.probeProxy = func(Proxy) (string, error) { return "", errors.New("authentication failed") }
-	if e := u.exits(); e == nil {
+	if e := u.outbounds(); e != nil || !strings.Contains(out.String(), "authentication failed") {
 		t.Fatal("accepted a failed shared exit update")
 	}
 	stateAfter, _ := os.ReadFile(filepath.Join(a.Home, "state.json"))

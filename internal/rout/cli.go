@@ -47,15 +47,16 @@ func splitFlags(args []string) (flags, rest []string) {
 
 var helpLines = [][2]string{
 	{"rout", "交互式菜单"},
-	{"rout list", "全部节点、状态与完整分享链接"},
+	{"rout list", "全部节点和中转、状态与完整连接链接"},
 	{"rout status", "服务运行状态"},
 	{"rout doctor [--fix]", "只读诊断；--fix 逐项确认后修复"},
-	{"rout test ID", "测试本地入口、协议和出口（IPv4/IPv6）"},
-	{"rout export ID [FILE]", "输出分享链接，或保存 sing-box 客户端配置"},
-	{"rout export all [FILE]", "输出全部分享链接，或保存到文件"},
+	{"rout test ID", "测试本地入口、协议和出站（IPv4/IPv6）"},
+	{"rout export ID [FILE]", "输出连接链接，或保存 sing-box 客户端配置"},
+	{"rout export all [FILE]", "输出全部连接链接，或保存到文件"},
 	{"rout copy ID", "输出链接并请求终端复制"},
-	{"rout restart|on|off|delete|logs ID", "管理单个节点"},
-	{"rout exits", "出口管理"},
+	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
+	{"rout relays", "中转管理"},
+	{"rout outbounds", "出站代理管理（旧名称 exits 仍可用）"},
 	{"rout traffic", "全部节点流量"},
 	{"rout traffic show|manage ID", "查看或管理节点流量与限额"},
 	{"rout traffic recover ID", "保留已知用量并恢复计量故障暂停的节点"},
@@ -81,7 +82,13 @@ func (a *App) help() {
 }
 func Run(args []string) (result error) {
 	a := DefaultApp()
-	defer func() { result = FormatError(a.Language, result) }()
+	defer func() {
+		// Quitting from a menu or closing input is a normal end of a session.
+		if errors.Is(result, errQuit) || errors.Is(result, io.EOF) {
+			result = nil
+		}
+		result = FormatError(a.Language, result)
+	}()
 	var language string
 	flagArgs, args := splitFlags(args)
 	flags := flag.NewFlagSet("rout", flag.ContinueOnError)
@@ -151,11 +158,16 @@ func Run(args []string) (result error) {
 		return u.mainMenu()
 	case "doctor":
 		return u.doctor(contains(args, "--fix"))
-	case "exits":
+	case "outbounds", "exits": // "exits" is the pre-v0.3 name, kept as an alias
 		if e := u.initLanguage(false); e != nil {
 			return e
 		}
-		return u.exits()
+		return u.outbounds()
+	case "relays":
+		if e := u.initLanguage(false); e != nil {
+			return e
+		}
+		return u.relays()
 	case "settings":
 		if e := u.initLanguage(false); e != nil {
 			return e
@@ -179,8 +191,11 @@ func Run(args []string) (result error) {
 		}
 		return a.Restore(args[1])
 	case "uninstall":
-		if !u.yes("卸载所有 Rout 配置、服务和程序", false) {
-			return u.err
+		if !u.confirmWord("卸载会删除所有节点、中转、出站代理、配置、备份和 Rout 程序；其他软件不受影响", "uninstall") {
+			if u.err != nil {
+				return u.err
+			}
+			return errors.New("已取消")
 		}
 		return a.Uninstall()
 	}
@@ -216,7 +231,7 @@ func Run(args []string) (result error) {
 		}
 	}
 	if len(args) < 2 {
-		return errors.New("命令需要线路 ID，请运行 rout list")
+		return errors.New("命令需要节点 ID，请运行 rout list")
 	}
 	p, e := Find(s, args[1])
 	if e != nil {
