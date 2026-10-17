@@ -11,6 +11,18 @@
         "name": "sing-box-1.14.3-linux-arm64.tar.gz",
         "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-linux-arm64.tar.gz",
         "sha256": "29dae24d76bea3bc62d07dd3e60cfc12003de7debbd6b768df9be9c68360174e"
+      },
+      {
+        "name": "sing-box-1.14.3-linux-amd64-musl.tar.gz",
+        "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-linux-amd64-musl.tar.gz",
+        "sha256": "41fc81fd041134d4d7d850a928d7d2cde17a7d6563953f406b22d32a68bfab1f",
+        "libc": "musl"
+      },
+      {
+        "name": "sing-box-1.14.3-linux-arm64-musl.tar.gz",
+        "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-linux-arm64-musl.tar.gz",
+        "sha256": "12d6d67a4edf0dd54590865b1f4f79cd09ae043a02d648e9d1b5fccc8446ee07",
+        "libc": "musl"
       }
     ]
   },

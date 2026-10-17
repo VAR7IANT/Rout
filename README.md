@@ -1,137 +1,184 @@
 # Rout
 
-Create proxy nodes, relay an existing server, and manage reusable proxy exits on a VPS or NAT VPS. Install once and run `rout`; the first interactive run asks for **简体中文** or **English**. Menus, prompts and application errors use the saved language. Change it from Settings at any time, or pass `--lang en` / `--lang zh-CN` for a one-run override. Non-interactive commands such as `version` never wait for language input. Native engine/service logs remain verbatim diagnostic data.
+Create proxy nodes, relay existing servers and manage reusable proxy exits on a regular VPS or a NAT VPS — from one small, dependency-free binary with a bilingual terminal menu (**简体中文** / **English**).
+
+- Five node protocols: **VLESS Reality, AnyTLS Reality, Shadowsocks 2022, Hysteria2, TUIC v5**
+- TCP/UDP relays that keep the original node's credentials
+- Reusable **SOCKS5 / HTTP CONNECT exits** shared by many nodes, with no direct-IP fallback
+- Exact per-node **traffic accounting and hard monthly quotas** in the kernel (nftables)
+- **systemd and OpenRC**, IPv4-only, IPv6-only and dual-stack hosts, NAT port ranges
 
 ## Install
 
-Linux amd64 / arm64, with systemd or OpenRC. Debian, Ubuntu and Alpine are the initial targets. Root access is required to manage services. Provider-side firewall rules and NAT mappings must already allow the selected ports.
+Linux amd64 / arm64 with systemd (Debian, Ubuntu) or OpenRC (Alpine). Root is required to manage services. Provider firewalls and NAT mappings must already allow the ports you use.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/install.sh -o /tmp/rout-install.sh
-sudo sh /tmp/rout-install.sh
+f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/install.sh -o "$f" && sudo sh "$f"; rm -f "$f"
 sudo rout
 ```
 
-On Alpine or when already logged in as root, omit `sudo`. The installer downloads a release binary and checks SHA256 before replacing the executable. The current installer targets `v0.2.1`; see [release instructions](#development-and-releases). It also installs `nftables` and enables lightweight accounting for the default installation directory. This attaches private listener counters without restarting existing nodes or changing their unlimited default. It does not create a node, enable a finite quota, or change the default route. Restricted hosts can keep proxy features but must not assume statistics/quotas are available. Existing installations can run `sudo rout update`, then `sudo rout traffic install`; read [upgrade and rollback safety](docs/UPGRADING.md).
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.2.2`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
-## Three workflows
-
-| Workflow | Input | Result |
-| --- | --- | --- |
-| Create nodes | One VPS/NAT selection, one base name, protocol(s), common address/TLS settings | Names such as `DMIT-LAX-VLESS`, `DMIT-LAX-AnyTLS`, `DMIT-LAX-HY2` and independent services |
-| Relay a node | Existing node URI or target `host:port`, local/public ports | TCP/UDP stream forwarding with original node credentials |
-| Manage exits | Add an exit directly, select protocol, enter `IP:port:username:password` | A reusable exit that can be tested, edited, deleted or assigned to multiple nodes |
-
-Node creation supports VLESS Reality, AnyTLS Reality, Shadowsocks 2022, Hysteria2 and TUIC. Common server details and the base name are entered once per batch. Ports and authentication are generated automatically; optional manual ports and custom credentials remain available. Reality protocols share one SNI prompt. HY2/TUIC require UDP and can now generate a valid certificate/key pair automatically, or load existing PEM files.
-
-### HY2 automatic TLS and client import
-
-The automatic option creates a unique ECDSA certificate, including a DNS/IP SAN matching the chosen SNI, and a cryptographically random password. The `hysteria2://` link includes `insecure=1` **and** `pinSHA256` (the SHA256 of the DER certificate), following the [Hysteria URI scheme](https://v2.hysteria.network/docs/developers/URI-Scheme/). A native Hysteria client can import that URI without separate certificate files.
-
-**Security:** self-signed share links are secure only when the importing client actually enforces `pinSHA256`. Clients that ignore it may accept arbitrary certificates because of `insecure=1`. For such clients, export the sing-box JSON configuration: it embeds the certificate as a trust anchor and does **not** disable verification. A trusted public CA certificate is the other option. Rout's own URI-to-sing-box converter refuses a pinned URI rather than silently dropping its pin; testing a pinned raw relay may require the original client. Self-signed TUIC share URIs need the certificate trusted separately; use the exported client configuration. AnyTLS Reality also requires a compatible client; exported sing-box JSON is the reference format.
-
-Relay URI import supports `vless://`, `anytls://`, `trojan://`, SIP002 `ss://`, `hysteria2://` / `hy2://` and `tuic://`. Other services can be forwarded by entering an address and choosing TCP, UDP or both. SS plugin URIs and legacy fully Base64-encoded SS URIs are not imported in this version. A relay preserves the original SNI, keys and transport settings when generating its replacement URI. It does not deploy or modify the target server.
-
-Proxy exit setup asks for the protocol **first**, then accepts:
-
-```text
-192.0.2.10:6719:username:password
-[2001:db8::10]:6719:username:password
-```
-
-Supported exit protocols: SOCKS5 and HTTP CONNECT. Passwords can contain colons; usernames cannot. Input is hidden in interactive terminals. Exit creation requires no node and does not change any active connection. Test an exit from Exit Management, then bind it to existing or new nodes. Binding an existing node tests authentication and an actual IPv4 request through a temporary local proxy first. The IP shown is the observed exit IP, which may differ from the proxy endpoint address. Updating a used exit updates its bound nodes transactionally; renaming an exit alone does not restart nodes. An exit cannot be deleted while referenced by any node, preventing an accidental direct-IP fallback.
-
-Proxy exits are TCP-only in this release. UDP is explicitly rejected, including with third-party SOCKS5 exits whose UDP capability has not been verified. If an exit fails, the node fails rather than falling back to the VPS IP. Existing node links remain usable after changing that node's exit.
-
-## NAT and networking
-
-Rout asks for VPS/NAT once at the beginning of node creation, then reuses that choice throughout the batch. NAT mode asks for the provider-assigned local port range, corresponding first public port, and allowed transport (TCP, UDP or both). It assigns available ports **only inside that range**, preserves the public/local offset, avoids reserved or occupied ports, and rejects HY2/TUIC on TCP-only mappings. SS automatically uses TCP-only or UDP-only when required by the mapping. Saved server defaults are reused as defaults for later batches and can be edited in Settings. No setting change modifies existing nodes automatically.
-
-Rout cannot create a provider's mapping, discover assigned ports reliably, or open provider firewalls. A contiguous mapping range or a single mapped port is supported per setup; for differently mapped blocks, configure each block in a separate creation batch. NAT servers with no reachable inbound port require a reverse tunnel, outside this release.
-
-Only traffic using the managed node is routed through its configured exit. SSH, package updates, ordinary server-side `curl` and other existing services keep their normal network path. Rout does not enable TUN, change the default route, flush firewall rules, or overwrite `/etc/sing-box`.
-
-The selected listen port must also be allowed by the VPS/provider firewall. Rout checks local port conflicts; it does not open external firewalls automatically. A successful local node test does not prove that a public/NAT port is reachable: verify the exported link from an external client.
-
-## Management
-
-### Traffic management (v0.2.1)
-
-All nodes default to **unlimited**, including upgraded nodes. Monitoring counts upload and download separately and charges their sum, using decimal MB/GB/TB. Node Management -> Traffic management shows exact known bytes, quota/percentage, manual and quota-pause state, billing window and next reset. Limits are opt-in and per node; existing monthly usage is not ignored when enabling one. Legacy pre-monitoring history is unavailable and explicitly marked incomplete.
-
-The kernel nftables gate cuts off new and existing entry traffic when a finite quota is exhausted; the monitor then stops only that node's service. Per-node billing defaults to day 1/server-local timezone, with days 1–31 and IANA timezones supported. A new cycle restores quota-paused nodes, never manually paused ones. Manual clearing requires two confirmations. Unknown usage after kernel loss or corrupted state protects finite nodes instead of silently issuing a fresh allowance; unlimited nodes are never fault-stopped.
-
-This meters encrypted **client-facing L3 admission bytes**, not application payload, both physical proxy legs, or the VPS provider invoice. Provider bills can differ. See the full [measurement, precision, persistence, fault and test boundaries](docs/TRAFFIC.md), [configuration/upgrade guide](docs/UPGRADING.md) and [changelog](CHANGELOG.md). nftables/CAP_NET_ADMIN are required for accounting and quotas; there is no unverified sing-box statistics API fallback.
+Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
 ```sh
-rout                         # Bilingual menu; saved language
-rout --lang en               # English for this run
-rout settings                # Language and server defaults
-rout traffic install         # Install/start lightweight accounting, no existing-node restart
-rout traffic                 # All node usage and protection state
-rout traffic show ID
-rout traffic manage ID       # Limits, billing day/timezone, reset, manual pause/resume
-rout exits                   # Add/test/edit/delete/bind independent exits
-rout list                    # All nodes: status, ports, exit and complete URI
-rout status
-rout test ID                 # Local entry → protocol → configured exit; IPv4 and IPv6 results
-rout export ID               # Share URI (contains client credentials)
-rout export ID client.json   # Full sing-box client config, local proxy on 127.0.0.1:2080
-rout copy ID                 # Complete URI + OSC52 clipboard request on supported terminals
-rout restart ID              # Restart only this node
-rout on ID
-rout off ID
-rout logs ID
-rout delete ID
-rout backup /root/rout.json
-rout restore /root/rout.json
-rout apply                   # Validate and reapply all managed entries
-rout update                  # Update manager from the latest release
-rout uninstall               # Interactive confirmation
+gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 ```
 
-Configuration and backups: `/etc/rout`. Language and server defaults: `/etc/rout/settings.json`. Pinned engine binaries: `/opt/rout/bin`. Services: `rout-<ID>`. Node Management displays every node and full share URI, with protocol, enabled/running state, local/public ports and exit information. Copy sends an OSC52 clipboard request only when explicitly selected; unsupported terminals can copy the printed link manually. Share URIs contain client credentials, so avoid sharing management screenshots publicly.
+## Quick start
 
-Each node/relay has its own service. Metadata-only changes (name, advertised address/port, exit label) do not restart or rewrite live node configurations. Runtime changes affect only the changed node(s); a reused exit credential change necessarily restarts its users. Each service consumes a separate engine process; size the VPS for the number of nodes you run.
+```text
+sudo rout
+  1  Create nodes          → server type once, a base name once, pick protocols
+  2  Manage nodes          → view / add / edit / delete / restart / export links
+  3  Manage exits          → add, test, edit, delete, bind exits by number
+  4  Relay a node
+  5  Traffic management
+  6  Diagnostics
+  ...
+```
 
-Changes are locked against concurrent writers. Configuration and certificate validation happen in private staging directories before any live files or services change. Failed application restores prior state/configuration and attempts to restore only affected services; recovery errors are surfaced rather than hidden. Automatic pre-change backups and explicit backups include credentials and private keys and use mode `0600`.
+Creating `Tokyo` with VLESS, SS and HY2 produces `Tokyo-VLESS`, `Tokyo-SS` and `Tokyo-HY2`, each with its own service, generated credentials and a complete share link. A repeated name becomes `Tokyo-VLESS-2`. Every menu lists numbered choices; `0` always goes back (or exits).
 
-### Compatibility and migration
+## Supported protocols
 
-All node IDs, ports, keys, credentials, certificate contents and service names are retained. Unlimited-only configurations remain schema 1. Enabling a finite quota deliberately seals schema 2 so an old manager cannot ignore limits and rewrite unguarded services; see the rollback guide. Legacy per-node `outbound` proxies are deduplicated into reusable exits **in memory on read**, using stable IDs. Merely updating the manager or changing language does not restart existing nodes. The next successful state-changing operation saves the registry; outbound values are still mirrored for compatibility. Existing backups remain loadable without resetting current usage or silently cancelling an existing quota. Backups include the exit registry/limit configuration but not live traffic snapshots or machine-local language/default settings.
+| Protocol | Transport | TLS | Client notes |
+| --- | --- | --- | --- |
+| VLESS Reality (Vision) | TCP | Reality, borrowed from the SNI target | Standard `vless://` link |
+| AnyTLS Reality | TCP | Reality | Needs a client with AnyTLS + Reality; the exported sing-box JSON is the reference |
+| Shadowsocks 2022 (`2022-blake3-aes-128-gcm`) | TCP+UDP (or one of them on NAT) | — | SIP002 link with percent-encoded `method:key`, as SIP002 requires for AEAD-2022 |
+| Hysteria2 | UDP | Self-signed (pinned) or your PEM | Link carries `insecure=1` **and** `pinSHA256`; secure only with clients that enforce the pin — otherwise use the exported JSON |
+| TUIC v5 | UDP | Self-signed or your PEM | Self-signed links need the certificate trusted separately; use the exported JSON |
 
-Engine versions are locked in `internal/rout/engines.lock.json`: sing-box v1.14.3 and GOST v3.3.0, with per-architecture SHA256 values. Engines are downloaded on demand. Manager updates do not restart active services; after updating, use `rout apply` when ready to validate and switch existing services to the manager's pinned engines. Keep a backup for version rollback.
+When a Reality protocol is selected, Rout checks from the server that the SNI target answers TLS 1.3 with a valid certificate (and HTTP/2). If the check fails, it warns you and asks before continuing. Pick a reachable, popular TLS 1.3 site that you do not control.
+
+## NAT and VPS setup
+
+The first creation asks once whether the machine is a regular VPS or a NAT VPS, then saves the answer. Later batches show the saved settings in one line and ask only `Use the saved server settings? y/n [y]`. Edit them under Settings → Server defaults. Changing settings never modifies existing nodes.
+
+- **Regular VPS:** free ports are chosen automatically; manual ports are optional.
+- **NAT VPS:** enter the provider-assigned local port range, the matching first public port and the allowed transport (TCP, UDP or both). Rout assigns ports **only inside the range**, keeps the public/local offset, skips occupied ports, rejects HY2/TUIC on TCP-only mappings and switches SS to the available transport. A UDP-only Shadowsocks node only carries UDP application traffic and cannot use a proxy exit.
+- Public address detection queries IPv4 and IPv6 independently; IPv6-only hosts work without IPv4 and listen on `::`.
+
+Rout cannot create provider mappings or open external firewalls. A local test does not prove the public port is reachable: verify the link from an external client.
+
+Only traffic through a managed node uses its exit. SSH, package updates and other services keep their normal path. Rout never enables TUN, changes the default route, flushes firewall rules or touches `/etc/sing-box`.
+
+## Exits (outbound proxies)
+
+Manage exits → **Add**: choose SOCKS5 or HTTP CONNECT, then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Exits are listed and selected **by number**, with name, protocol, address and how many nodes use them; their stable internal IDs never need to be typed.
+
+- **Test** shows the observed exit IP (IPv4, falling back to IPv6).
+- **Bind or unbind** a node (or pick the exit while creating nodes). Binding tests the exit through a temporary local proxy first.
+- **Edit** updates every bound node transactionally; renaming alone restarts nothing.
+- **Delete** asks for confirmation and is refused while any node uses the exit, so nothing silently falls back to the VPS IP.
+
+Exits are TCP-only: UDP through an exit is rejected rather than leaked.
+
+## Node links
+
+Manage nodes → Export links: one node's link (with an OSC52 copy request), **all links**, or a sing-box client configuration (local proxy `127.0.0.1:2080`). Selection menus show names, ports and status but never credentials. Share links contain client credentials; do not post screenshots of them.
+
+```sh
+rout export ID             # one link
+rout export ID client.json # sing-box client configuration
+rout export all [FILE]     # every link (file mode 0600)
+rout list                  # every node with its complete link
+```
+
+## Traffic accounting, limits and monthly reset
+
+All nodes are **unlimited by default**. With accounting installed, every listener is metered in the kernel: upload + download at the node's entry, bytes in decimal MB/GB/TB, including NAT, and counted once even when nodes share an exit. Limits are optional and per node. A finite limit is enforced by a kernel quota that drops the packet that would exceed it, including on existing connections; the monitor then stops only that node. Each node has a billing day (1–31, clamped to short months) and an IANA timezone; a new cycle restores quota-paused nodes but never manually paused ones. Unlimited nodes are never blocked by accounting faults.
+
+**Recovery behavior (v0.2.2):**
+
+- **Normal monitor restart or reboot:** at graceful shutdown the monitor closes the node's kernel gate *before* writing its final checkpoint ("sealed"). On start it verifies the seal and resumes automatically with exact usage and the exact remaining budget. Nothing is reset and no quota is granted.
+- **Quota-exhausted nodes** stay paused across restarts until the next cycle.
+- **Unexpected crash or power loss:** the last uncheckpointed seconds are unknown, so the node stays paused (fail-closed). Traffic management → **Resume with known usage** (or `rout traffic recover ID`) resumes it while keeping all known usage; the cycle stays marked as having a gap and its total is a lower bound. Alternatively confirm a reset (`y`, then `RESET`) or wait for the next cycle.
+
+See [docs/TRAFFIC.md](docs/TRAFFIC.md) for the exact measurement points, precision and fault model. Accounting requires nftables and `CAP_NET_ADMIN`; OpenVZ and some LXC containers do not grant it. In that case Rout reports accounting as unavailable instead of showing zero, and unlimited nodes keep working.
+
+## Certificates (HY2 / TUIC)
+
+Automatic setup creates a self-signed ECDSA certificate valid for 10 years. Trust comes from the pinned or embedded certificate, not from its validity period. A certificate you supply as PEM files is used as-is. Validity is shown in `rout list`, `rout status`, `rout cert` and `rout doctor`, with warnings 30 days before expiry. Nothing rotates automatically, because every replacement changes what clients must trust.
+
+```sh
+rout cert                 # validity of every HY2/TUIC certificate
+rout cert renew ID        # new self-signed certificate (asks first; clients must re-import)
+```
+
+The same actions are under Manage nodes → Edit node → Certificate. An expired certificate on one unchanged node no longer blocks `rout apply` for the other nodes.
+
+## Diagnostics
+
+`rout doctor` is read-only. It checks the OS, init system, IPv4/IPv6 routes, configuration validity, file permissions, engine binaries, generated configurations, service and port state, port conflicts, certificates, nftables, the traffic monitor and helper version, checkpoint freshness and per-node accounting state. It exits non-zero when problems are found. `rout doctor --fix` offers safe repairs (private file modes, leftover Rout metering tables, reinstalling the monitor helper), each confirmed separately.
+
+## Commands
+
+```sh
+rout                          # interactive menu
+rout list | status            # nodes with links | service state
+rout doctor [--fix]           # diagnostics
+rout test ID                  # local entry → protocol → exit, IPv4 and IPv6
+rout export ID [FILE] | export all [FILE] | copy ID
+rout restart|on|off|delete|logs ID
+rout exits | settings
+rout traffic                  # usage of all nodes
+rout traffic show|manage|recover ID
+rout traffic install          # install/update accounting (no node restarts)
+rout cert [ID] | cert renew ID
+rout apply                    # validate and re-apply all nodes
+rout backup FILE | restore FILE
+rout engines | update | uninstall | version | help
+```
+
+Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`, `--bin-dir DIR`. `--service none` is for development only.
+
+## Files, services and security
+
+- Configuration `/etc/rout` (0700; files 0600): `state.json`, `traffic.json`, `settings.json` (language, server defaults, `backup_keep`).
+- Automatic pre-change backups in `/etc/rout/backups`, keeping the newest **20** by default (configurable 1–1000 in Settings). The newest backup is never removed, and explicit `rout backup` files are never pruned. Backups contain credentials and private keys.
+- Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256 (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
+- One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, exit label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
+- systemd units restrict engines with a capability bounding set (`CAP_NET_BIND_SERVICE`; HY2/TUIC also keep `CAP_NET_ADMIN` for QUIC socket buffers), `ProtectSystem=strict`, kernel/cgroup/clock protections, `RestrictNamespaces` and `RestrictAddressFamilies`. Engines therefore cannot change Rout's quota tables. New units apply on the next change or `rout apply`.
+- OpenRC services use `supervise-daemon` with bounded respawns and private logs in `/var/log/rout-<ID>.log`, rotated at 5 MB.
+- Changes are serialized by file locks with bounded waits, validated in private staging directories and rolled back on failure.
+
+## Upgrading and rollback
+
+```sh
+sudo rout update      # refuses downgrades; keeps /usr/local/bin/rout.previous
+```
+
+`update` verifies the release binary and checks that it reports the expected version. It then refreshes the traffic monitor helper. The monitor restarts once: limited nodes are sealed and resume automatically, and unlimited nodes are not restarted. Existing nodes keep their IDs, ports, keys, credentials, certificates and usage. Run `rout apply` when you want existing services to pick up new unit hardening. **Coming from v0.2.1:** the old updater does not refresh the helper, so run `sudo rout traffic install` right after `rout update` (the installer script does it automatically). Roll back with `sudo mv /usr/local/bin/rout.previous /usr/local/bin/rout`. Read [docs/UPGRADING.md](docs/UPGRADING.md) for compatibility details.
+
+## Compatibility
+
+| Environment | Status |
+| --- | --- |
+| Debian / Ubuntu, systemd | Supported; CI runs real systemd lifecycle, sandbox and quota-guard tests |
+| Alpine, OpenRC | Supported; CI runs an OpenRC lifecycle test in an Alpine container |
+| IPv4-only / IPv6-only / dual stack | Supported; detection and tests do not require IPv4 |
+| NAT VPS with port ranges | Supported; provider mappings are entered, not discovered |
+| OpenVZ / restricted LXC | Proxies work; accounting needs nftables + `CAP_NET_ADMIN` |
+
+Real-host acceptance items outside CI: provider NAT reachability, physical reboots and power loss, NIC offload and sustained high rates. Each node table adds a small per-packet cost; Rout is tuned for tens of nodes per host.
 
 ## Development and releases
 
-Go 1.23+, standard library only. Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy implementations are provided by separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their respective licenses.
+Go 1.23+ (CI builds with the current stable Go), standard library only. Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy engines are separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their own licenses.
 
 ```sh
-go test -race ./...
-go vet ./...
+go test -race ./... && go vet ./...
 go build -o rout ./cmd/rout
-
-# Isolated config/engine install: does not install or start system services
 ./rout --home /tmp/rout-state --bin-dir /tmp/rout-engines --service none engines
 ROUT_TEST_ENGINES=/tmp/rout-engines go test -race -count=1 -v ./internal/rout
-
-sh scripts/release.sh
 ```
 
-The integration suite uses local origins, test HTTP/SOCKS proxies and disposable credentials. It checks actual encrypted traffic for all five node protocols, both authenticated proxy exits, TCP/UDP forwarding, UI-driven HY2 generation, native Hysteria URI import, and rejection of a wrong certificate pin. CI additionally runs real kernel accounting/quota tests in a disposable network namespace, killed-monitor/lease tests and root/systemd guarded lifecycle tests. Native-client tests use a separately checksum-pinned test binary, never installed by Rout:
+Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, both exit types and TCP/UDP relays (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`.
+
+CI runs everything above plus `govulncheck` and cross-compilation on every push. **Releases are published only from an explicit version tag** that matches the compiled version and `install.sh`; pushes to `main` never publish.
 
 ```sh
-sh scripts/test-native-hy2.sh /tmp/hysteria
-ROUT_TEST_ENGINES=/tmp/rout-engines ROUT_TEST_HYSTERIA=/tmp/hysteria go test -race -count=1 -v ./internal/rout
+git tag v0.2.2 && git push origin v0.2.2
 ```
-
-A host permitting sing-box's Linux network discovery is required. `ROUT_SKIP_SINGBOX_RUNTIME=1` skips runtime cases if netlink is blocked; configuration checks and GOST forwarding still run. A skipped test is not a successful protocol test. Unit tests cover scripted English/Chinese UI flows, translation-catalog completeness, NAT ranges, one-time prompts/naming, standalone/shared exits, legacy backup compatibility and preflight isolation. Disposable systemd tests also compare PIDs to verify that adding a node/exit, editing metadata or restarting another node preserves unrelated running services. Alpine/OpenRC and provider-side NAT reachability still need real-host acceptance testing.
-
-CI runs unit/race/static checks, verified-engine integration tests, actual systemd lifecycle/rollback tests and cross-compilation on every push. A successful push to `main` publishes the compiled version as a release **only after** all checks pass. An existing release is preserved. Bump `Version` and the installer's default version for a new release. Explicit version tags are also supported and must match the compiled version:
-
-```sh
-git tag v0.2.1
-git push origin v0.2.1
-```
-
-The `--service none` flag is for development: it saves generated configuration but intentionally does not start services. It must not be used as a production deployment mode.

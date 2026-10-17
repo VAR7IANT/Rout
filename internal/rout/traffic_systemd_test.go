@@ -146,3 +146,108 @@ func TestIntegrationTrafficServiceGuard(t *testing.T) {
 		t.Fatal("monthly reset changed unrelated PID")
 	}
 }
+
+// Real systemd: restarting or stopping/starting the monitor seals limited nodes and
+// resumes them automatically with their usage; unlimited nodes are never restarted.
+func TestIntegrationTrafficMonitorRestartResumes(t *testing.T) {
+	if os.Getenv("ROUT_TEST_TRAFFIC_SYSTEMD") != "1" {
+		t.Skip("disposable root/systemd host required")
+	}
+	verified := integrationApp(t)
+	manager := os.Getenv("ROUT_TEST_MANAGER")
+	if manager == "" {
+		t.Fatal("compiled manager required")
+	}
+	root, e := os.MkdirTemp("/var/lib", "rout-restart-ci-")
+	if e != nil {
+		t.Fatal(e)
+	}
+	a := &App{Home: filepath.Join(root, "config"), BinDir: filepath.Join(root, "bin"), ServiceMode: "auto"}
+	b, _ := os.ReadFile(verified.enginePath("sing-box"))
+	if e = AtomicWrite(a.enginePath("sing-box"), b, 0755); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() {
+		_ = a.removeTrafficMonitor()
+		if s, e := a.Load(); e == nil {
+			_ = a.Commit(s, State{Schema: 1, Profiles: []Profile{}}, false)
+		}
+		_ = os.RemoveAll(root)
+	})
+	var nodes []Profile
+	for i := 0; i < 2; i++ {
+		p := fixture(t, "ss")
+		p.Port, _ = freePort()
+		p.PublicPort = p.Port
+		s, _ := a.Load()
+		if e = a.Commit(s, replace(s, p), false); e != nil {
+			t.Fatal(e)
+		}
+		nodes = append(nodes, p)
+	}
+	limited, unlimited := nodes[0], nodes[1]
+	if out, e := runOutput(60*time.Second, manager, "--home", a.Home, "--bin-dir", a.BinDir, "traffic", "install"); e != nil {
+		t.Fatalf("monitor install: %v %s", e, out)
+	}
+	if e = a.ConfigureTraffic(limited.ID, TrafficPolicy{LimitBytes: 1 << 30, BillingDay: 1}, false, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	pid := func(p Profile) string { return servicePID("systemd", serviceName(p)) }
+	waitRunning := func(p Profile) {
+		for i := 0; i < 100; i++ {
+			if a.Running(p) == "运行中" && listening(p) {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatal("node did not resume", p.ID)
+	}
+	waitRunning(limited)
+	before, _ := a.loadTraffic()
+	unlimitedPID := pid(unlimited)
+	monitor := a.trafficService() + ".service"
+	if e = command("systemctl", "restart", monitor); e != nil {
+		t.Fatal(e)
+	}
+	waitRunning(limited)
+	db, _ := a.loadTraffic()
+	r := db.Records[limited.ID]
+	if r.Blocked != "" || r.Incomplete || r.Consumed < before.Records[limited.ID].Consumed {
+		t.Fatal("monitor restart did not resume with preserved usage", r)
+	}
+	if pid(unlimited) != unlimitedPID {
+		t.Fatal("monitor restart restarted an unlimited node")
+	}
+	if e = command("systemctl", "stop", monitor); e != nil {
+		t.Fatal(e)
+	}
+	db, _ = a.loadTraffic()
+	if db.Records[limited.ID].Blocked != "sealed" || a.Running(limited) == "运行中" {
+		t.Fatal("monitor stop did not seal and stop the limited node", db.Records[limited.ID].Blocked)
+	}
+	if e := a.TrafficGuard(limited.ID); e == nil {
+		t.Fatal("guard admits a sealed node while no monitor runs")
+	}
+	// As at boot: starting the node pulls in its required monitor, which verifies the
+	// seal before the node's guard runs.
+	if e = command("systemctl", "start", serviceName(limited)+".service"); e != nil {
+		t.Fatal(e)
+	}
+	if !serviceActive("systemd", a.trafficService()) {
+		t.Fatal("node started without its monitor")
+	}
+	waitRunning(limited)
+	if db, _ = a.loadTraffic(); db.Records[limited.ID].Blocked != "" {
+		t.Fatal("seal not verified on start")
+	}
+	if e = command("systemctl", "stop", monitor); e != nil {
+		t.Fatal(e)
+	}
+	if e = command("systemctl", "start", monitor); e != nil {
+		t.Fatal(e)
+	}
+	waitRunning(limited)
+	if pid(unlimited) != unlimitedPID {
+		t.Fatal("monitor stop/start restarted an unlimited node")
+	}
+}

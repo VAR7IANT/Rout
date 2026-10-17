@@ -28,6 +28,8 @@ type Asset struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
+	// "musl" marks a statically linked build for hosts without glibc (Alpine).
+	Libc string `json:"libc,omitempty"`
 }
 type Engine struct {
 	Version string  `json:"version"`
@@ -85,20 +87,62 @@ func download(url, path, digest string) error {
 	}
 	return f.Sync()
 }
+
+// hostLibc is "glibc" when the dynamic loader that default engine builds need exists;
+// otherwise (Alpine/musl, minimal images) only a statically linked build can run.
+var glibcLoaders = map[string]string{"amd64": "/lib64/ld-linux-x86-64.so.2", "arm64": "/lib/ld-linux-aarch64.so.1"}
+
+func hostLibc() string {
+	if _, e := os.Stat(glibcLoaders[runtime.GOARCH]); e == nil {
+		return "glibc"
+	}
+	return "musl"
+}
+
+// engineAsset picks the pinned archive for this architecture and C library. A static
+// (libc-neutral) asset serves every host; a musl asset is preferred where glibc is absent.
+func engineAsset(name, arch, libc string) Asset {
+	var generic, musl Asset
+	for _, v := range engines()[name].Assets {
+		if !strings.Contains(v.Name, "linux-"+arch) && !strings.Contains(v.Name, "linux_"+arch) {
+			continue
+		}
+		if v.Libc == "musl" {
+			musl = v
+		} else if v.Libc == "" {
+			generic = v
+		}
+	}
+	if libc == "musl" && musl.URL != "" {
+		return musl
+	}
+	return generic
+}
+
+// engineRuns proves an installed engine can execute on this host (a glibc-linked
+// binary on Alpine cannot), so a broken install is replaced instead of trusted.
+func engineRuns(name, path string) bool {
+	flag := "version"
+	if name == "gost" {
+		flag = "-V"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Only a failure to execute at all (missing loader, wrong format) means broken; a
+	// started process that exits non-zero is left for the configuration check to report.
+	e := exec.CommandContext(ctx, path, flag).Run()
+	var exit *exec.ExitError
+	return e == nil || errors.As(e, &exit) || ctx.Err() != nil
+}
 func (a *App) EnsureEngine(name string) error {
 	path := a.enginePath(name)
-	if st, e := os.Stat(path); e == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0 {
+	if st, e := os.Stat(path); e == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0 && engineRuns(name, path) {
 		return nil
 	}
 	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		return errors.New("仅支持 Linux amd64/arm64")
 	}
-	var asset Asset
-	for _, v := range engines()[name].Assets {
-		if strings.Contains(v.Name, "linux-"+runtime.GOARCH+".") || strings.Contains(v.Name, "linux_"+runtime.GOARCH+".") {
-			asset = v
-		}
-	}
+	asset := engineAsset(name, runtime.GOARCH, hostLibc())
 	if asset.URL == "" || len(asset.SHA256) != 64 {
 		return errors.New("缺少经过校验的内核下载信息")
 	}

@@ -55,16 +55,24 @@ jobs:
           sudo apt-get install -y nftables iproute2
           go build -o "$RUNNER_TEMP/rout-manager" ./cmd/rout
           go test -race -c -o "$RUNNER_TEMP/rout-kernel.test" ./internal/rout
-          sudo env ROUT_TEST_NFT=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" unshare --net sh -c 'ip link set lo up; exec "$1" -test.run "^(TestKernel|TestIntegrationProtocolsAndProxyExit)" -test.v' sh "$RUNNER_TEMP/rout-kernel.test"
-          sudo env ROUT_TEST_TRAFFIC_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" "$RUNNER_TEMP/rout-kernel.test" -test.run '^TestIntegrationTrafficServiceGuard$' -test.v
+          # Real upgrade/rollback against the published, checksum-verified v0.2.1 monitor.
+          curl --proto '=https' -fsSL https://github.com/VAR7IANT/Rout/releases/download/v0.2.1/rout-linux-amd64 -o "$RUNNER_TEMP/rout-linux-amd64"
+          curl --proto '=https' -fsSL https://github.com/VAR7IANT/Rout/releases/download/v0.2.1/checksums.txt -o "$RUNNER_TEMP/v021-checksums.txt"
+          (cd "$RUNNER_TEMP" && grep ' rout-linux-amd64$' v021-checksums.txt | sha256sum -c - && chmod 755 rout-linux-amd64)
+          sudo env ROUT_TEST_NFT=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" ROUT_TEST_PREVIOUS_MANAGER="$RUNNER_TEMP/rout-linux-amd64" unshare --net sh -c 'ip link set lo up; exec "$1" -test.run "^(TestKernel|TestIntegrationProtocolsAndProxyExit)" -test.v' sh "$RUNNER_TEMP/rout-kernel.test"
+          sudo env ROUT_TEST_TRAFFIC_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" "$RUNNER_TEMP/rout-kernel.test" -test.run '^(TestIntegrationTrafficServiceGuard|TestIntegrationTrafficMonitorRestartResumes)$' -test.v
       - name: Alpine Linux / OpenRC service lifecycle in a disposable container
         run: |
           CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/rout-static.test" ./internal/rout
+          CGO_ENABLED=0 go build -o "$RUNNER_TEMP/rout-static" ./cmd/rout
+          # Rout itself must select the static musl engines on Alpine (no glibc loader).
           docker run --rm --privileged -v "$RUNNER_TEMP:/w" alpine:3.20 sh -euc '
             apk add --no-cache openrc >/dev/null
             printf "auto lo\niface lo inet loopback\n" > /etc/network/interfaces
             mkdir -p /run/openrc && touch /run/openrc/softlevel
-            cd /w && ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/w/rout-engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v'
+            /w/rout-static --home /tmp/state --bin-dir /tmp/engines --service none engines
+            cd /w && ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^(TestIntegrationProtocolsAndProxyExit|TestIntegrationGOSTTCPAndUDP)$" -test.v
+            ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v'
       - name: Build both Linux architectures
         run: sh scripts/release.sh
       - uses: actions/upload-artifact@v4

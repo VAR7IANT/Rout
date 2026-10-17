@@ -362,3 +362,36 @@ func expiredCertificate(t *testing.T, host string) (string, string) {
 	pk, _ := x509.MarshalPKCS8PrivateKey(key)
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pk}))
 }
+
+func TestEngineSelectionForMusl(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		glibc, musl := engineAsset("sing-box", arch, "glibc"), engineAsset("sing-box", arch, "musl")
+		if glibc.Libc != "" || !strings.Contains(glibc.Name, "linux-"+arch+".tar.gz") || len(glibc.SHA256) != 64 {
+			t.Fatal("default sing-box asset", glibc)
+		}
+		if musl.Libc != "musl" || !strings.HasSuffix(musl.Name, "linux-"+arch+"-musl.tar.gz") || len(musl.SHA256) != 64 {
+			t.Fatal("Alpine needs the static musl sing-box build", musl)
+		}
+		// GOST ships static binaries only: the same pinned asset serves both.
+		if g := engineAsset("gost", arch, "musl"); g.URL == "" || g != engineAsset("gost", arch, "glibc") {
+			t.Fatal("gost asset", g)
+		}
+	}
+	dir := t.TempDir()
+	broken := filepath.Join(dir, "broken")
+	// An ELF-like file that cannot be executed is not a usable engine; a script that
+	// starts and exits non-zero is (its configuration check reports the failure).
+	if e := os.WriteFile(broken, []byte("\x7fELF-not-runnable"), 0755); e != nil {
+		t.Fatal(e)
+	}
+	if engineRuns("sing-box", broken) {
+		t.Fatal("non-executable engine trusted")
+	}
+	failing := filepath.Join(dir, "failing")
+	if e := os.WriteFile(failing, []byte("#!/bin/sh\nexit 1\n"), 0755); e != nil {
+		t.Fatal(e)
+	}
+	if !engineRuns("sing-box", failing) {
+		t.Fatal("started engine treated as missing")
+	}
+}

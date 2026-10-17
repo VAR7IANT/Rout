@@ -663,3 +663,132 @@ func assertProtocolQuota(t *testing.T, a *App, p Profile, proxy, endpoint string
 	}
 	return nil
 }
+
+// Real upgrade path: a v0.2.1 monitor shuts down gracefully (writing its legacy
+// "fault" checkpoint), then the current monitor must verify and resume the limited
+// node with its usage intact. ROUT_TEST_PREVIOUS_MANAGER points to the v0.2.1 binary.
+func TestKernelUpgradeFromPreviousMonitor(t *testing.T) {
+	a := kernelApp(t)
+	previous, manager := os.Getenv("ROUT_TEST_PREVIOUS_MANAGER"), os.Getenv("ROUT_TEST_MANAGER")
+	if previous == "" || manager == "" {
+		t.Skip("set ROUT_TEST_PREVIOUS_MANAGER and ROUT_TEST_MANAGER")
+	}
+	p := kernelProfile(t, a, "127.0.0.1", "udp")
+	c, got := udpEcho(t, p, false)
+	if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 1_000_000, BillingDay: 1}, false, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	run := func(binary string) *exec.Cmd {
+		cmd := exec.Command(binary, "--home", a.Home, "--bin-dir", a.BinDir, "--service", "none", "traffic", "run")
+		if e := cmd.Start(); e != nil {
+			t.Fatal(e)
+		}
+		t.Cleanup(func() {
+			if cmd.ProcessState == nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+		})
+		time.Sleep(700 * time.Millisecond)
+		return cmd
+	}
+	old := run(previous)
+	sendUDP(t, c, got, 600, true)
+	time.Sleep(5500 * time.Millisecond) // one old-monitor checkpoint
+	_ = old.Process.Signal(os.Interrupt)
+	if e := old.Wait(); e != nil {
+		t.Fatal(e)
+	}
+	db, _ := a.loadTraffic()
+	legacy := db.Records[p.ID]
+	if legacy.Blocked != "fault" || legacy.Incomplete || legacy.Consumed != 628 {
+		t.Fatal("unexpected v0.2.1 shutdown checkpoint", legacy)
+	}
+	sendUDP(t, c, got, 10, false)
+	current := run(manager)
+	sendUDP(t, c, got, 600, true)
+	db, _ = a.loadTraffic()
+	r := db.Records[p.ID]
+	if r.Blocked != "" || r.Incomplete || r.Consumed < 628 || r.RawUp < legacy.RawUp {
+		t.Fatal("upgrade did not resume the limited node with preserved usage", r)
+	}
+	_ = current.Process.Signal(os.Interrupt)
+	_ = current.Wait()
+	// Rollback: v0.2.1 reads the sealed journal, keeps the node closed (no bypass).
+	rollback := run(previous)
+	sendUDP(t, c, got, 10, false)
+	db, e := a.loadTraffic()
+	if e != nil || db.Records[p.ID].Blocked == "" {
+		t.Fatal("rollback reopened or could not read the sealed checkpoint", e)
+	}
+	_ = rollback.Process.Signal(os.Interrupt)
+	_ = rollback.Wait()
+}
+
+// A relay in front of another managed listener: each logical hop is counted exactly
+// once in its own table, and neither table absorbs the other hop's bytes.
+func TestKernelRelayPathCountedOncePerNode(t *testing.T) {
+	if os.Getenv("ROUT_TEST_NFT") != "1" {
+		t.Skip("kernel tests disabled")
+	}
+	a := integrationApp(t)
+	if e := AtomicWrite(filepath.Join(a.Home, "traffic.enabled"), []byte("1"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	node := kernelProfile(t, a, "127.0.0.1", "udp")
+	echo, e := net.ListenPacket("udp", net.JoinHostPort(node.Listen, itoa(node.Port)))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer echo.Close()
+	go func() {
+		b := make([]byte, 2048)
+		for {
+			n, addr, e := echo.ReadFrom(b)
+			if e != nil {
+				return
+			}
+			_, _ = echo.WriteTo(b[:n], addr)
+		}
+	}()
+	port, _ := freePort()
+	relay := Profile{ID: RandomHex(6), Name: "relay", Kind: "relay", Enabled: true, Protocol: "udp", Listen: "127.0.0.1", Port: port, PublicHost: "203.0.113.1", PublicPort: port, Target: net.JoinHostPort("127.0.0.1", itoa(node.Port))}
+	s, _ := a.Load()
+	s = replace(s, relay)
+	b, _ := JSON(s)
+	if e = AtomicWrite(filepath.Join(a.Home, "state.json"), b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = a.meter().Delete(relay) })
+	c, e := serverConfig(relay, t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	startEngine(t, a.enginePath("gost"), "-C", configFile(t, c))
+	conn, e := net.Dial("udp", net.JoinHostPort("127.0.0.1", itoa(port)))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer conn.Close()
+	reply := make([]byte, 2048)
+	for i := 0; i < 5; i++ {
+		conn.SetDeadline(time.Now().Add(2 * time.Second))
+		if _, e = conn.Write(make([]byte, 100)); e != nil {
+			t.Fatal(e)
+		}
+		if n, e := conn.Read(reply); e != nil || n != 100 {
+			t.Fatal("relay round trip failed", n, e)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	for _, p := range []Profile{relay, node} {
+		snap, e := a.meter().Read(p)
+		// 5 datagrams each way: 5 × (20 IP + 8 UDP + 100) bytes, exactly once per hop.
+		if e != nil || snap.Up != 640 || snap.Down != 640 {
+			t.Fatal("relay path counted incorrectly", p.Name, snap, e)
+		}
+	}
+}
