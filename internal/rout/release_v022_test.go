@@ -242,7 +242,7 @@ func TestPublicAddressDetectionFamilies(t *testing.T) {
 		t.Fatal("IPv6-only host needed IPv4", ip)
 	}
 	a := testApp(t)
-	u, _ := testUI(a, "1\n\n\n")
+	u, _ := testUI(a, "")
 	u.detectIP = DetectPublicIP
 	setup, e := u.serverSetup()
 	if e != nil || setup.PublicHost != "2001:db8::7" || setup.Listen != "::" {

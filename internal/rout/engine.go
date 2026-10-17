@@ -57,11 +57,62 @@ func httpClient() *http.Client {
 		return nil
 	}}
 }
-func download(url, path, digest string) error {
+
+// Tests substitute a client that trusts their local TLS server.
+var newHTTPClient = httpClient
+
+// Memory discipline: nothing here ever holds an archive or an engine in memory. Bytes move
+// through one fixed-size buffer, and written data is flushed and dropped from the page
+// cache every syncEvery bytes, because on a small VPS inside a memory-limited cgroup the
+// dirty pages of an 80 MB engine count against the limit just like heap does.
+const (
+	maxArchiveBytes  = 200 << 20
+	maxEngineBytes   = 150 << 20
+	copyBufferSize   = 256 << 10
+	syncEvery        = 8 << 20
+	engineLockWait   = 5 * time.Minute
+	staleDownloadAge = 15 * time.Minute
+)
+
+// flushWriter forwards writes and periodically makes them durable and evictable.
+type flushWriter struct {
+	f       *os.File
+	pending int64
+}
+
+func (w *flushWriter) Write(b []byte) (int, error) {
+	n, e := w.f.Write(b)
+	w.pending += int64(n)
+	if e == nil && w.pending >= syncEvery {
+		w.pending = 0
+		if e = w.f.Sync(); e == nil {
+			dropFileCache(w.f)
+		}
+	}
+	return n, e
+}
+
+// copyN copies exactly n bytes through one bounded buffer; a short source is an error.
+func copyN(dst io.Writer, src io.Reader, n int64) error {
+	buf := make([]byte, copyBufferSize)
+	written, e := io.CopyBuffer(struct{ io.Writer }{dst}, io.LimitReader(src, n), buf)
+	if e != nil {
+		return e
+	}
+	if written != n {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+// download streams a HTTPS body to path, hashing as it goes. On any failure the partial
+// file is removed. An empty digest skips verification (used only for the checksum list,
+// whose content is then compared by the caller).
+func download(url, path, digest string) (err error) {
 	if !strings.HasPrefix(url, "https://") {
 		return errors.New("下载地址必须为 HTTPS")
 	}
-	r, e := httpClient().Get(url)
+	r, e := newHTTPClient().Get(url)
 	if e != nil {
 		return errors.New("下载连接失败，请检查网络")
 	}
@@ -73,19 +124,60 @@ func download(url, path, digest string) error {
 	if e != nil {
 		return e
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			os.Remove(path)
+		}
+	}()
 	h := sha256.New()
-	n, e := io.Copy(io.MultiWriter(f, h), io.LimitReader(r.Body, 200<<20))
+	buf := make([]byte, copyBufferSize)
+	n, e := io.CopyBuffer(struct{ io.Writer }{io.MultiWriter(&flushWriter{f: f}, h)}, io.LimitReader(r.Body, maxArchiveBytes), buf)
 	if e != nil {
 		return e
 	}
-	if n >= 200<<20 {
+	if n >= maxArchiveBytes {
 		return errors.New("下载文件过大")
 	}
 	if digest != "" && hex.EncodeToString(h.Sum(nil)) != digest {
 		return errors.New("SHA256 校验失败，未安装下载内容")
 	}
 	return f.Sync()
+}
+
+// copyFileAtomic copies src to dst through a same-directory temporary file (streaming).
+func copyFileAtomic(src, dst string, mode os.FileMode) (err error) {
+	in, e := os.Open(src)
+	if e != nil {
+		return e
+	}
+	defer in.Close()
+	out, e := os.CreateTemp(filepath.Dir(dst), ".rout-*")
+	if e != nil {
+		return e
+	}
+	tmp := out.Name()
+	defer func() {
+		if err != nil {
+			os.Remove(tmp)
+		}
+	}()
+	buf := make([]byte, copyBufferSize)
+	if _, e = io.CopyBuffer(struct{ io.Writer }{&flushWriter{f: out}}, in, buf); e == nil {
+		e = out.Chmod(mode)
+	}
+	if e == nil {
+		e = out.Sync()
+	}
+	if ce := out.Close(); e == nil {
+		e = ce
+	}
+	if e != nil {
+		return e
+	}
+	return os.Rename(tmp, dst)
 }
 
 // hostLibc is "glibc" when the dynamic loader that default engine builds need exists;
@@ -134,9 +226,14 @@ func engineRuns(name, path string) bool {
 	var exit *exec.ExitError
 	return e == nil || errors.As(e, &exit) || ctx.Err() != nil
 }
+func engineUsable(name, path string) bool {
+	st, e := os.Stat(path)
+	return e == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0 && engineRuns(name, path)
+}
+
 func (a *App) EnsureEngine(name string) error {
 	path := a.enginePath(name)
-	if st, e := os.Stat(path); e == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0 && engineRuns(name, path) {
+	if engineUsable(name, path) {
 		return nil
 	}
 	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
@@ -149,16 +246,62 @@ func (a *App) EnsureEngine(name string) error {
 	if e := os.MkdirAll(a.BinDir, 0755); e != nil {
 		return e
 	}
+	a.printf("下载并校验 %s %s…\n", name, engines()[name].Version)
+	return a.installEngine(name, path, asset)
+}
+
+// installEngine downloads, verifies, extracts and atomically installs one engine.
+//
+//   - One installer at a time per bin directory (flock); a waiter re-checks afterwards, so
+//     concurrent attempts download once.
+//   - The archive is streamed to disk and SHA256-verified before it is opened; the engine is
+//     streamed out of the archive into a staging file, never held in memory.
+//   - The staged binary must actually execute before it replaces anything. The final step
+//     is a same-filesystem rename, so a failure at any earlier point leaves the existing
+//     file (if any) untouched; the staging directory is always removed.
+func (a *App) installEngine(name, path string, asset Asset) error {
+	unlock, e := lockFile(filepath.Join(a.BinDir, ".install.lock"), engineLockWait)
+	if e != nil {
+		if errors.Is(e, errLockBusy) {
+			return errors.New("另一个内核安装仍在进行，请稍后重试")
+		}
+		return e
+	}
+	defer unlock()
+	if engineUsable(name, path) {
+		return nil
+	}
+	removeStaleDownloads(a.BinDir, staleDownloadAge)
 	tmp, e := os.MkdirTemp(a.BinDir, ".download-")
 	if e != nil {
 		return e
 	}
 	defer os.RemoveAll(tmp)
-	a.printf("下载并校验 %s %s…\n", name, engines()[name].Version)
 	archive := filepath.Join(tmp, "engine.tar.gz")
-	if e := download(asset.URL, archive, asset.SHA256); e != nil {
+	if e = download(asset.URL, archive, asset.SHA256); e != nil {
 		return e
 	}
+	staged := filepath.Join(tmp, "engine.bin")
+	if e = extractEngine(archive, name, staged); e != nil {
+		return e
+	}
+	// The archive is no longer needed; free its disk space before the final steps.
+	os.Remove(archive)
+	if !engineRuns(name, staged) {
+		return errors.New("下载的内核无法在本机运行，已保留原有文件")
+	}
+	if e = os.Rename(staged, path); e != nil {
+		return e
+	}
+	if d, er := os.Open(filepath.Dir(path)); er == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
+}
+
+// extractEngine streams the named regular file from a .tar.gz into dst (mode 0755).
+func extractEngine(archive, name, dst string) (err error) {
 	f, e := os.Open(archive)
 	if e != nil {
 		return e
@@ -166,7 +309,7 @@ func (a *App) EnsureEngine(name string) error {
 	defer f.Close()
 	gz, e := gzip.NewReader(f)
 	if e != nil {
-		return e
+		return errors.New("下载归档已损坏")
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
@@ -176,21 +319,57 @@ func (a *App) EnsureEngine(name string) error {
 			break
 		}
 		if e != nil {
-			return e
+			return errors.New("下载归档已损坏")
 		}
 		if h.Typeflag != tar.TypeReg || filepath.Base(h.Name) != name {
 			continue
 		}
-		if h.Size <= 0 || h.Size > 150<<20 {
+		if h.Size <= 0 || h.Size > maxEngineBytes {
 			return errors.New("内核文件大小无效")
 		}
-		b, e := io.ReadAll(io.LimitReader(tr, h.Size))
+		out, e := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
 		if e != nil {
 			return e
 		}
-		return AtomicWrite(path, b, 0755)
+		defer func() {
+			if err != nil {
+				os.Remove(dst)
+			}
+		}()
+		e = copyN(&flushWriter{f: out}, tr, h.Size)
+		if e == nil {
+			e = out.Chmod(0755)
+		}
+		if e == nil {
+			e = out.Sync()
+		}
+		if ce := out.Close(); e == nil {
+			e = ce
+		}
+		if e != nil {
+			if errors.Is(e, io.ErrUnexpectedEOF) {
+				return errors.New("下载归档已损坏")
+			}
+			return e
+		}
+		return nil
 	}
 	return errors.New("下载归档中没有找到内核")
+}
+
+// removeStaleDownloads deletes staging directories abandoned by a killed installer. The
+// caller holds the install lock, so only old directories (possibly from a v0.3.0 process
+// that did not lock) are considered.
+func removeStaleDownloads(dir string, age time.Duration) {
+	entries, _ := os.ReadDir(dir)
+	for _, ent := range entries {
+		if !ent.IsDir() || !strings.HasPrefix(ent.Name(), ".download-") {
+			continue
+		}
+		if info, e := ent.Info(); e == nil && time.Since(info.ModTime()) > age {
+			os.RemoveAll(filepath.Join(dir, ent.Name()))
+		}
+	}
 }
 func runOutput(timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -337,9 +516,7 @@ func SelfUpdate(language ...string) error {
 		return errors.New("新版本无法运行或版本不符，保留旧版本")
 	}
 	// Keep the previous manager for a one-command rollback.
-	if old, er := os.ReadFile(exe); er == nil {
-		_ = AtomicWrite(exe+".previous", old, 0755)
-	}
+	_ = copyFileAtomic(exe, exe+".previous", 0755)
 	if e = os.Rename(p, exe); e != nil {
 		return e
 	}

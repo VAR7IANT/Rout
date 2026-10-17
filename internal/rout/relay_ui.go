@@ -92,28 +92,27 @@ func (u *UI) askPortValue(prompt string, def int) int {
 	return 0
 }
 
-// relayEntry configures the CURRENT server side: listening address/port and the public
-// endpoint clients use. A new relay reuses the saved server defaults and a planned free
-// port, shown once for confirmation; answering no (or editing) asks for each value.
-// On NAT the public port is the provider's mapping, never assumed.
+// relayEntry configures the CURRENT server side: where the relay listens and the public
+// endpoint clients use. A new relay uses the saved server address, a planned free port and
+// (on a regular VPS) the same public port; the planned values are shown once for
+// confirmation, and answering no asks for a port. A legacy NAT host keeps asking for the
+// provider's mapped public port, never assumed.
 func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 	ownPort := p.Port // when editing, the running relay already holds its own port
 	u.heading("中转入口 — 当前服务器")
-	kind := u.a.T("普通 VPS")
 	if setup.NAT {
-		kind = u.a.T("NAT VPS")
+		u.say("旧版 NAT 映射：公网端口由商家映射，可能与监听端口不同")
 	}
-	u.printf("服务器类型：%s\n", kind)
 	if setup.PublicHost == "" {
 		for u.err == nil {
 			setup.PublicHost = u.ask("本服务器的公网 IP 或域名（客户端连接的地址）", "")
-			if validHost(setup.PublicHost) {
+			if validPublicHost(setup.PublicHost) {
 				break
 			}
-			u.say("地址或端口无效")
+			u.say("地址无效：不能是空值、未指定地址或链路本地地址（如 fe80::）")
 		}
 	}
-	u.printf("公网 IP：%s（客户端连接此地址；可在 设置 → 服务器类型与默认设置 中修改）\n", setup.PublicHost)
+	u.printf("公网地址：%s（客户端连接此地址；可在 设置 → 服务器地址 中修改）\n", setup.PublicHost)
 	p.PublicHost = setup.PublicHost
 	p.NAT = setup.NAT
 	if p.Listen == "" {
@@ -161,13 +160,15 @@ func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 			u.say("没有可自动分配的端口，请手动填写")
 		}
 	}
-	for u.err == nil {
-		listen := u.ask("本机监听地址（0.0.0.0 / :: 表示所有网卡，不是公网地址）", p.Listen)
-		if net.ParseIP(listen) != nil {
-			p.Listen = listen
-			break
+	if setup.NAT {
+		for u.err == nil {
+			listen := u.ask("本机监听地址（0.0.0.0 / :: 表示所有网卡，不是公网地址）", p.Listen)
+			if net.ParseIP(listen) != nil {
+				p.Listen = listen
+				break
+			}
+			u.say("监听地址或公网地址无效")
 		}
-		u.say("监听地址或公网地址无效")
 	}
 	suggest := p.Port
 	for u.err == nil {
@@ -183,7 +184,7 @@ func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 			u.warnf("端口 %d 不在已保存的 NAT 范围 %d-%d 内，请确认商家确实映射了此端口", p.Port, setup.LocalStart, setup.LocalEnd)
 		}
 		if p.Port != ownPort || ownPort == 0 {
-			if e := CheckAvailable(probe()); e != nil {
+			if e := portConflict(s, probe()); e != nil {
 				u.fail(u.a.Error(e))
 				suggest = 0
 				continue
@@ -193,7 +194,8 @@ func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 	}
 	if !setup.NAT {
 		p.PublicPort = p.Port
-		u.printf("公网端口：%d（普通 VPS 的公网端口与监听端口相同）\n", p.PublicPort)
+		u.printf("监听：%s\n", relayListen(*p))
+		u.printf("公网端口：%d（与监听端口相同）\n", p.PublicPort)
 		return u.err
 	}
 	def := mapped(p.Port)
@@ -233,13 +235,6 @@ func (u *UI) relayDestination(p *Profile, s State) error {
 			port = n
 		}
 		port = u.askPortValue("目标服务端口（本服务器上）", port)
-		for u.err == nil {
-			host = u.ask("目标地址（高级，通常保持 127.0.0.1）", host)
-			if validHost(host) {
-				break
-			}
-			u.say("地址或端口无效")
-		}
 		if u.err != nil {
 			return u.err
 		}
@@ -287,7 +282,7 @@ func (u *UI) relayDestination(p *Profile, s State) error {
 			p.Target, p.TargetURI = net.JoinHostPort(h, itoa(port)), ""
 			return nil
 		}
-		if !validHost(host) {
+		if !validHostStrict(host) {
 			u.say("请输入有效的 IP 地址或域名（IPv6 可直接输入，不需要方括号）")
 			continue
 		}
@@ -362,7 +357,7 @@ func (u *UI) preferLocal(s State, p *Profile) {
 		return
 	}
 	node, managed := localNodeForPublicPort(s, h, port)
-	if !strings.EqualFold(h, p.PublicHost) && !managed {
+	if !sameHost(h, p.PublicHost) && !managed {
 		return
 	}
 	if managed && node.ID != p.ID {
@@ -378,7 +373,7 @@ func (u *UI) preferLocal(s State, p *Profile) {
 		}
 		return
 	}
-	u.warn("目标地址与本服务器公网 IP 相同；如果目标服务就在本机，选择『本机』模式更可靠（NAT 环境通常不支持回环）")
+	u.warn("目标地址与本服务器公网 IP 相同；如果目标服务就在本机，选择『本机』模式更可靠（许多网络不允许服务器连接自己的公网地址）")
 }
 func (u *UI) saveRelayMode(mode string) {
 	if s, e := u.a.LoadSettings(); e == nil && s.RelayMode != mode {

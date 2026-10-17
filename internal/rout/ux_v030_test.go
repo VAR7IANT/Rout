@@ -53,9 +53,9 @@ func TestRelayCreateLocalDestination(t *testing.T) {
 	a := relayTestApp(t, ServerSetup{PublicHost: "203.0.113.10", Listen: "0.0.0.0", Network: "both"})
 	listen, _ := freePort()
 	target, _ := freePort()
-	// local · saved setup · override planned entry · listen addr · listen port · target port ·
-	// target host · TCP · name · confirm
-	u, out := testUI(a, "1\ny\nn\n\n"+itoa(listen)+"\n"+itoa(target)+"\n\n1\n\n\n")
+	// local · override planned entry · listen port · target port · TCP · name · confirm
+	// (the saved server address is reused silently; no listen-address or target-host question)
+	u, out := testUI(a, "1\nn\n"+itoa(listen)+"\n"+itoa(target)+"\n1\n\n\n")
 	if e := u.relayCreate(); e != nil {
 		t.Fatal(e, out.String())
 	}
@@ -98,10 +98,9 @@ func TestRelayCreateRemoteNATUDP(t *testing.T) {
 	if internal == 0 {
 		t.Skip("no free port in the test NAT range")
 	}
-	// remote · saved setup · planned entry accepted (first free internal port, mapped
-	// public port) · empty host (refused, never filled in) · host · port · UDP · name ·
-	// confirm (uppercase)
-	u, out := testUI(a, "2\nY\n\n\n198.51.100.7\n8443\n2\n\nYES\n")
+	// remote · planned entry accepted (first free internal port, mapped public port) ·
+	// empty host (refused, never filled in) · host · port · UDP · name · confirm (uppercase)
+	u, out := testUI(a, "2\n\n\n198.51.100.7\n8443\n2\n\nYES\n")
 	if e := u.relayCreate(); e != nil {
 		t.Fatal(e, out.String())
 	}
@@ -131,8 +130,8 @@ func TestRelayCreateRemoteNATUDP(t *testing.T) {
 
 func TestRelayEntryReusesSavedDefaults(t *testing.T) {
 	a := relayTestApp(t, ServerSetup{PublicHost: "203.0.113.10", Listen: "::", Network: "both"})
-	// remote · saved setup · planned entry accepted · host · port · TCP · name · confirm
-	u, out := testUI(a, "2\n\n\n198.51.100.7\n443\n1\n\n\n")
+	// remote · planned entry accepted · host · port · TCP · name · confirm
+	u, out := testUI(a, "2\n\n198.51.100.7\n443\n1\n\n\n")
 	if e := u.relayCreate(); e != nil {
 		t.Fatal(e, out.String())
 	}
@@ -141,7 +140,7 @@ func TestRelayEntryReusesSavedDefaults(t *testing.T) {
 		t.Fatalf("saved defaults not reused: %+v", p)
 	}
 	text := out.String()
-	if strings.Contains(text, "Listening address on this server") || strings.Count(text, "Use the saved server settings") != 1 {
+	if strings.Contains(text, "Listening address on this server") || strings.Contains(text, "Use the saved server settings") {
 		t.Fatalf("redundant entry prompts:\n%s", text)
 	}
 	if !strings.Contains(text, "Use this listening address and port") || !strings.Contains(text, "[::]:"+itoa(p.Port)) {
@@ -150,7 +149,7 @@ func TestRelayEntryReusesSavedDefaults(t *testing.T) {
 	// Editing the entry asks for each value, with the current ones as defaults: keep the
 	// address, move the port.
 	port, _ := freePort()
-	u, out = testUI(a, "2\n\n"+itoa(port)+"\n\n")
+	u, out = testUI(a, "2\n"+itoa(port)+"\n\n")
 	if e := u.relayEdit(p.ID); e != nil {
 		t.Fatal(e, out.String())
 	}
@@ -776,7 +775,7 @@ func TestIntegrationRelayFlowEndToEnd(t *testing.T) {
 	// Local machine, TCP+UDP: client -> 127.0.0.1:listen -> 127.0.0.1:service.
 	service := echo("127.0.0.1")
 	listen, _ := freePort()
-	p := run("1\ny\nn\n\n" + itoa(listen) + "\n" + itoa(service) + "\n\n3\n\n\n")
+	p := run("1\nn\n" + itoa(listen) + "\n" + itoa(service) + "\n3\n\n\n")
 	through("tcp", p.Port)
 	through("udp", p.Port)
 	// Remote relay server (an interface address stands in for the remote host), TCP only.
@@ -791,7 +790,7 @@ func TestIntegrationRelayFlowEndToEnd(t *testing.T) {
 	}
 	remote := echo(host)
 	// Planned entry accepted: saved listening address, automatically chosen port.
-	p = run("2\ny\n\n" + host + "\n" + itoa(remote) + "\n1\n\n\n")
+	p = run("2\n\n" + host + "\n" + itoa(remote) + "\n1\n\n\n")
 	if p.RelayMode != relayRemote || p.Protocol != "tcp" {
 		t.Fatalf("%+v", p)
 	}

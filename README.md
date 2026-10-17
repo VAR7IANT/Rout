@@ -1,12 +1,13 @@
 # Rout
 
-Create proxy nodes, relay traffic to this or another server and manage reusable outbound proxies on a regular VPS or a NAT VPS — from one small, dependency-free binary with a bilingual terminal menu (**简体中文** / **English**).
+Create proxy nodes, relay traffic to this or another server and manage reusable outbound proxies on IPv4-only, IPv6-only and dual-stack VPS hosts — from one small, dependency-free binary with a bilingual terminal menu (**简体中文** / **English**).
 
 - Five node protocols: **VLESS Reality, AnyTLS Reality, Shadowsocks 2022, Hysteria2, TUIC v5**
 - Guided TCP/UDP relays to a service on this server or to a remote server, with a full path preview, loop checks and the original node's credentials kept
 - Reusable **SOCKS5 / HTTP CONNECT outbound proxies** shared by many nodes, with no silent direct-IP fallback
 - Exact per-node **traffic accounting and hard monthly quotas** in the kernel (nftables)
-- **systemd and OpenRC**, IPv4-only, IPv6-only and dual-stack hosts, NAT port ranges
+- **systemd and OpenRC**, IPv4-only, IPv6-only and dual-stack hosts; existing NAT-VPS mappings from older versions keep working
+- Low-memory friendly: engines are streamed to disk and verified incrementally, never held in memory (see [Low-memory installation](#low-memory-installation))
 
 ## Install
 
@@ -17,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.1`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -34,13 +35,15 @@ sudo rout
   3  Outbound proxies      → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
   4  Traffic and limits    → usage of every node; limit in GB, billing day, reset, pause
   5  Services
-  6  Settings              → language, server type and defaults, backups, uninstall
+  6  Settings              → language, server address (IPv4 / IPv6), backups, uninstall
   7  Diagnostics
   8  Updates
   0  Quit
 ```
 
 The interactive menu opens with a ROUT banner once per session: the logo in a blue gradient on 256-colour terminals, with "Support by VAR7IANT" and the running version centered beneath it, or a one-line title on terminals narrower than 39 columns. It is never printed for commands, pipes or scripts, and `NO_COLOR` or `TERM=dumb` disables all colour.
+
+Creating a node takes one pass: Rout detects the server address, you type the base name once and pick one or more protocols, ports and credentials are generated automatically, and a single confirmation lists every node with its port and address before anything is written. The confirmation also offers *Change ports* (checked for TCP and UDP conflicts) and *Advanced options* (custom credentials, Reality SNI, an existing PEM certificate). Pressing Enter at every prompt creates one VLESS node named `Rout-VLESS`.
 
 Creating `Tokyo` with VLESS, SS and HY2 produces `Tokyo-VLESS`, `Tokyo-SS` and `Tokyo-HY2`, each with its own service, generated credentials and a complete share link. A repeated name becomes `Tokyo-VLESS-2`. Every menu lists numbered choices: `0` or `b` goes back and `q` quits Rout from any menu. Answers are case-insensitive (`y`, `Y`, `yes`, `YES`; full-width input works too). Enter takes the default shown in capitals: `[Y/n]` for ordinary confirmations, `[y/N]` for deletions. Irreversible actions (manual traffic reset, uninstall) require typing the word shown, such as `reset`.
 
@@ -50,19 +53,38 @@ Creating `Tokyo` with VLESS, SS and HY2 produces `Tokyo-VLESS`, `Tokyo-SS` and `
 | --- | --- | --- | --- |
 | VLESS Reality (Vision) | TCP | Reality, borrowed from the SNI target | Standard `vless://` link |
 | AnyTLS Reality | TCP | Reality | Needs a client with AnyTLS + Reality; the exported sing-box JSON is the reference |
-| Shadowsocks 2022 (`2022-blake3-aes-128-gcm`) | TCP+UDP (or one of them on NAT) | — | SIP002 link with percent-encoded `method:key`, as SIP002 requires for AEAD-2022 |
+| Shadowsocks 2022 (`2022-blake3-aes-128-gcm`) | TCP+UDP (or one of them on a legacy NAT mapping) | — | SIP002 link with percent-encoded `method:key`, as SIP002 requires for AEAD-2022 |
 | Hysteria2 | UDP | Self-signed (pinned) or your PEM | Link carries `insecure=1` **and** `pinSHA256`; secure only with clients that enforce the pin — otherwise use the exported JSON |
 | TUIC v5 | UDP | Self-signed or your PEM | Self-signed links need the certificate trusted separately; use the exported JSON |
 
 When a Reality protocol is selected, Rout checks from the server that the SNI target answers TLS 1.3 with a valid certificate (and HTTP/2). If the check fails, it warns you and asks before continuing. Pick a reachable, popular TLS 1.3 site that you do not control.
 
-## NAT and VPS setup
+## Server address, IPv4 and IPv6
 
-The first creation asks once whether the machine is a regular VPS or a NAT VPS, then saves the answer. Later batches and relays show the saved settings in one line and ask only `Use the saved server settings [Y/n]`. Edit them under Settings → Server type and defaults. Changing settings never modifies existing nodes.
+There is no server-type question. Every new node and relay behaves like a regular VPS: the **public port equals the listening port**, a free port is chosen automatically (TCP and UDP are both checked) and you may type your own, which is checked before anything is saved.
 
-- **Regular VPS:** free ports are chosen automatically; manual ports are optional.
-- **NAT VPS:** enter the provider-assigned **internal** port range (the ports this server listens on), the matching first public port and the allowed transport (TCP, UDP or both). Rout assigns ports **only inside the range**, keeps the public/local offset, skips occupied ports, rejects HY2/TUIC on TCP-only mappings and switches SS to the available transport. A UDP-only Shadowsocks node only carries UDP application traffic and cannot use an outbound proxy.
-- Public address detection queries IPv4 and IPv6 independently; IPv6-only hosts work without IPv4 and listen on `::`.
+On first use Rout detects the server's public addresses and saves the result (Settings → Server address repeats the detection or lets you type an IP or domain). Detection asks an echo service only for address families the host plausibly has, falls back to the interface addresses when the service is unreachable, and never accepts a link-local (`fe80::`), unique-local (`fc00::/7`), private, CGNAT or loopback address as a public address.
+
+| Host | What Rout does |
+| --- | --- |
+| IPv4-only | Uses the IPv4 address; listens on `0.0.0.0`. No question is asked. |
+| IPv6-only | Uses the IPv6 address (no IPv4 needed); listens on `::`. No question is asked. |
+| Dual-stack | Asks once which address clients should connect to — **IPv4 (default)** or IPv6 — and remembers the answer. |
+| Nothing detectable | Asks for an IP or domain; unspecified, multicast and link-local addresses are refused. |
+
+**One listener, two families.** On a dual-stack host Rout listens on `::` only after proving, with a real connection, that a `[::]` socket also accepts IPv4 (the engines are Go programs, which clear `IPV6_V6ONLY` themselves, so `net.ipv6.bindv6only` does not matter; `disable_ipv6=1` or a kernel that refuses IPv4-mapped sockets does, and then Rout keeps `0.0.0.0`). The same node, port and credentials then serve both families, so nothing is duplicated, and Rout prints a second link for the other address:
+
+```text
+vless://…@203.0.113.10:34567?…#Tokyo-VLESS
+Same node, other address: IPv6
+vless://…@[2001:db8::7]:34567?…#Tokyo-VLESS
+```
+
+The second link is also shown by *Copy link*, *Export all links* and `rout list`. IPv6 literals are always bracketed in links and `host:port` fields, relay destinations accept `2001:db8::1`, `[2001:db8::1]:443` or a pasted IPv6 share link, and the same IPv6 address written differently (`2001:DB8:0::1`) is recognised in loop checks. Choosing an IPv6 public address for a node that listens on IPv4 only offers to switch it to `::` (this restarts only that node).
+
+### Legacy NAT-VPS mappings
+
+Hosts set up with v0.3.0 or earlier in NAT mode keep working. Nothing is migrated or rewritten: the saved internal range, public offset and allowed networks stay in `settings.json`, existing NAT nodes and relays keep their ports, and new entries on such a host keep following the saved mapping (a notice says so) because a regular-VPS port would be unreachable there. Editing an existing NAT node or relay still asks for the provider-mapped public port. To start using regular-VPS behavior for new entries, choose Settings → Server address → *Switch to a regular VPS*; this asks for confirmation, changes only the saved default and leaves existing NAT entries as they are. There is no menu to create a new NAT mapping.
 
 Rout cannot create provider mappings or open external firewalls. A local test does not prove the public port is reachable: verify the link from an external client.
 
@@ -73,15 +95,15 @@ Only traffic through a managed node uses its outbound proxy. SSH, package update
 Relays → **Create relay** walks through four steps and shows the whole path before anything changes:
 
 1. **Where the traffic goes:** *Local machine* (a service on this server) or *Remote relay server* (another server). The last choice is remembered.
-2. **Entry on the current server:** Rout reuses the saved server defaults and shows the planned listening address, a free listening port and the public entry once; press Enter to use them, or answer `n` to enter the listening address (`0.0.0.0`/`::` mean all interfaces, not a public address) and port yourself. On a regular VPS the public port equals the listening port. On a NAT VPS the public port is the one the provider maps to that internal port; the two may differ, the saved range offset is used for planned ports, and a port you choose yourself asks for its mapping.
+2. **Entry on the current server:** Rout uses the saved server address and shows the planned listening address, a free listening port and the public entry once; press Enter to use them, or answer `n` to choose the port yourself (TCP and UDP availability is checked). The listening address is derived from the host (`0.0.0.0`, or `::` for IPv6 and dual-stack) and is never the public address. The public port equals the listening port. (A legacy NAT host still asks for the provider-mapped public port.)
 3. **Destination:** local relays default to `127.0.0.1` and list this server's nodes by listening port. Remote relays require an explicit host (IPv4, IPv6 without brackets, or a domain) and port, or a pasted share link; the current server's public IP is never filled in.
-4. **Transport:** TCP, UDP or TCP+UDP, explained in the menu and limited to what a NAT mapping allows.
+4. **Transport:** TCP, UDP or TCP+UDP, explained in the menu (limited to what the saved mapping allows on a legacy NAT host).
 
 ```text
 Client → 203.0.113.10:40005 (public entry) → 0.0.0.0:20005 (listening) → 198.51.100.7:8443 (destination) · UDP
 ```
 
-Checks before saving: address and port validity, NAT range, port conflicts, and forwarding loops (the relay's own listening port or public entry, or a chain of local relays leading back to it). Forwarding to another port on the same server is allowed, and a destination that merely shares the server's public IP is not treated as a loop: on NAT VPS hosts that IP is shared. When the destination is the public entry of a node on this server, Rout offers to switch to `127.0.0.1:<listening port>` instead, because NAT hosts usually cannot hairpin. Reachability: a local destination is checked for a listening socket; a remote TCP destination gets a real connection attempt, which proves the port is reachable, not that the proxy protocol works. UDP has no handshake and is never reported as verified.
+Checks before saving: address and port validity, port conflicts (TCP and UDP separately), and forwarding loops (the relay's own listening port or public entry, or a chain of local relays leading back to it). Forwarding to another port on the same server is allowed, and a destination that merely shares the server's public IP is not treated as a loop: on NAT VPS hosts that IP is shared. When the destination is the public entry of a node on this server, Rout offers to switch to `127.0.0.1:<listening port>` instead, because many networks cannot hairpin (connect to their own public address). Reachability: a local destination is checked for a listening socket; a remote TCP destination gets a real connection attempt, which proves the port is reachable, not that the proxy protocol works. UDP has no handshake and is never reported as verified.
 
 After saving, Rout prints the client endpoint and, when the destination is a known node or a pasted link, a share link rewritten to the relay entry. **Test relay** repeats the checks and can run a full protocol test through the relay. **Edit relay** changes destination, entry, transport, name or state; **Delete relay** defaults to No. Relays created by older versions keep working; their destination type is inferred.
 
@@ -161,13 +183,24 @@ Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`
 
 ## Files, services and security
 
-- Configuration `/etc/rout` (0700; files 0600): `state.json`, `traffic.json`, `settings.json` (language, server defaults, `backup_keep`).
+- Configuration `/etc/rout` (0700; files 0600): `state.json`, `traffic.json`, `settings.json` (language, server address and family, `backup_keep`).
 - Automatic pre-change backups in `/etc/rout/backups`, keeping the newest **20** by default (configurable 1–1000 in Settings). The newest backup is never removed, and explicit `rout backup` files are never pruned. Backups contain credentials and private keys.
-- Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256 (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
+- Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256, streamed and installed atomically (see below) (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
 - One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, outbound label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
 - systemd units restrict engines with a capability bounding set (`CAP_NET_BIND_SERVICE`; HY2/TUIC also keep `CAP_NET_ADMIN` for QUIC socket buffers), `ProtectSystem=strict`, kernel/cgroup/clock protections, `RestrictNamespaces` and `RestrictAddressFamilies`. Engines therefore cannot change Rout's quota tables. New units apply on the next change or `rout apply`.
 - OpenRC services use `supervise-daemon` with bounded respawns and private logs in `/var/log/rout-<ID>.log`, rotated at 5 MB.
 - Changes are serialized by file locks with bounded waits, validated in private staging directories and rolled back on failure.
+
+## Low-memory installation
+
+v0.3.0 read the whole engine out of its archive into memory before writing it. For the 81 MB sing-box binary that meant a peak of 220–310 MiB, and on a small VPS the kernel's OOM killer ended the install (`Killed`). Since v0.3.1 the engine path is bounded:
+
+- the archive is streamed to a staging directory inside `/opt/rout/bin` through a 256 KiB buffer while its SHA256 is computed; nothing is unpacked unless the digest matches the pinned value;
+- the engine is streamed out of the verified archive into a staging file (never into memory), flushed every 8 MiB and dropped from the page cache, because dirty pages count against a container's memory limit too;
+- the staged binary must actually run before it is renamed over the target, so a failed or interrupted install never touches an existing engine; the staging directory is removed on every exit path, and one left by a killed installer is removed by the next install once it is 15 minutes old;
+- a lock in the engine directory makes concurrent installers wait instead of downloading twice; `rout update` also copies `rout.previous` by streaming.
+
+Measured on this build (cgroup memory limit, no swap, real engines): the v0.3.0 installer is OOM-killed at 160 MiB and below and peaks at about 310 MiB; the v0.3.1 installer completes sing-box and GOST with no OOM kill at limits as low as 32 MiB (peak RSS 44 MiB). `scripts/measure-engine-memory.sh` repeats the measurement on any host. This is evidence about the installer, not a guarantee for every VPS: other processes still compete for memory, and the reported production failure has not been reproduced on that exact machine.
 
 ## Upgrading and rollback
 
@@ -183,11 +216,11 @@ sudo rout update      # refuses downgrades; keeps /usr/local/bin/rout.previous
 | --- | --- |
 | Debian / Ubuntu, systemd | Supported; CI runs real systemd lifecycle, sandbox and quota-guard tests |
 | Alpine, OpenRC | Supported; CI runs an OpenRC lifecycle test in an Alpine container |
-| IPv4-only / IPv6-only / dual stack | Supported; detection and tests do not require IPv4 |
-| NAT VPS with port ranges | Supported; provider mappings are entered, not discovered |
+| IPv4-only / IPv6-only / dual stack | Supported; detection and tests do not require IPv4; one `::` listener serves both families where the host allows it |
+| Existing NAT-VPS mappings | Keep working; not offered for new setups (see Legacy NAT-VPS mappings) |
 | OpenVZ / restricted LXC | Proxies work; accounting needs nftables + `CAP_NET_ADMIN` |
 
-Real-host acceptance items outside CI: provider NAT reachability, physical reboots and power loss, NIC offload and sustained high rates. Each node table adds a small per-packet cost; Rout is tuned for tens of nodes per host.
+Real-host acceptance items outside CI: IPv6 reachability from real client networks, provider NAT reachability, behavior on the 1 GB VPS that reported the OOM kill, physical reboots and power loss, NIC offload and sustained high rates. Each node table adds a small per-packet cost; Rout is tuned for tens of nodes per host.
 
 ## Development and releases
 
@@ -200,10 +233,10 @@ go build -o rout ./cmd/rout
 ROUT_TEST_ENGINES=/tmp/rout-engines go test -race -count=1 -v ./internal/rout
 ```
 
-Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, both outbound proxy types and TCP/UDP relays, including relays built through the interactive flow (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`.
+Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, both outbound proxy types and TCP/UDP relays, including relays built through the interactive flow (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`. Engine-installation tests (download failure, corrupt archive, checksum mismatch, killed installer, concurrent installers, peak RSS of a 96 MiB engine against the old in-memory approach) run in every `go test`; IPv6 and dual-stack tests skip themselves on hosts without an IPv6 stack.
 
 CI runs everything above plus `govulncheck` and cross-compilation on every push. **Releases are published only from an explicit version tag** that matches the compiled version and `install.sh`; pushes to `main` never publish.
 
 ```sh
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.3.1 && git push origin v0.3.1
 ```

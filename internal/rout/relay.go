@@ -64,7 +64,7 @@ func relayLoop(s State, p Profile, local map[string]bool) error {
 	if e != nil {
 		return e
 	}
-	if strings.EqualFold(h, p.PublicHost) && port == p.PublicPort {
+	if sameHost(h, p.PublicHost) && port == p.PublicPort {
 		return errors.New("目标就是本中转的公网入口，会形成转发循环")
 	}
 	if !pointsAtThisHost(h, local) {
@@ -106,7 +106,7 @@ func relayLoop(s State, p Profile, local map[string]bool) error {
 // so a relay aimed at our own public address can be pointed at 127.0.0.1 instead.
 func localNodeForPublicPort(s State, host string, port int) (Profile, bool) {
 	for _, p := range s.Profiles {
-		if strings.EqualFold(p.PublicHost, host) && p.PublicPort == port {
+		if sameHost(p.PublicHost, host) && p.PublicPort == port {
 			return p, true
 		}
 	}

@@ -309,7 +309,7 @@ func (a *App) Commit(old, next State, force bool) error {
 			for _, network := range p.Networks() {
 				owned := false
 				for _, active := range old.Profiles {
-					if active.Enabled && active.Port == p.Port && active.Listen == p.Listen && sharesNetwork(active.Networks(), []string{network}) {
+					if active.Enabled && active.Port == p.Port && (active.Listen == p.Listen || active.ID == p.ID) && sharesNetwork(active.Networks(), []string{network}) {
 						if active.ID == p.ID {
 							owned = true
 						} else if after, er := Find(next, active.ID); er != nil || !after.Enabled {

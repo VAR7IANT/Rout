@@ -17,11 +17,14 @@ import (
 )
 
 type UI struct {
-	a            *App
-	in           *bufio.Reader
-	out          io.Writer
-	err          error
-	detectIP     func() string
+	a        *App
+	in       *bufio.Reader
+	out      io.Writer
+	err      error
+	detectIP func() string
+	// Test hooks for the dual-stack setup; nil means the real host is inspected.
+	detectAddrs  func() Addresses
+	caps         func() listenCaps
 	probeProxy   func(Proxy) (string, error)
 	checkReality func(string) error
 	// Presentation state: the logo appears once per session; tests can force it,
@@ -150,114 +153,6 @@ func (u *UI) initLanguage(force bool) error {
 	return u.a.SaveSettings(s)
 }
 
-// serverSummary describes saved server defaults on one line.
-func (u *UI) serverSummary(s ServerSetup) string {
-	kind := u.a.T("普通 VPS")
-	if s.NAT {
-		kind = u.a.T("NAT VPS")
-	}
-	line := kind + " · " + u.a.T("公网") + " " + s.PublicHost + " · " + u.a.T("监听") + " " + s.Listen
-	if s.NAT {
-		line += fmt.Sprintf(" · %d-%d → %d · %s", s.LocalStart, s.LocalEnd, s.PublicStart, ProtocolLabel(s.Network))
-	}
-	return line
-}
-
-// serverSetup asks for the machine type and addresses only when nothing is saved or
-// the user wants to change them; saved defaults are reused with a single confirmation.
-func (u *UI) serverSetup() (ServerSetup, error) { return u.askServer(true) }
-func (u *UI) askServer(reuse bool) (ServerSetup, error) {
-	saved, e := u.a.LoadSettings()
-	if e != nil {
-		return ServerSetup{}, e
-	}
-	if reuse && saved.Server != nil && saved.Server.Validate() == nil {
-		u.printf("服务器设置：%s\n", u.serverSummary(*saved.Server))
-		if u.yes("使用已保存的服务器设置", true) {
-			return *saved.Server, nil
-		}
-		if u.err != nil {
-			return ServerSetup{}, u.err
-		}
-	}
-	s := ServerSetup{Listen: "0.0.0.0", Network: "both"}
-	if saved.Server != nil {
-		s = *saved.Server
-	}
-	def := "vps"
-	if s.NAT {
-		def = "nat"
-	}
-	s.NAT = u.option("服务器类型", []menuItem{item("vps", "普通 VPS（端口可自由使用）"), item("nat", "NAT VPS（仅可使用商家分配的端口）")}, def) == "nat"
-	if s.PublicHost == "" {
-		if u.detectIP != nil {
-			s.PublicHost = u.detectIP()
-		} else {
-			s.PublicHost = DetectPublicIP()
-		}
-	}
-	for u.err == nil {
-		s.PublicHost = u.ask("公网连接 IP 或域名", s.PublicHost)
-		if validHost(s.PublicHost) {
-			break
-		}
-		u.say("地址或端口无效")
-	}
-	if ip := net.ParseIP(s.PublicHost); ip != nil && ip.To4() == nil && s.Listen == "0.0.0.0" {
-		s.Listen = "::"
-	}
-	for u.err == nil {
-		s.Listen = u.ask("本机监听地址（默认监听所有网卡）", s.Listen)
-		if net.ParseIP(s.Listen) != nil {
-			break
-		}
-		u.say("监听地址或公网地址无效")
-	}
-	if s.NAT {
-		u.say("请填写商家已分配的端口；Rout 不会创建或猜测公网映射")
-		def := ""
-		if s.LocalStart > 0 {
-			def = itoa(s.LocalStart) + "-" + itoa(s.LocalEnd)
-		}
-		for u.err == nil {
-			start, end, e := ParsePortRange(u.ask("商家分配的内部端口范围（本机监听端口，如 20000-20019）", def))
-			if e != nil {
-				u.say(e.Error())
-				continue
-			}
-			s.LocalStart = start
-			s.LocalEnd = end
-			break
-		}
-		start := s.PublicStart
-		if !validPort(start) {
-			start = s.LocalStart
-		}
-		s.PublicStart = u.port(fmt.Sprintf(u.a.T("内部端口 %d 对应的公网端口（两者相同就直接回车）"), s.LocalStart), start)
-		if s.Network == "" {
-			s.Network = "both"
-		}
-		s.Network = u.option("商家允许的网络", []menuItem{item("both", "TCP+UDP"), item("tcp", "仅 TCP"), item("udp", "仅 UDP")}, s.Network)
-	}
-	if u.err != nil {
-		return s, u.err
-	}
-	return s, s.Validate()
-}
-func (u *UI) saveServer(server ServerSetup) error {
-	s, e := u.a.LoadSettings()
-	if e != nil {
-		return e
-	}
-	s.Server = &server
-	if s.Language == "" {
-		s.Language = u.a.Language
-		if s.Language == "" {
-			s.Language = "zh-CN"
-		}
-	}
-	return u.a.SaveSettings(s)
-}
 func ProtocolLabel(p string) string {
 	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
 }
@@ -383,6 +278,11 @@ func (u *UI) list(s State) {
 		u.nodeCard(s, i+1, p, db)
 		if uri, e := p.URI(); e == nil {
 			fmt.Fprintln(u.writer(), "      "+uri)
+			if st, er := u.a.LoadSettings(); er == nil && st.Server != nil {
+				if label, alt, ok := altLink(*st.Server, p); ok {
+					fmt.Fprintln(u.writer(), "      "+label+": "+alt)
+				}
+			}
 		} else if p.Kind == "relay" {
 			fmt.Fprintln(u.writer(), "      "+u.a.T("客户端连接地址：")+relayEndpoint(p))
 		}
@@ -535,177 +435,6 @@ func (u *UI) realityCheck(sni string) error {
 		return u.checkReality(sni)
 	}
 	return CheckRealityTarget(sni)
-}
-func (u *UI) create() error {
-	old, e := u.a.Load()
-	if e != nil {
-		return e
-	}
-	setup, e := u.serverSetup()
-	if e != nil {
-		return e
-	}
-	base := u.ask("基础节点名称（仅填写一次，例如 Tokyo）", "Rout")
-	u.say("可创建的协议：")
-	protocols := []string{"vless", "anytls", "ss", "hy2", "tuic"}
-	labels := []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5"}
-	for i, label := range labels {
-		fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", fmt.Sprintf("%2d", i+1)), label)
-	}
-	var selected []string
-	for u.err == nil {
-		parts := strings.Fields(strings.ReplaceAll(u.ask("选择协议，可多选，如 1 2", "1"), ",", " "))
-		ok := len(parts) > 0
-		seen := map[string]bool{}
-		selected = nil
-		for _, v := range parts {
-			n, er := strconv.Atoi(v)
-			if er != nil || n < 1 || n > len(protocols) || seen[v] {
-				ok = false
-				break
-			}
-			seen[v] = true
-			selected = append(selected, protocols[n-1])
-		}
-		if ok {
-			break
-		}
-		u.say("协议编号无效或重复")
-	}
-	if u.err != nil {
-		return u.err
-	}
-	if setup.NAT && setup.Network == "udp" && contains(selected, "ss") {
-		u.warn("仅 UDP 映射下的 Shadowsocks 只能转发 UDP 应用流量，网页等 TCP 应用无法使用")
-	}
-	manual := u.yes("手动指定各协议端口", false)
-	autoCredentials := u.yes("自动生成认证凭据", true)
-	realitySNI := "addons.mozilla.org"
-	if contains(selected, "vless") || contains(selected, "anytls") {
-		for u.err == nil {
-			realitySNI = u.ask("Reality SNI（所选协议共用）", realitySNI)
-			if !validHost(realitySNI) || net.ParseIP(realitySNI) != nil {
-				u.say("Reality SNI 应为有效域名")
-				continue
-			}
-			u.say("正在从本机检查 Reality 目标…")
-			if e := u.realityCheck(realitySNI); e != nil {
-				u.warn(u.a.Error(e))
-				if !u.yes("仍然使用此 SNI", false) {
-					continue
-				}
-			} else {
-				u.good("Reality 目标支持 TLS 1.3 和 HTTP/2")
-			}
-			break
-		}
-	}
-	cert, key, tlsSNI := "", "", setup.PublicHost
-	generated := false
-	if contains(selected, "hy2") || contains(selected, "tuic") {
-		choice := u.option("HY2/TUIC 证书", []menuItem{item("self", "自动生成自签证书（推荐，无需域名）"), item("pem", "使用现有 PEM 证书文件")}, "self")
-		tlsSNI = u.ask("TLS 证书域名或 IP", tlsSNI)
-		if choice == "self" {
-			u.say("自签 HY2 链接包含证书指纹与 insecure=1；仅在客户端验证 pinSHA256 时安全，不支持指纹校验请导出客户端配置")
-			if contains(selected, "tuic") {
-				u.say("TUIC 自签节点请导出客户端配置以信任证书，普通链接需手动导入证书")
-			}
-			generated = true
-			cert, key, e = GenerateCertificate(tlsSNI)
-		} else {
-			cert, key, e = u.readCertificate()
-		}
-		if e != nil {
-			return e
-		}
-	}
-	exitID := ""
-	if len(old.Exits) > 0 {
-		u.say("这批节点的出站（同一批节点使用相同出站）：")
-		var ok bool
-		if exitID, ok = u.pickOutbound(old, ""); !ok {
-			return u.err
-		}
-		if exitID != "" {
-			ex, er := FindExit(old, exitID)
-			if er != nil {
-				return er
-			}
-			if _, er = u.testExit(ex.Proxy); er != nil {
-				return er
-			}
-		}
-	}
-	next := old.Clone()
-	var created []string
-	for _, protocol := range selected {
-		p, e := NewProfile(protocol)
-		if e != nil {
-			return e
-		}
-		p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
-		if !autoCredentials {
-			u.printf("配置 %s 的认证凭据\n", ProtocolLabel(protocol))
-			if protocol == "vless" || protocol == "tuic" {
-				p.UUID = u.ask("UUID", "")
-			}
-			if protocol != "vless" {
-				p.Password = u.secret("密码（SS2022 使用 16 字节 Base64 密钥）")
-			}
-		}
-		p.SNI = realitySNI
-		if protocol == "hy2" || protocol == "tuic" {
-			p.SNI = tlsSNI
-			p.CertPEM = cert
-			p.KeyPEM = key
-			p.TLSGenerated = generated
-		}
-		p, e = PlanPort(p, setup, next)
-		if e != nil {
-			return fmt.Errorf("%s: %w", p.Name, e)
-		}
-		if manual {
-			for u.err == nil {
-				p.Port = u.port(p.Name+" "+u.a.T("监听端口"), p.Port)
-				p.PublicPort = p.Port
-				if setup.NAT {
-					p.PublicPort = setup.PublicStart + p.Port - setup.LocalStart
-				}
-				if AllowedPort(p, setup) {
-					break
-				}
-				u.say("端口超出 NAT 分配范围")
-			}
-		}
-		if u.err != nil {
-			return u.err
-		}
-		if e = p.Validate(); e != nil {
-			return fmt.Errorf("%s: %w", p.Name, e)
-		}
-		next = replace(next, p)
-		if exitID != "" {
-			next, e = BindExit(next, p.ID, exitID)
-			if e != nil {
-				return e
-			}
-		}
-		created = append(created, p.ID)
-	}
-	if e = u.a.Commit(old, next, false); e != nil {
-		return e
-	}
-	u.good("节点创建成功")
-	for _, id := range created {
-		p, _ := Find(next, id)
-		uri, er := p.URI()
-		if er != nil {
-			return er
-		}
-		fmt.Fprintln(u.writer(), u.bold(p.Name))
-		fmt.Fprintln(u.writer(), uri)
-	}
-	return u.saveServer(setup)
 }
 func contains(s []string, v string) bool {
 	for _, x := range s {
@@ -960,7 +689,9 @@ func (u *UI) copy(p Profile) error {
 	if e != nil {
 		return e
 	}
-	fmt.Fprintln(u.writer(), uri)
+	if e = u.printLinks(p, nil); e != nil {
+		return e
+	}
 	if u.out == nil {
 		if st, e := os.Stdout.Stat(); e == nil && st.Mode()&os.ModeCharDevice != 0 {
 			fmt.Fprintf(u.writer(), "\033]52;c;%s\a", base64.StdEncoding.EncodeToString([]byte(uri)))
@@ -1010,8 +741,30 @@ func AllLinks(s State) string {
 	}
 	return b.String()
 }
+
+// allLinks is AllLinks plus, on a dual-stack host, each node's link for the other address family.
+func (u *UI) allLinks(s State) string {
+	var setup *ServerSetup
+	if st, e := u.a.LoadSettings(); e == nil {
+		setup = st.Server
+	}
+	var b strings.Builder
+	for _, p := range s.Profiles {
+		uri, e := p.URI()
+		if e != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "# %s [%s]\n%s\n", p.Name, p.ID, uri)
+		if setup != nil {
+			if label, alt, ok := altLink(*setup, p); ok {
+				fmt.Fprintf(&b, "# %s [%s] %s\n%s\n", p.Name, p.ID, label, alt)
+			}
+		}
+	}
+	return b.String()
+}
 func (u *UI) exportAll(s State) error {
-	links := AllLinks(s)
+	links := u.allLinks(s)
 	if links == "" {
 		u.say("暂无可导出的节点链接")
 		return nil
@@ -1150,7 +903,7 @@ func (u *UI) nodeMenu(id string) error {
 func (u *UI) nodeAddress(p *Profile) error {
 	v := u.option("修改哪一项？", []menuItem{
 		itemNote("port", "监听端口", "本服务器上节点实际监听的端口"),
-		itemNote("public", "公网地址和端口", "客户端连接使用的地址；写入分享链接，不会重启节点"),
+		itemNote("public", "公网地址和端口", "客户端连接使用的地址；写入分享链接（仅当需要改为监听 IPv6 时才会重启节点）"),
 	}, "port")
 	if u.err != nil {
 		return u.err
@@ -1162,12 +915,15 @@ func (u *UI) nodeAddress(p *Profile) error {
 	if v == "public" {
 		for u.err == nil {
 			p.PublicHost = u.ask("公网 IP 或域名", p.PublicHost)
-			if validHost(p.PublicHost) {
+			if validPublicHost(p.PublicHost) {
 				break
 			}
-			u.say("地址或端口无效")
+			u.say("地址无效：不能是空值、未指定地址或链路本地地址（如 fe80::）")
 		}
 		p.PublicPort = u.askPortValue("公网端口", p.PublicPort)
+		if u.err == nil {
+			u.fitListen(p)
+		}
 		return u.err
 	}
 	oldPort := p.Port
@@ -1382,7 +1138,7 @@ func (u *UI) services() error {
 }
 func (u *UI) settings() error {
 	for {
-		v := u.menu("设置", []menuItem{item("language", "语言 / Language"), item("server", "服务器类型与默认设置（VPS / NAT）"), item("backups", "自动备份保留数量"), item("backup", "备份与恢复"), item("uninstall", "卸载 Rout")}, "返回")
+		v := u.menu("设置", []menuItem{item("language", "语言 / Language"), item("server", "服务器地址（IPv4 / IPv6）"), item("backups", "自动备份保留数量"), item("backup", "备份与恢复"), item("uninstall", "卸载 Rout")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
 		}
@@ -1391,12 +1147,7 @@ func (u *UI) settings() error {
 		case "language":
 			e = u.initLanguage(true)
 		case "server":
-			var setup ServerSetup
-			if setup, e = u.askServer(false); e == nil {
-				if e = u.saveServer(setup); e == nil {
-					u.good("服务器设置已保存；现有节点不受影响")
-				}
-			}
+			e = u.serverMenu()
 		case "backups":
 			e = u.backupRetention()
 		case "backup":

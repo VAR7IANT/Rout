@@ -222,7 +222,7 @@ func Run(args []string) (result error) {
 		return u.certCommand(s, args)
 	case "export":
 		if len(args) >= 2 && args[1] == "all" {
-			links := AllLinks(s)
+			links := u.allLinks(s)
 			if len(args) == 3 {
 				return AtomicWrite(args[2], []byte(links), 0600)
 			}

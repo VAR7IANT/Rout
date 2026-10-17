@@ -70,7 +70,8 @@ func TestLanguagePersistenceAndSwitch(t *testing.T) {
 }
 func TestCreateBatchAsksCommonFieldsOnce(t *testing.T) {
 	a := testApp(t)
-	u, out := testUI(a, "1\n\n127.0.0.1\nDMIT-LAX\n1 2 4\nn\ny\n\n1\n\n")
+	// base name · protocols · create (addresses are detected, ports and credentials automatic)
+	u, out := testUI(a, "DMIT-LAX\n1 2 4\n\n")
 	if e := u.create(); e != nil {
 		t.Fatalf("%v\n%s", e, out.String())
 	}
@@ -86,8 +87,20 @@ func TestCreateBatchAsksCommonFieldsOnce(t *testing.T) {
 			t.Fatal("incorrect generated name")
 		}
 	}
-	if strings.Count(out.String(), "Server type") != 1 || strings.Count(out.String(), "Base node name") != 1 || strings.Count(out.String(), "Public IP or domain") != 1 {
+	// The base name is asked once; the server type (VPS/NAT) and the public address are
+	// no longer questions at all: the address is detected and the setup is regular VPS.
+	for _, text := range []string{"Server type", "NAT", "Public IP or domain"} {
+		if strings.Contains(out.String(), text) {
+			t.Fatalf("%q must not be asked any more:\n%s", text, out.String())
+		}
+	}
+	if strings.Count(out.String(), "Base node name") != 1 {
 		t.Fatal("common setup repeated")
+	}
+	for _, p := range s.Profiles {
+		if p.NAT || p.PublicPort != p.Port || p.PublicHost != "203.0.113.10" || p.Listen != "0.0.0.0" {
+			t.Fatalf("new nodes must be regular VPS entries on the detected address: %+v", p)
+		}
 	}
 	p := s.Profiles[2]
 	if e = p.Ready(); e != nil {
@@ -168,8 +181,13 @@ func TestNATPlanningAndBatch(t *testing.T) {
 	if e != nil || ss.Network != "tcp" {
 		t.Fatal("SS failed to adapt to TCP-only mapping")
 	}
-	input := fmt.Sprintf("2\n198.51.100.1\n127.0.0.1\n%d-%d\n20000\n1\nNAT-LAX\n1 2\nn\ny\n\n", start, end)
-	u, out := testUI(a, input)
+	// A host saved in NAT mode by v0.3.0 keeps working: new entries follow the saved
+	// mapping without any NAT question.
+	legacy := ServerSetup{NAT: true, PublicHost: "198.51.100.1", Listen: "127.0.0.1", LocalStart: start, LocalEnd: end, PublicStart: 20000, Network: "both"}
+	if e = a.SaveSettings(Settings{Language: "en", Server: &legacy}); e != nil {
+		t.Fatal(e)
+	}
+	u, out := testUI(a, "NAT-LAX\n1 2\n\n")
 	if e = u.create(); e != nil {
 		t.Fatalf("%v\n%s", e, out.String())
 	}
@@ -177,8 +195,13 @@ func TestNATPlanningAndBatch(t *testing.T) {
 	if len(actual.Profiles) != 2 || !actual.Profiles[0].NAT {
 		t.Fatal("NAT creation failed")
 	}
-	if strings.Count(out.String(), "Server type") != 1 || strings.Count(out.String(), "Internal port range assigned") != 1 {
-		t.Fatal("NAT setup repeated")
+	if strings.Contains(out.String(), "Server type") || strings.Contains(out.String(), "Internal port range assigned") || strings.Count(out.String(), "legacy NAT") != 1 {
+		t.Fatal("NAT setup asked or not explained once")
+	}
+	for _, p := range actual.Profiles {
+		if p.Port < start || p.Port > end || p.PublicPort != 20000+p.Port-start {
+			t.Fatalf("legacy mapping not honoured: %+v", p)
+		}
 	}
 }
 func TestIndependentReusableExitsAndMigration(t *testing.T) {
@@ -258,7 +281,11 @@ func TestCustomCredentialsAndAtomicNATFailure(t *testing.T) {
 	t.Run("custom credentials", func(t *testing.T) {
 		a := testApp(t)
 		password := "custom:password@123"
-		u, out := testUI(a, "1\n127.0.0.1\n127.0.0.1\nCustom\n4\nn\nn\n1\nexample.test\n"+password+"\n")
+		if e := a.SaveSettings(Settings{Language: "en", Server: &ServerSetup{PublicHost: "127.0.0.1", Listen: "127.0.0.1", Network: "both"}}); e != nil {
+			t.Fatal(e)
+		}
+		// name · HY2 · advanced · custom credentials · password · create
+		u, out := testUI(a, "Custom\n4\n3\n2\n"+password+"\n1\n")
 		if e := u.create(); e != nil {
 			t.Fatalf("%v\n%s", e, out.String())
 		}
@@ -275,8 +302,11 @@ func TestCustomCredentialsAndAtomicNATFailure(t *testing.T) {
 	t.Run("batch cannot fit", func(t *testing.T) {
 		a := testApp(t)
 		start, _ := freeRange(t, 1)
-		input := fmt.Sprintf("2\n198.51.100.1\n127.0.0.1\n%d\n20000\n1\nSmall\n1 2\nn\ny\n\n", start)
-		u, _ := testUI(a, input)
+		legacy := ServerSetup{NAT: true, PublicHost: "198.51.100.1", Listen: "127.0.0.1", LocalStart: start, LocalEnd: start, PublicStart: 20000, Network: "both"}
+		if e := a.SaveSettings(Settings{Language: "en", Server: &legacy}); e != nil {
+			t.Fatal(e)
+		}
+		u, _ := testUI(a, "Small\n1 2\n\n")
 		if e := u.create(); e == nil {
 			t.Fatal("expected insufficient NAT ports")
 		}

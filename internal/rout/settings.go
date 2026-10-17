@@ -18,6 +18,10 @@ type Settings struct {
 	// Last relay destination type chosen ("local"/"remote"), offered as the default.
 	RelayMode string `json:"relay_mode,omitempty"`
 }
+
+// ServerSetup holds the saved server defaults. NAT and the port-mapping fields are the
+// pre-v0.3.1 "NAT VPS" mode: they are still read and honoured so an existing NAT host keeps
+// working, but no menu creates them any more.
 type ServerSetup struct {
 	NAT         bool   `json:"nat"`
 	PublicHost  string `json:"public_host"`
@@ -26,11 +30,29 @@ type ServerSetup struct {
 	LocalEnd    int    `json:"local_end,omitempty"`
 	PublicStart int    `json:"public_start,omitempty"`
 	Network     string `json:"network,omitempty"`
+	// Which address clients are given: "ipv4", "ipv6", or "custom" (a domain or an address
+	// typed by hand). Empty in settings written before v0.3.1; then it follows PublicHost.
+	Family string `json:"family,omitempty"`
+	// The public addresses found on this host when the setup was saved. When both exist
+	// and a node listens on "::", its link is also offered for the other address.
+	IPv4 string `json:"ipv4,omitempty"`
+	IPv6 string `json:"ipv6,omitempty"`
 }
 
 func (s ServerSetup) Validate() error {
 	if !validHost(s.PublicHost) || net.ParseIP(s.Listen) == nil {
 		return errors.New("监听地址或公网地址无效")
+	}
+	switch s.Family {
+	case "", "ipv4", "ipv6", "custom":
+	default:
+		return errors.New("地址类型无效")
+	}
+	if ip := net.ParseIP(s.IPv4); s.IPv4 != "" && (ip == nil || ip.To4() == nil) {
+		return errors.New("IPv4 地址无效")
+	}
+	if ip := net.ParseIP(s.IPv6); s.IPv6 != "" && (ip == nil || ip.To4() != nil) {
+		return errors.New("IPv6 地址无效")
 	}
 	if s.NAT {
 		if !validPort(s.LocalStart) || !validPort(s.LocalEnd) || s.LocalEnd < s.LocalStart || !validPort(s.PublicStart) || !validPort(s.PublicStart+s.LocalEnd-s.LocalStart) {
@@ -179,4 +201,21 @@ func AllowedPort(p Profile, setup ServerSetup) bool {
 		}
 	}
 	return true
+}
+
+// AltAddress returns the node's other public address when this host has both families and
+// the node listens on a dual-stack wildcard, so the same node (same port, same credentials)
+// is reachable over either family. Legacy NAT entries never get one: their public port is
+// a provider mapping that is unknown for the other family.
+func (s ServerSetup) AltAddress(p Profile) (host, label string, ok bool) {
+	if p.NAT || s.NAT || p.Listen != "::" || s.IPv4 == "" || s.IPv6 == "" {
+		return "", "", false
+	}
+	switch {
+	case sameHost(p.PublicHost, s.IPv4):
+		return s.IPv6, "IPv6", true
+	case sameHost(p.PublicHost, s.IPv6):
+		return s.IPv4, "IPv4", true
+	}
+	return "", "", false
 }

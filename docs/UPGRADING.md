@@ -1,5 +1,16 @@
 # Upgrading and rollback safety
 
+## To v0.3.1
+
+Run `sudo rout update` (from v0.2.2 or later) or rerun the README installer. Nothing restarts except the traffic monitor helper, as in every release; nodes and relays keep running untouched.
+
+- **Data formats are unchanged.** `state.json` keeps its schema, IDs, ports, keys and the `nat` flag of every entry. `settings.json` may gain optional `family`, `ipv4` and `ipv6` fields inside `server`; v0.3.0 ignores them, so rolling back keeps everything.
+- **Legacy NAT hosts:** saved NAT settings and existing NAT nodes and relays are read and run exactly as before; nothing is migrated or rewritten. The NAT/VPS question is gone, so a host whose saved settings are in NAT mode keeps allocating new entries from the saved mapping (a notice appears at creation) and editing an existing NAT entry still asks for the provider-mapped public port. To use regular-VPS behavior for new entries choose Settings → Server address → *Switch to a regular VPS* and confirm; existing NAT entries are not touched. There is no menu to create new NAT mappings; an unusual NAT setup that must be created from scratch has to be written into `settings.json` by hand (`server.nat`, `local_start`, `local_end`, `public_start`, `network`).
+- **Existing nodes** keep `0.0.0.0` or `::` as their listening address. A dual-stack host only gains a second link for nodes that already listen on `::` (new nodes on a host where `[::]` accepts IPv4 do); to make an older IPv4-only node reachable over IPv6, choose Edit node → Change port or public address → public address, enter the IPv6 address and accept the offer to listen on `::` (restarts only that node).
+- **Saved server settings** from v0.3.0 are reused silently instead of through a confirmation question. Use Settings → Server address to re-detect addresses, which also stores the IPv4 and IPv6 addresses needed for the second link.
+- **Engines** already installed are not touched. A missing or non-executable engine is reinstalled by the new streaming installer; a failed install never replaces a working engine.
+- Roll back with `sudo mv /usr/local/bin/rout.previous /usr/local/bin/rout`.
+
 ## To v0.3.0
 
 Run `sudo rout update` (from v0.2.2) or rerun the README installer; from v0.2.1, also follow the steps below. The upgrade restarts only the traffic monitor: limited nodes are sealed and resume automatically with their usage, and other nodes keep running.

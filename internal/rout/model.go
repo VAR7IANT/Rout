@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -128,6 +128,44 @@ func validHost(h string) bool {
 	}
 	return true
 }
+
+// sameHost compares two host strings; IP literals compare by value, so differently written
+// IPv6 forms (case, zero compression) of one address are equal. Names compare
+// case-insensitively.
+func sameHost(a, b string) bool {
+	if x, y := net.ParseIP(a), net.ParseIP(b); x != nil && y != nil {
+		return x.Equal(y)
+	}
+	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
+}
+
+// validHostStrict is validHost for newly typed addresses: a name whose last label is all
+// digits (999.1.1.1, 1.2.3) is a malformed IPv4 literal, never a domain. Stored state keeps
+// the looser validHost so a configuration written by an older version always loads.
+func validHostStrict(h string) bool {
+	if !validHost(h) {
+		return false
+	}
+	if net.ParseIP(h) != nil {
+		return true
+	}
+	parts := strings.Split(strings.TrimSuffix(h, "."), ".")
+	return strings.Trim(parts[len(parts)-1], "0123456789") != ""
+}
+
+// validPublicHost is the stricter check for the address clients are told to connect to:
+// an address no client on the Internet can use (unspecified, multicast, link-local such as
+// fe80::/10 or 169.254/16) is refused. Stored state keeps the looser validHost so an old
+// configuration always stays loadable.
+func validPublicHost(h string) bool {
+	if !validHostStrict(h) {
+		return false
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return !ip.IsUnspecified() && !ip.IsMulticast() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast()
+	}
+	return true
+}
 func ParseEndpoint(s string) (string, int, error) {
 	h, p, e := net.SplitHostPort(strings.TrimSpace(s))
 	if e != nil {
@@ -226,7 +264,7 @@ func (p Profile) Validate() error {
 			return e
 		}
 		localIP := net.ParseIP(h)
-		if (strings.EqualFold(h, p.PublicHost) && n == p.PublicPort) || (n == p.Port && (h == p.Listen || h == "localhost" || (localIP != nil && localIP.IsLoopback()))) {
+		if (sameHost(h, p.PublicHost) && n == p.PublicPort) || (n == p.Port && (h == p.Listen || h == "localhost" || (localIP != nil && localIP.IsLoopback()))) {
 			return errors.New("目标地址指向本中转自身，会形成转发循环")
 		}
 		if p.TargetURI != "" {
@@ -454,14 +492,19 @@ func withRawUserinfo(out, original string) string {
 	return out[:start] + original[from:to] + out[end:]
 }
 
-func (p Profile) URI() (string, error) {
+func (p Profile) URI() (string, error) { return p.URIAt(p.PublicHost, p.PublicPort) }
+
+// URIAt builds the share link for another address of the same node (for example its IPv6
+// address when the primary link uses IPv4). Credentials and parameters are identical; only
+// the endpoint changes. IPv6 literals are bracketed by net.JoinHostPort.
+func (p Profile) URIAt(host string, port int) (string, error) {
 	if p.Kind == "relay" {
 		if p.TargetURI == "" {
 			return "", errors.New("此中转没有目标节点的分享链接；客户端请直接连接中转入口")
 		}
-		return RewriteURI(p.TargetURI, p.PublicHost, p.PublicPort, p.Name)
+		return RewriteURI(p.TargetURI, host, port, p.Name)
 	}
-	u := &url.URL{Host: net.JoinHostPort(p.PublicHost, strconv.Itoa(p.PublicPort)), Fragment: p.Name}
+	u := &url.URL{Host: net.JoinHostPort(host, strconv.Itoa(port)), Fragment: p.Name}
 	q := url.Values{}
 	switch p.Protocol {
 	case "vless", "anytls":

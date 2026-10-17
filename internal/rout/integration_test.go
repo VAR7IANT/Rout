@@ -51,7 +51,11 @@ func TestIntegrationAutomaticHY2NativeURI(t *testing.T) {
 		t.Skip("set ROUT_TEST_HYSTERIA for native Hysteria URI and certificate-pin tests")
 	}
 	a := integrationApp(t)
-	u, out := testUI(a, "1\n127.0.0.1\n127.0.0.1\nAuto\n4\nn\ny\n1\nexample.test\n")
+	if e := a.SaveSettings(Settings{Language: "en", Server: &ServerSetup{PublicHost: "127.0.0.1", Listen: "127.0.0.1", Network: "both"}}); e != nil {
+		t.Fatal(e)
+	}
+	// name · HY2 · advanced · certificate · self-signed · certificate domain · create
+	u, out := testUI(a, "Auto\n4\n3\n1\n1\nexample.test\n1\n")
 	if e := u.create(); e != nil {
 		t.Fatalf("HY2 creation failed: %v %s", e, out.String())
 	}

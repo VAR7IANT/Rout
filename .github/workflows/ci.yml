@@ -32,7 +32,7 @@ jobs:
         run: |
           go vet ./...
           go test -race ./...
-          sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh
+          sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh scripts/measure-engine-memory.sh
           test -z "$(gofmt -l cmd internal)"
       - name: Vulnerability check (Go standard library and modules)
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -40,6 +40,14 @@ jobs:
         run: |
           go run ./cmd/rout --home "$RUNNER_TEMP/rout-state" --bin-dir "$RUNNER_TEMP/rout-engines" --service none engines
           sh scripts/test-native-hy2.sh "$RUNNER_TEMP/hysteria"
+      - name: Engine installation stays inside a small memory budget
+        run: |
+          go build -o "$RUNNER_TEMP/rout-memory-check" ./cmd/rout
+          # Real downloads inside a 64 MiB cgroup limit. Exit status 2 means the runner offers
+          # no usable cgroup memory controller (reported, not a failure); anything else fails.
+          rc=0
+          sudo sh scripts/measure-engine-memory.sh 64 "$RUNNER_TEMP/rout-memory-check" "$RUNNER_TEMP/memory-check" || rc=$?
+          if [ "$rc" = 2 ]; then echo '::warning::cgroup memory limits unavailable; memory budget check skipped'; elif [ "$rc" != 0 ]; then exit "$rc"; fi
       - name: Protocol, proxy authentication and TCP/UDP forwarding integration tests
         env:
           ROUT_TEST_ENGINES: ${{ runner.temp }}/rout-engines
