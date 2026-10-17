@@ -156,7 +156,11 @@ func (a *App) setServiceMode(p Profile, enabled, restart bool) error {
 		return nil
 	}
 	if e = command("rc-service", name, "restart"); e != nil {
-		return a.startFailure(p, e)
+		// A start already in progress (boot, a dependency coming up) is not a failure by
+		// itself: the health check below is the real verdict.
+		if !strings.Contains(e.Error(), "already starting") {
+			return a.startFailure(p, e)
+		}
 	}
 	return a.waitHealthy(m, p)
 }
