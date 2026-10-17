@@ -414,8 +414,198 @@ func TestKernelMonitorCrashLeaseAndWarmRecovery(t *testing.T) {
 		t.Fatal(e)
 	}
 	db, _ := a.loadTraffic()
-	if db.Records[p.ID].Blocked != "fault" {
-		t.Fatal("graceful exit did not checkpoint/freeze finite node")
+	sealed := db.Records[p.ID]
+	if sealed.Blocked != "sealed" {
+		t.Fatal("graceful exit did not seal finite node", sealed.Blocked)
+	}
+	sendUDP(t, c, got, 100, false)
+	// A normal monitor restart verifies the sealed generation and resumes automatically.
+	cmd = start()
+	time.Sleep(700 * time.Millisecond)
+	sendUDP(t, c, got, 100, true)
+	db, _ = a.loadTraffic()
+	r := db.Records[p.ID]
+	if r.Blocked != "" || r.Incomplete || r.RawUp < sealed.RawUp || r.Consumed < sealed.Consumed {
+		t.Fatal("restart lost or reset sealed usage", r)
+	}
+	_ = cmd.Process.Signal(os.Interrupt)
+	_ = cmd.Wait()
+}
+
+// Simulated reboot: the monitor seals on shutdown, every kernel table disappears and the
+// boot ID changes. The node must resume with its exact usage and remaining budget.
+func TestKernelSealedRebootPreservesQuota(t *testing.T) {
+	a := kernelApp(t)
+	a.monitorMode = true
+	boot := "boot-1"
+	a.bootID = func() (string, error) { return boot, nil }
+	p := kernelProfile(t, a, "127.0.0.1", "udp")
+	c, got := udpEcho(t, p, false)
+	if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 2000, BillingDay: 1}, false, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	sendUDP(t, c, got, 600, true) // 628 L3 bytes
+	if e := a.TrafficSync(time.Now(), true); e != nil {
+		t.Fatal(e)
+	}
+	db, _ := a.loadTraffic()
+	before := db.Records[p.ID]
+	if before.Blocked != "sealed" || before.Consumed != 628 {
+		t.Fatal("shutdown checkpoint not sealed exactly", before)
+	}
+	if e := a.meter().Delete(p); e != nil {
+		t.Fatal(e)
+	}
+	boot = "boot-2"
+	if e := a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	db, _ = a.loadTraffic()
+	r := db.Records[p.ID]
+	if r.Blocked != "" || r.Incomplete || r.Consumed != 628 || r.Boot != "boot-2" {
+		t.Fatal("reboot did not restore the sealed checkpoint", r)
+	}
+	sendUDP(t, c, got, 600, true)  // 1256
+	sendUDP(t, c, got, 600, true)  // 1884
+	sendUDP(t, c, got, 600, false) // would exceed 2000: no new quota was granted
+	if e := a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	db, _ = a.loadTraffic()
+	if db.Records[p.ID].Blocked != "quota" {
+		t.Fatal("restored budget did not stay enforced", db.Records[p.ID])
+	}
+	// A quota-exhausted node stays quota-blocked (not fault, not reopened) across a reboot.
+	if e := a.TrafficSync(time.Now(), true); e != nil {
+		t.Fatal(e)
+	}
+	_ = a.meter().Delete(p)
+	boot = "boot-3"
+	if e := a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	db, _ = a.loadTraffic()
+	if r := db.Records[p.ID]; r.Blocked != "quota" || r.Incomplete {
+		t.Fatal("quota state lost across reboot", r)
+	}
+	sendUDP(t, c, got, 10, false)
+}
+
+// An unexpected crash leaves no sealed checkpoint: after reboot the node stays closed
+// until an explicit recovery that keeps (never resets) its known usage.
+func TestKernelCrashRebootFailsClosedAndRecoversKnownUsage(t *testing.T) {
+	a := kernelApp(t)
+	a.monitorMode = true
+	boot := "boot-1"
+	a.bootID = func() (string, error) { return boot, nil }
+	p := kernelProfile(t, a, "127.0.0.1", "udp")
+	q := kernelProfile(t, a, "127.0.0.1", "udp")
+	c, got := udpEcho(t, p, false)
+	other, otherGot := udpEcho(t, q, false)
+	if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 100_000, BillingDay: 1}, false, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	sendUDP(t, c, got, 600, true)
+	if e := a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	sendUDP(t, c, got, 600, true) // admitted after the last checkpoint: lost in the crash
+	_ = a.meter().Delete(p)
+	_ = a.meter().Delete(q)
+	boot = "boot-2"
+	if e := a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	db, _ := a.loadTraffic()
+	r := db.Records[p.ID]
+	if r.Blocked != "fault" || !r.Incomplete {
+		t.Fatal("unverified crash checkpoint was trusted", r)
+	}
+	sendUDP(t, c, got, 10, false)
+	sendUDP(t, other, otherGot, 10, true) // unlimited node is never blocked
+	if e := a.RecoverTraffic(p.ID, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	db, _ = a.loadTraffic()
+	r = db.Records[p.ID]
+	if _, _, total, _ := r.totals(); r.Blocked != "" || !r.Incomplete || total != 628 || r.Consumed != 628 {
+		t.Fatal("recovery did not keep known usage as a marked lower bound", r)
+	}
+	sendUDP(t, c, got, 600, true)
+}
+
+// Batched listing must produce byte-identical verdicts to single-table reads, and only
+// Rout-owned orphan tables of THIS installation may be removed.
+func TestKernelBatchReadsAndOrphanCleanup(t *testing.T) {
+	a := kernelApp(t)
+	a.monitorMode = true
+	p := kernelProfile(t, a, "127.0.0.1", "udp")
+	q := kernelProfile(t, a, "127.0.0.1", "tcp")
+	if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 5000, BillingDay: 1}, false, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	m := nftMeter{home: a.Home}
+	all, _ := m.ReadAll([]Profile{p, q})
+	for _, x := range []Profile{p, q} {
+		single, e := m.Read(x)
+		if e != nil || all[x.ID].err != nil || all[x.ID].snap != single {
+			t.Fatal("batched read differs from single read", all[x.ID], single, e)
+		}
+	}
+	orphan := fixture(t, "ss")
+	orphan.Port, _ = freePort()
+	if _, e := m.Replace(orphan, TrafficRecord{}); e != nil {
+		t.Fatal(e)
+	}
+	foreign := "table inet rout_00000000_" + RandomHex(6) + " {\ncomment \"Rout traffic v1\";\n}\ntable inet hostfw {\nchain input { type filter hook input priority 0; policy accept;\n}\n}\n"
+	if e := nftApply(foreign); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = nftApply("delete table inet hostfw\n") })
+	if e := a.TrafficSync(time.Now(), false); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := m.Read(orphan); !errors.Is(e, errMeterMissing) {
+		t.Fatal("orphan Rout table not removed", e)
+	}
+	out, e := nftRun("", "list", "tables")
+	if e != nil || !strings.Contains(string(out), "hostfw") || !strings.Contains(string(out), "rout_00000000_") {
+		t.Fatal("cleanup touched a table it does not own", string(out), e)
+	}
+	for _, x := range []Profile{p, q} {
+		if _, e := m.Read(x); e != nil {
+			t.Fatal("cleanup removed a live table", e)
+		}
+	}
+}
+
+// Several limited nodes renew in one transaction; exhausting one never affects another.
+func TestKernelMultipleLimitedNodes(t *testing.T) {
+	a := kernelApp(t)
+	var nodes []Profile
+	var conns []net.Conn
+	var gots []<-chan int
+	for i := 0; i < 3; i++ {
+		p := kernelProfile(t, a, "127.0.0.1", "udp")
+		c, got := udpEcho(t, p, false)
+		if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 1000, BillingDay: 1}, false, time.Now()); e != nil {
+			t.Fatal(e)
+		}
+		nodes, conns, gots = append(nodes, p), append(conns, c), append(gots, got)
+	}
+	sendUDP(t, conns[0], gots[0], 600, true)
+	sendUDP(t, conns[0], gots[0], 600, false)
+	for i := 0; i < 4; i++ { // > 15 s lease: only renewals keep the others open
+		time.Sleep(5 * time.Second)
+		if e := a.TrafficSync(time.Now(), false); e != nil {
+			t.Fatal(e)
+		}
+	}
+	sendUDP(t, conns[1], gots[1], 100, true)
+	sendUDP(t, conns[2], gots[2], 100, true)
+	db, _ := a.loadTraffic()
+	if db.Records[nodes[0].ID].Blocked != "quota" || db.Records[nodes[1].ID].Blocked != "" || db.Records[nodes[2].ID].Blocked != "" {
+		t.Fatal("one node's quota affected another")
 	}
 }
 

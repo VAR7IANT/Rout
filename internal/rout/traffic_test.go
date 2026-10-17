@@ -12,9 +12,12 @@ import (
 )
 
 type fakeMeter struct {
-	values map[string]MeterSnapshot
-	fail   bool
-	frozen map[string]bool
+	values      map[string]MeterSnapshot
+	fail        bool
+	failReplace bool
+	failRenew   bool
+	frozen      map[string]bool
+	renewed     map[string]int
 }
 
 func (m *fakeMeter) Read(p Profile) (MeterSnapshot, error) {
@@ -28,7 +31,7 @@ func (m *fakeMeter) Read(p Profile) (MeterSnapshot, error) {
 	return s, nil
 }
 func (m *fakeMeter) Replace(p Profile, r TrafficRecord) (string, error) {
-	if m.fail {
+	if m.fail || m.failReplace {
 		return "", errors.New("meter failed")
 	}
 	h := trafficShape(p) + r.Blocked
@@ -38,12 +41,19 @@ func (m *fakeMeter) Replace(p Profile, r TrafficRecord) (string, error) {
 }
 func (m *fakeMeter) Freeze(p Profile) error { m.frozen[p.ID] = true; return nil }
 func (m *fakeMeter) Renew(p Profile) error {
-	if m.fail {
+	if m.fail || m.failRenew {
 		return errors.New("lease failed")
+	}
+	if m.renewed != nil {
+		m.renewed[p.ID]++
 	}
 	return nil
 }
-func (m *fakeMeter) Delete(p Profile) error { delete(m.values, p.ID); return nil }
+func (m *fakeMeter) Delete(p Profile) error {
+	delete(m.values, p.ID)
+	delete(m.frozen, p.ID)
+	return nil
+}
 func trafficTestApp(t *testing.T) (*App, *fakeMeter, Profile) {
 	t.Helper()
 	a := testApp(t)

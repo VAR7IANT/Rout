@@ -32,13 +32,13 @@ func testApp(t *testing.T) *App {
 }
 func testUI(a *App, input string) (*UI, *bytes.Buffer) {
 	out := &bytes.Buffer{}
-	return &UI{a: a, in: bufio.NewReader(strings.NewReader(input)), out: out, detectIP: func() string { return "203.0.113.10" }}, out
+	return &UI{a: a, in: bufio.NewReader(strings.NewReader(input)), out: out, detectIP: func() string { return "203.0.113.10" }, checkReality: func(string) error { return nil }}, out
 }
 func TestLanguagePersistenceAndSwitch(t *testing.T) {
 	a := testApp(t)
 	a.Language = ""
 	u, out := testUI(a, "2\n0\n")
-	if e := u.menu(); e != nil {
+	if e := u.mainMenu(); e != nil {
 		t.Fatal(e)
 	}
 	s, e := a.LoadSettings()
@@ -50,7 +50,7 @@ func TestLanguagePersistenceAndSwitch(t *testing.T) {
 	}
 	a.Language = ""
 	u, out = testUI(a, "0\n")
-	if e = u.menu(); e != nil {
+	if e = u.mainMenu(); e != nil {
 		t.Fatal(e)
 	}
 	if strings.Contains(out.String(), "Select language") {
@@ -184,7 +184,7 @@ func TestNATPlanningAndBatch(t *testing.T) {
 func TestIndependentReusableExitsAndMigration(t *testing.T) {
 	a := testApp(t)
 	a.ServiceMode = "auto" // Exit-only edits do not require an init system or engine.
-	u, out := testUI(a, "1\nUS-ISP\n1\n192.0.2.10:6719:user:p:a@ss%\n")
+	u, out := testUI(a, "1\nUS-ISP\n1\n192.0.2.10:6719:user:p:a@ss%\n0\n")
 	if e := u.exits(); e != nil {
 		t.Fatalf("%v\n%s", e, out.String())
 	}
@@ -303,7 +303,7 @@ func TestExitPreflightFailurePreservesNodes(t *testing.T) {
 	}
 	stateBefore, _ := os.ReadFile(filepath.Join(a.Home, "state.json"))
 	configBefore, _ := os.ReadFile(filepath.Join(a.profileDir(p.ID), "config.json"))
-	u, _ := testUI(a, "3\n"+ex.ID+"\n\ny\n1\n192.0.2.11:6719:new:bad\n")
+	u, _ := testUI(a, "3\n1\n\ny\n1\n192.0.2.11:6719:new:bad\n")
 	u.probeProxy = func(Proxy) (string, error) { return "", errors.New("authentication failed") }
 	if e := u.exits(); e == nil {
 		t.Fatal("accepted a failed shared exit update")

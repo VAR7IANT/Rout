@@ -2,6 +2,7 @@ package rout
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -44,7 +45,72 @@ func fetchIP(proxyAddress, endpoint string) (string, error) {
 	}
 	return ip, nil
 }
-func DetectPublicIP() string { ip, _ := fetchIP("", "https://api4.ipify.org"); return ip }
+
+// Each family has independent endpoints, so an IPv6-only host is never forced to
+// depend on IPv4 (and vice versa).
+var ipEndpoints = map[string][]string{
+	"tcp4": {"https://api4.ipify.org", "https://ipv4.icanhazip.com"},
+	"tcp6": {"https://api6.ipify.org", "https://ipv6.icanhazip.com"},
+}
+
+// detectDirect finds this host's public address of one family without any proxy.
+func detectDirect(network string) string {
+	for _, endpoint := range ipEndpoints[network] {
+		d := &net.Dialer{Timeout: 5 * time.Second}
+		transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) { return d.DialContext(ctx, network, addr) }}
+		client := &http.Client{Transport: transport, Timeout: 8 * time.Second}
+		r, e := client.Get(endpoint)
+		if e == nil {
+			b, _ := io.ReadAll(io.LimitReader(r.Body, 128))
+			r.Body.Close()
+			ip := net.ParseIP(strings.TrimSpace(string(b)))
+			transport.CloseIdleConnections()
+			if r.StatusCode == 200 && ip != nil && (ip.To4() != nil) == (network == "tcp4") {
+				return ip.String()
+			}
+		}
+		transport.CloseIdleConnections()
+	}
+	return ""
+}
+
+// DetectPublicIPs queries both families concurrently.
+func DetectPublicIPs() (string, string) {
+	v6 := make(chan string, 1)
+	go func() { v6 <- detectDirect("tcp6") }()
+	v4 := detectDirect("tcp4")
+	return v4, <-v6
+}
+
+// DetectPublicIP prefers IPv4 for compatibility but falls back to IPv6-only hosts.
+func DetectPublicIP() string {
+	v4, v6 := DetectPublicIPs()
+	if v4 != "" {
+		return v4
+	}
+	return v6
+}
+
+// CheckRealityTarget verifies from THIS server that the borrowed handshake target
+// answers TLS 1.3 with a valid certificate for the SNI, as Reality requires.
+func CheckRealityTarget(sni string) error {
+	d := &net.Dialer{Timeout: 6 * time.Second}
+	c, e := tls.DialWithDialer(d, "tcp", net.JoinHostPort(sni, "443"), &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}})
+	if e != nil {
+		return fmt.Errorf("本机无法与 %s:443 建立有效的 TLS 1.3 连接（%v）", sni, e)
+	}
+	defer c.Close()
+	if c.ConnectionState().NegotiatedProtocol != "h2" {
+		return fmt.Errorf("%s 未协商 HTTP/2，Reality 伪装效果可能较差", sni)
+	}
+	return nil
+}
+func orUnavailable(a *App, ip string) string {
+	if ip == "" {
+		return a.T("不可用")
+	}
+	return ip
+}
 func freePort() (int, error) {
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
@@ -123,14 +189,24 @@ func (a *App) ProbeProxy(p Proxy) (string, error) {
 	}
 	conf := M{"log": M{"level": "error"}, "inbounds": []any{M{"type": "mixed", "listen": "127.0.0.1", "listen_port": port}}, "outbounds": []any{proxyConfig(p)}, "route": M{"final": "egress"}}
 	var ip string
-	e = a.withClient(conf, port, func(proxy string) error { var er error; ip, er = fetchIP(proxy, "https://api4.ipify.org"); return er })
+	e = a.withClient(conf, port, func(proxy string) error {
+		var er error
+		for _, endpoint := range append(append([]string{}, ipEndpoints["tcp4"]...), ipEndpoints["tcp6"]...) {
+			if ip, er = fetchIP(proxy, endpoint); er == nil {
+				return nil
+			}
+		}
+		return er
+	})
 	return ip, e
 }
 func (a *App) Probe(p Profile) error {
 	if !p.Enabled {
 		return errors.New("线路未启用")
 	}
-	a.printf("VPS 直连 IPv4：%s\n", DetectPublicIP())
+	v4, v6 := DetectPublicIPs()
+	a.printf("VPS 直连 IPv4：%s\n", orUnavailable(a, v4))
+	a.printf("VPS 直连 IPv6：%s\n", orUnavailable(a, v6))
 	a.say("正在通过本地节点入口测试完整线路…")
 	port, e := freePort()
 	if e != nil {
@@ -148,16 +224,29 @@ func (a *App) Probe(p Profile) error {
 		return e
 	}
 	e = a.withClient(conf, port, func(proxy string) error {
-		ip, e := fetchIP(proxy, "https://api4.ipify.org")
-		if e != nil {
-			return e
+		// Either family proves the path; an IPv6-only exit is a working exit.
+		var first error
+		ok := false
+		for _, family := range []struct{ label, network string }{{"IPv4", "tcp4"}, {"IPv6", "tcp6"}} {
+			var ip string
+			var e error
+			for _, endpoint := range ipEndpoints[family.network] {
+				if ip, e = fetchIP(proxy, endpoint); e == nil {
+					break
+				}
+			}
+			if e != nil {
+				if first == nil {
+					first = e
+				}
+				a.printf("线路出口 %s：不可用\n", family.label)
+				continue
+			}
+			ok = true
+			a.printf("线路出口 %s：%s\n", family.label, ip)
 		}
-		a.printf("线路出口 IPv4：%s\n", ip)
-		ip6, e := fetchIP(proxy, "https://api6.ipify.org")
-		if e != nil {
-			a.say("线路出口 IPv6：不可用（该项不影响 IPv4 结果）")
-		} else {
-			a.printf("线路出口 IPv6：%s\n", ip6)
+		if !ok {
+			return first
 		}
 		return nil
 	})

@@ -15,7 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23.x'
+          # Build and test with a currently supported Go release (go.mod keeps 1.23 as the minimum).
+          go-version: 'stable'
           cache: false
       - name: Read release version
         id: version
@@ -26,12 +27,15 @@ jobs:
             echo 'Tag does not match the compiled version' >&2
             exit 1
           fi
+          grep -q "VERSION=\${ROUT_VERSION:-v$version}" install.sh || { echo 'install.sh default version does not match' >&2; exit 1; }
       - name: Unit tests and static checks
         run: |
           go vet ./...
           go test -race ./...
           sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh
           test -z "$(gofmt -l cmd internal)"
+      - name: Vulnerability check (Go standard library and modules)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Install pinned engines for integration tests
         run: |
           go run ./cmd/rout --home "$RUNNER_TEMP/rout-state" --bin-dir "$RUNNER_TEMP/rout-engines" --service none engines
@@ -41,11 +45,11 @@ jobs:
           ROUT_TEST_ENGINES: ${{ runner.temp }}/rout-engines
           ROUT_TEST_HYSTERIA: ${{ runner.temp }}/hysteria
         run: go test -race -count=1 -v ./internal/rout
-      - name: Service lifecycle, startup rollback and failed-exit isolation
+      - name: systemd lifecycle, sandboxed protocols, startup rollback and failed-exit isolation
         run: |
           go test -c -o "$RUNNER_TEMP/rout-integration.test" ./internal/rout
-          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^TestIntegrationServiceLifecycle$' -test.v
-      - name: Kernel accounting and hard quota tests in an isolated network namespace
+          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^(TestIntegrationServiceLifecycle|TestIntegrationSystemdSandboxProtocols)$' -test.v
+      - name: Kernel accounting, quota recovery and hard quota tests in an isolated network namespace
         run: |
           sudo apt-get update
           sudo apt-get install -y nftables iproute2
@@ -53,24 +57,39 @@ jobs:
           go test -race -c -o "$RUNNER_TEMP/rout-kernel.test" ./internal/rout
           sudo env ROUT_TEST_NFT=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" unshare --net sh -c 'ip link set lo up; exec "$1" -test.run "^(TestKernel|TestIntegrationProtocolsAndProxyExit)" -test.v' sh "$RUNNER_TEMP/rout-kernel.test"
           sudo env ROUT_TEST_TRAFFIC_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-manager" "$RUNNER_TEMP/rout-kernel.test" -test.run '^TestIntegrationTrafficServiceGuard$' -test.v
+      - name: Alpine Linux / OpenRC service lifecycle in a disposable container
+        run: |
+          CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/rout-static.test" ./internal/rout
+          docker run --rm --privileged -v "$RUNNER_TEMP:/w" alpine:3.20 sh -euc '
+            apk add --no-cache openrc >/dev/null
+            printf "auto lo\niface lo inet loopback\n" > /etc/network/interfaces
+            mkdir -p /run/openrc && touch /run/openrc/softlevel
+            cd /w && ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/w/rout-engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v'
       - name: Build both Linux architectures
         run: sh scripts/release.sh
       - uses: actions/upload-artifact@v4
         with:
           name: rout-linux
           path: dist/*
+  # Production releases are published only from an explicit, matching version tag.
   release:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: rout-linux
           path: dist
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/rout-linux-*
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,6 +100,7 @@ jobs:
             echo "Release $tag already exists; keeping its verified assets"
           else
             awk -v heading="## v$ROUT_VERSION" '$0 == heading { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md > release-notes.md
-            printf '\nAccounting scope, fault policy and real-host acceptance boundaries: https://github.com/%s/blob/main/docs/TRAFFIC.md\n' "$GITHUB_REPOSITORY" >> release-notes.md
-            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Rout $tag" --notes-file release-notes.md
+            printf '\nVerify a downloaded binary with: gh attestation verify rout-linux-amd64 --repo %s\n' "$GITHUB_REPOSITORY" >> release-notes.md
+            printf 'Accounting scope, fault policy and real-host acceptance boundaries: https://github.com/%s/blob/%s/docs/TRAFFIC.md\n' "$GITHUB_REPOSITORY" "$tag" >> release-notes.md
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "Rout $tag" --notes-file release-notes.md
           fi

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -166,6 +167,39 @@ func (a *App) checkConfig(path string) error {
 	return nil
 }
 
+// parseVersion accepts only plain release tags such as v0.2.2.
+func parseVersion(tag string) ([3]int, bool) {
+	var v [3]int
+	parts := strings.Split(strings.TrimPrefix(tag, "v"), ".")
+	if !strings.HasPrefix(tag, "v") || len(parts) != 3 {
+		return v, false
+	}
+	for i, part := range parts {
+		n, e := strconv.Atoi(part)
+		if e != nil || n < 0 || part != strconv.Itoa(n) {
+			return v, false
+		}
+		v[i] = n
+	}
+	return v, true
+}
+
+// compareVersions returns -1, 0 or 1 like strings.Compare.
+func compareVersions(a, b [3]int) int {
+	for i := range a {
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// SelfUpdate replaces the manager with a newer release only. The SHA256 file comes
+// from the same release, so it proves integrity, not authenticity; releases also carry
+// GitHub build-provenance attestations for independent verification.
 func SelfUpdate(language ...string) error {
 	a := DefaultApp()
 	if len(language) > 0 {
@@ -181,6 +215,8 @@ func SelfUpdate(language ...string) error {
 	}
 	var release struct {
 		Tag    string `json:"tag_name"`
+		Draft  bool   `json:"draft"`
+		Pre    bool   `json:"prerelease"`
 		Assets []struct {
 			Name string `json:"name"`
 			URL  string `json:"browser_download_url"`
@@ -189,9 +225,17 @@ func SelfUpdate(language ...string) error {
 	if e = json.NewDecoder(io.LimitReader(r.Body, 2<<20)).Decode(&release); e != nil {
 		return e
 	}
-	if release.Tag == "v"+Version {
+	latest, ok := parseVersion(release.Tag)
+	current, _ := parseVersion("v" + Version)
+	if !ok || release.Draft || release.Pre {
+		return errors.New("最新发布版本标签无效，未更新")
+	}
+	switch compareVersions(latest, current) {
+	case 0:
 		a.say("已是当前发布版本")
 		return nil
+	case -1:
+		return fmt.Errorf("最新发布版本 %s 低于当前版本 v%s，拒绝降级", release.Tag, Version)
 	}
 	name := "rout-linux-" + runtime.GOARCH
 	var binaryURL, checksumURL string
@@ -243,12 +287,33 @@ func SelfUpdate(language ...string) error {
 	if e = os.Chmod(p, 0755); e != nil {
 		return e
 	}
-	if _, e = runOutput(10*time.Second, p, "version"); e != nil {
-		return errors.New("新版本无法运行，保留旧版本")
+	// The staged binary must run AND report exactly the release it claims to be.
+	out, e := runOutput(10*time.Second, p, "version")
+	if e != nil || strings.TrimSpace(string(out)) != "rout "+strings.TrimPrefix(release.Tag, "v") {
+		return errors.New("新版本无法运行或版本不符，保留旧版本")
+	}
+	// Keep the previous manager for a one-command rollback.
+	if old, er := os.ReadFile(exe); er == nil {
+		_ = AtomicWrite(exe+".previous", old, 0755)
 	}
 	if e = os.Rename(p, exe); e != nil {
 		return e
 	}
-	a.printf("已更新为 %s，请重新运行 rout；现有服务继续运行\n", release.Tag)
+	a.printf("已更新为 %s，现有节点继续运行；回滚：mv %s.previous %s\n", release.Tag, exe, exe)
+	// The monitor helper must match the manager; reinstalling it restarts only the
+	// monitor (finite nodes resume after their sealed checkpoints are verified).
+	if a.trafficActive() {
+		if out, er := runOutput(2*time.Minute, exe, "--lang", languageOr(a.Language), "traffic", "install"); er != nil {
+			a.printf("流量监控程序未更新，请运行 rout traffic install：%s\n", strings.TrimSpace(string(out)))
+		} else if msg := strings.TrimSpace(string(out)); msg != "" {
+			fmt.Println(msg)
+		}
+	}
 	return nil
+}
+func languageOr(lang string) string {
+	if lang == "" {
+		return "zh-CN"
+	}
+	return lang
 }

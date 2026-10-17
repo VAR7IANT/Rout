@@ -51,10 +51,13 @@ func (u *UI) showTraffic(p Profile) error {
 	u.printf("下次重置：%s\n", r.Next.Format(time.RFC3339))
 	u.printf("开始观测：%s\n", r.Observed.Format(time.RFC3339))
 	status := u.a.T("正常")
-	if r.Blocked == "quota" || (policy.LimitBytes > 0 && r.Consumed >= policy.LimitBytes) {
-		status = u.a.T("已达流量上限，自动停用")
-	} else if r.Blocked != "" {
-		status = u.a.T("计量故障保护暂停，需新周期或确认清零")
+	switch {
+	case r.Blocked == blockQuota || (policy.LimitBytes > 0 && r.Consumed >= policy.LimitBytes):
+		status = u.a.T("已达流量上限，自动停用，下个账单周期自动恢复")
+	case r.Blocked == blockSealed:
+		status = u.a.T("流量监控已停止，检查点完整；监控恢复后自动继续")
+	case r.Blocked != "":
+		status = u.a.T("计量故障保护暂停：可保留已知用量恢复、确认清零或等待新周期")
 	}
 	u.printf("流量保护状态：%s\n", status)
 	manual := u.a.T("启用")
@@ -64,22 +67,53 @@ func (u *UI) showTraffic(p Profile) error {
 	u.printf("用户手动开关：%s\n", manual)
 	return nil
 }
+func (u *UI) trafficRecord(id string) TrafficRecord {
+	if db, e := u.a.loadTraffic(); e == nil {
+		return db.Records[id]
+	}
+	return TrafficRecord{}
+}
+
+// recoverTraffic resumes a fault-paused node with its known usage after warning that
+// traffic during the gap could not be counted.
+func (u *UI) recoverTraffic(p Profile) error {
+	u.warn("计量缺口期间的流量无法统计：恢复后本周期用量为已知下限，限额按已知用量继续执行")
+	if !u.yes("保留已知用量并恢复此节点", false) {
+		return u.err
+	}
+	if e := u.a.RecoverTraffic(p.ID, time.Now()); e != nil {
+		return e
+	}
+	u.good("已恢复，已知用量保持不变")
+	return nil
+}
 func (u *UI) trafficManage(p Profile) error {
 	if e := u.showTraffic(p); e != nil {
-		u.say(u.a.Error(e))
+		u.warn(u.a.Error(e))
 	}
-	v := u.choose("1.查看流量  2.设置限额  3.恢复无限流量  4.账单日与时区  5.手动清零  6.手动暂停或恢复  0.返回", []string{"0", "1", "2", "3", "4", "5", "6"}, "0")
+	policy := p.trafficPolicy()
+	r := u.trafficRecord(p.ID)
+	items := []menuItem{item("view", "查看流量"), item("limit", "设置或修改限额")}
+	if policy.LimitBytes > 0 {
+		items = append(items, item("unlimited", "恢复无限流量"))
+	}
+	items = append(items, item("billing", "账单日与时区"), item("reset", "手动清零本期用量"), item("pause", "手动暂停或恢复节点"))
+	if policy.LimitBytes > 0 && r.Blocked == blockFault {
+		items = append(items, item("recover", "保留已知用量并恢复"))
+	}
+	v := u.menu("流量管理", items, "返回")
 	if u.err != nil {
 		return u.err
 	}
-	policy := p.trafficPolicy()
-	reset := false
+	mode := trafficKeep
 	switch v {
-	case "0":
+	case "":
 		return nil
-	case "1":
+	case "view":
 		return u.showTraffic(p)
-	case "2":
+	case "recover":
+		return u.recoverTraffic(p)
+	case "limit":
 		for u.err == nil {
 			n, e := ParseTrafficLimit(u.ask("双向流量限额，例如 100 GB（十进制）", ""))
 			if e != nil {
@@ -92,26 +126,26 @@ func (u *UI) trafficManage(p Profile) error {
 		if !u.yes("启用或修改此节点限额，达到上限将断流", false) {
 			return u.err
 		}
-		db, e := u.a.loadTraffic()
-		if e != nil {
-			return e
-		}
-		if db.Records[p.ID].Incomplete {
-			u.say("旧节点或计量缺口无法补算历史流量；不确认清零则有限额节点将保护暂停")
-			if u.yes("从现在开始重新计量此节点", false) {
-				if u.ask("输入 RESET 再次确认清零", "") == "RESET" {
-					reset = true
-				} else {
+		if r.Incomplete && p.trafficPolicy().LimitBytes == 0 {
+			u.warn("本周期存在计量缺口（升级、重启或监控中断前的流量无法补算）")
+			switch u.option("如何处理本周期用量", []menuItem{item("keep", "保留已知用量继续计量（缺口期间流量不计入）"), item("reset", "清零并从现在开始计量"), item("cancel", "取消")}, "keep") {
+			case "keep":
+				mode = trafficAcceptGap
+			case "reset":
+				if u.ask("输入 RESET 再次确认清零", "") != "RESET" {
 					return errors.New("清零已取消")
 				}
+				mode = trafficReset
+			default:
+				return u.err
 			}
 		}
-	case "3":
+	case "unlimited":
 		if !u.yes("取消此节点流量限制并恢复无限流量", false) {
 			return u.err
 		}
 		policy.LimitBytes = 0
-	case "4":
+	case "billing":
 		for u.err == nil {
 			n, e := strconv.Atoi(u.ask("每月账单日（1–31）", itoa(policy.BillingDay)))
 			if e == nil && n >= 1 && n <= 31 {
@@ -125,15 +159,15 @@ func (u *UI) trafficManage(p Profile) error {
 			policy.Timezone = ""
 		}
 		u.say("修改账单设置不会立即清零本期用量")
-	case "5":
+	case "reset":
 		if !u.yes("清零本期上传和下载并解除流量保护暂停", false) {
 			return u.err
 		}
 		if u.ask("输入 RESET 再次确认清零", "") != "RESET" {
 			return errors.New("清零已取消")
 		}
-		reset = true
-	case "6":
+		mode = trafficReset
+	case "pause":
 		s, e := u.a.Load()
 		if e != nil {
 			return e
@@ -144,5 +178,9 @@ func (u *UI) trafficManage(p Profile) error {
 	if u.err != nil {
 		return u.err
 	}
-	return u.a.ConfigureTraffic(p.ID, policy, reset, time.Now())
+	if e := u.a.configureTraffic(p.ID, &policy, mode, time.Now()); e != nil {
+		return e
+	}
+	u.good("流量设置已保存")
+	return nil
 }

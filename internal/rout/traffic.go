@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	_ "time/tzdata"
 )
@@ -271,51 +270,201 @@ func mergeTraffic(r *TrafficRecord, s MeterSnapshot) error {
 	*r = next
 	return nil
 }
-func (a *App) stopTrafficNode(p Profile) error {
+
+// Block reasons. "sealed" is a verified graceful-shutdown checkpoint: the kernel gate
+// was closed BEFORE the final counters were read and persisted, so no admitted byte
+// can be missing. Only a running monitor that re-verifies it may reopen the gate.
+const (
+	blockQuota  = "quota"
+	blockFault  = "fault"
+	blockSealed = "sealed"
+)
+
+const (
+	heartbeatLockWait = 4 * time.Second
+	monitorConfigWait = 250 * time.Millisecond
+	// Unchanged counters are re-persisted at least this often; guards require < 30 s.
+	trafficRefresh = 15 * time.Second
+)
+
+// v0.2.1 graceful shutdowns wrote "fault" without marking a gap. Within the SAME boot
+// the frozen kernel generation can still prove that checkpoint exact, so it is treated
+// as sealed. Across a reboot nothing can verify it and it stays a fault.
+func (r *TrafficRecord) normalizeLegacySeal(boot string) {
+	if r.Blocked == blockFault && !r.Incomplete && !r.Pending && r.Rules != "" && r.Boot == boot {
+		r.Blocked = blockSealed
+	}
+}
+
+// A closed checkpoint may be restored only when the kernel cannot have admitted bytes
+// since it was written: same boot with identical frozen counters, or a fresh boot
+// with no surviving (possibly stale) Rout table.
+func verifyClosedCheckpoint(r TrafficRecord, snap MeterSnapshot, readErr error, boot string) bool {
+	if r.Rules == "" || r.Pending {
+		return false
+	}
+	if r.Boot == boot {
+		return readErr == nil && snap.Hash == r.Rules && snap.Up == r.RawUp && snap.Down == r.RawDown && snap.Consumed == r.Consumed
+	}
+	return errors.Is(readErr, errMeterMissing)
+}
+
+// Service lifecycle work produced by a sync. It always runs after the traffic lock is
+// released: the kernel gate enforces limits by itself, and a slow init system must
+// never delay other nodes' lease renewals.
+type trafficActions struct {
+	stop, start []Profile
+	// Per-node meter errors. Only journal (load/save) failures are fatal to a sync.
+	warn []error
+}
+
+func addProfile(list []Profile, p Profile) []Profile {
+	for _, v := range list {
+		if v.ID == p.ID {
+			return list
+		}
+	}
+	return append(list, p)
+}
+func (x *trafficActions) stopNode(p Profile)  { x.stop = addProfile(x.stop, p) }
+func (x *trafficActions) startNode(p Profile) { x.start = addProfile(x.start, p) }
+func (x *trafficActions) merge(y trafficActions) {
+	for _, p := range y.stop {
+		x.stopNode(p)
+	}
+	for _, p := range y.start {
+		x.startNode(p)
+	}
+	x.warn = append(x.warn, y.warn...)
+}
+func (x trafficActions) warning() error { return errors.Join(x.warn...) }
+
+// Interactive operations report other nodes' meter errors without failing.
+func (a *App) warnTraffic(x trafficActions) {
+	if e := x.warning(); e != nil {
+		a.printf("提示：部分节点流量计量异常，运行 rout doctor 查看：%s\n", a.Error(e))
+	}
+}
+func (a *App) runTrafficActions(x trafficActions, shutdown bool) error {
+	var errs []error
+	for _, p := range x.stop {
+		if e := a.stopTrafficNode(p, shutdown); e != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p.Name, e))
+		}
+	}
+	for _, p := range x.start {
+		if e := a.startTrafficNode(p); e != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p.Name, e))
+		}
+	}
+	return errors.Join(errs...)
+}
+func (a *App) stopTrafficNode(p Profile, shutdown bool) error {
 	if a.trafficStop != nil {
 		return a.trafficStop(p)
 	}
-	return a.stopServiceOnly(p)
+	return a.stopServiceOnly(p, shutdown)
+}
+func (a *App) startTrafficNode(p Profile) error {
+	if a.trafficStart != nil {
+		return a.trafficStart(p)
+	}
+	return a.startService(p)
 }
 
-// Called with the normal configuration lock held. No unbounded retries/HTTP calls.
-func (a *App) trafficLock() (func(), error) {
-	f, e := os.OpenFile(filepath.Join(a.Home, ".traffic.lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
-	}
-	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		f.Close()
-		return nil, errors.New("另一个 rout 正在修改配置，请稍后重试")
-	}
-	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+type meterRead struct {
+	snap MeterSnapshot
+	err  error
 }
-func (a *App) syncTraffic(state State, now time.Time, shutdown bool) error {
+
+// Optional batching: one nft transaction per poll instead of one per node.
+type batchMeter interface {
+	ReadAll([]Profile) (map[string]meterRead, []string)
+	RenewAll([]Profile) error
+	DeleteTables([]string) error
+}
+
+func readMeters(m TrafficMeter, ps []Profile) (map[string]meterRead, []string) {
+	if b, ok := m.(batchMeter); ok {
+		return b.ReadAll(ps)
+	}
+	out := map[string]meterRead{}
+	for _, p := range ps {
+		s, e := m.Read(p)
+		out[p.ID] = meterRead{s, e}
+	}
+	return out, nil
+}
+
+// A failed batch falls back per node, so one broken table cannot block other leases.
+func renewMeters(m TrafficMeter, ps []Profile) map[string]error {
+	errs := map[string]error{}
+	if len(ps) == 0 {
+		return errs
+	}
+	if b, ok := m.(batchMeter); ok && b.RenewAll(ps) == nil {
+		return errs
+	}
+	for _, p := range ps {
+		if e := m.Renew(p); e != nil {
+			errs[p.ID] = e
+		}
+	}
+	return errs
+}
+
+// Seen/Updated move every poll; they alone do not justify an fsynced rewrite.
+func trafficFingerprint(s TrafficState) string {
+	records := map[string]TrafficRecord{}
+	for id, r := range s.Records {
+		r.Seen = time.Time{}
+		records[id] = r
+	}
+	b, _ := json.Marshal(records)
+	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+func needsTrafficSave(db TrafficState, before string, previous, now time.Time) bool {
+	return trafficFingerprint(db) != before || now.Sub(previous) >= trafficRefresh || previous.After(now)
+}
+func (a *App) currentBoot() (string, error) {
+	if a.bootID != nil {
+		return a.bootID()
+	}
+	return bootID()
+}
+func (a *App) trafficLock() (func(), error) {
+	return lockFile(filepath.Join(a.Home, ".traffic.lock"), trafficLockWait)
+}
+func (a *App) syncTraffic(state State, now time.Time, shutdown bool) (trafficActions, error) {
 	unlock, e := a.trafficLock()
 	if e != nil {
-		return e
+		return trafficActions{}, e
 	}
 	defer unlock()
 	return a.syncTrafficInner(state, now, shutdown)
 }
-func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error {
+
+// Called with the traffic lock held. No HTTP calls and no init-system commands.
+func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) (trafficActions, error) {
+	var acts trafficActions
 	m := a.meter()
-	boot, e := bootID()
+	boot, e := a.currentBoot()
 	if e != nil {
-		return e
+		return acts, e
 	}
 	db, e := a.loadTraffic()
 	if e != nil {
 		for _, p := range state.Profiles {
 			if p.trafficPolicy().LimitBytes > 0 {
 				_ = m.Freeze(p)
-				_ = a.stopTrafficNode(p)
+				acts.stopNode(p)
 			}
 		}
-		return e
+		return acts, e
 	}
+	before, previousUpdate := trafficFingerprint(db), db.Updated
+	reads, orphans := readMeters(m, state.Profiles)
 	var errs []error
-	resume := map[string]bool{}
 	for _, p := range state.Profiles {
 		r, exists := db.Records[p.ID]
 		policy := p.trafficPolicy()
@@ -323,56 +472,85 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error 
 		if !exists {
 			r = newTrafficRecord(p, now, boot)
 			if limited {
-				r.Blocked = "fault"
+				r.Blocked = blockFault
 				r.Incomplete = true
 			}
 		}
-		snap, readErr := m.Read(p)
-		healthy := readErr == nil && r.Rules != "" && snap.Hash == r.Rules && !r.Pending && r.Boot == boot
-		if healthy {
-			if e = mergeTraffic(&r, snap); e != nil {
-				healthy = false
-				readErr = e
+		if !limited {
+			r.Blocked = "" // Unlimited nodes are never paused by accounting state.
+		}
+		r.normalizeLegacySeal(boot)
+		if r.Blocked == blockSealed && (!a.monitorMode || shutdown) {
+			db.Records[p.ID] = r
+			continue
+		}
+		previous := r.Blocked
+		read := reads[p.ID]
+		snap, readErr := read.snap, read.err
+		restored := false
+		if limited && r.Blocked != "" && !r.Pending && (r.Blocked == blockSealed || r.Boot != boot) {
+			if verifyClosedCheckpoint(r, snap, readErr, boot) {
+				restored = true
+				if r.Blocked == blockSealed {
+					r.Blocked = ""
+				}
+			} else {
+				r.Blocked = blockFault
+				r.Incomplete = true
 			}
 		}
-		if !healthy && exists {
-			r.Incomplete = true
-			if limited {
-				r.Blocked = "fault"
+		healthy := restored
+		if !restored {
+			healthy = readErr == nil && r.Rules != "" && snap.Hash == r.Rules && !r.Pending && r.Boot == boot
+			if healthy {
+				if e = mergeTraffic(&r, snap); e != nil {
+					healthy = false
+					readErr = e
+				}
+			}
+			if !healthy && exists {
+				r.Incomplete = true
+				if limited {
+					r.Blocked = blockFault
+				}
 			}
 		}
-		oldBlocked := r.Blocked
 		rollover := r.advance(now, policy)
-		shapeChanged := r.Shape != trafficShape(p)
-		quotaNew := limited && r.Consumed >= policy.LimitBytes && r.Blocked != "quota"
+		quotaNew := limited && r.Consumed >= policy.LimitBytes && r.Blocked != blockQuota
 		if quotaNew {
-			r.Blocked = "quota"
+			r.Blocked = blockQuota
 		}
-		rebuild := !healthy || shapeChanged || (rollover && limited) || quotaNew
+		rebuild := !healthy || restored || r.Shape != trafficShape(p) || (rollover && limited) || quotaNew
 		if shutdown && limited {
-			r.Blocked = "fault"
+			if r.Blocked == "" {
+				r.Blocked = blockSealed // Confirmed below only if the freeze/read succeeds.
+			}
 			rebuild = true
 		}
+		froze := false
 		// Seal before sampling and replacing a live counter generation.
 		if rebuild && readErr == nil {
 			if e = m.Freeze(p); e != nil {
-				errs = append(errs, e)
+				errs = append(errs, fmt.Errorf("%s: %w", p.Name, e))
 				if limited {
-					r.Blocked = "fault"
+					r.Blocked = blockFault
+					r.Incomplete = true
 					r.Pending = true
-					_ = a.stopTrafficNode(p)
+					acts.stopNode(p)
+					db.Records[p.ID] = r
+					continue
 				}
-				db.Records[p.ID] = r
-				continue
-			}
-			sealed, er := m.Read(p)
-			if er == nil && healthy {
-				er = mergeTraffic(&r, sealed)
-			}
-			if er != nil {
-				r.Incomplete = true
-				if limited {
-					r.Blocked = "fault"
+			} else {
+				froze = true
+				sealed, er := m.Read(p)
+				if er == nil && healthy {
+					er = mergeTraffic(&r, sealed)
+				}
+				if er != nil {
+					r.Incomplete = true
+					if limited {
+						r.Blocked = blockFault
+					}
 				}
 			}
 			if rollover {
@@ -380,7 +558,7 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error 
 			}
 		}
 		if limited && r.Consumed >= policy.LimitBytes {
-			r.Blocked = "quota"
+			r.Blocked = blockQuota
 		}
 		if rebuild {
 			r.Pending = true
@@ -389,124 +567,170 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) error 
 			if e = a.saveTraffic(db); e != nil {
 				if limited {
 					_ = m.Freeze(p)
-					_ = a.stopTrafficNode(p)
+					acts.stopNode(p)
+				} else if froze {
+					_ = m.Delete(p) // Fail open: an unlimited node keeps serving.
 				}
-				return e
-			}
-			if readErr != nil && !errors.Is(readErr, errMeterMissing) {
-				errs = append(errs, readErr)
-				if limited {
-					_ = a.stopTrafficNode(p)
-				}
-				continue
+				return acts, e
 			}
 			if r.Rules, e = m.Replace(p, r); e != nil {
-				errs = append(errs, e)
+				errs = append(errs, fmt.Errorf("%s: %w", p.Name, e))
 				if limited {
-					_ = a.stopTrafficNode(p)
+					acts.stopNode(p)
+				} else {
+					_ = m.Delete(p)
+					r.Incomplete = true
 				}
+				db.Records[p.ID] = r
 				continue
 			}
 			r.Shape = trafficShape(p)
 			r.Pending = false
 		}
-		if limited && r.Blocked != "" {
-			_ = a.stopTrafficNode(p)
+		if limited && r.Blocked != "" && (previous == "" || rebuild) {
+			acts.stopNode(p)
 		}
-		if oldBlocked != "" && r.Blocked == "" && p.Enabled {
-			resume[p.ID] = true
+		if previous != "" && r.Blocked == "" && p.Enabled && !shutdown {
+			acts.startNode(p)
 		}
 		db.Records[p.ID] = r
 	}
+	// Only the monitor (holding the configuration lock) removes stale Rout tables.
+	if a.monitorMode && !shutdown && len(orphans) > 0 {
+		if b, ok := m.(batchMeter); ok {
+			if e = b.DeleteTables(orphans); e != nil {
+				errs = append(errs, e)
+			}
+		}
+	}
 	db.Updated = now
-	if e = a.saveTraffic(db); e != nil {
+	if shutdown || needsTrafficSave(db, before, previousUpdate, now) {
+		if e = a.saveTraffic(db); e != nil {
+			for _, p := range state.Profiles {
+				if p.trafficPolicy().LimitBytes > 0 {
+					_ = m.Freeze(p)
+					acts.stopNode(p)
+				}
+			}
+			return acts, e
+		}
+	}
+	if !shutdown {
+		var renew []Profile
 		for _, p := range state.Profiles {
-			if p.trafficPolicy().LimitBytes > 0 {
-				_ = m.Freeze(p)
-				_ = a.stopTrafficNode(p)
+			r := db.Records[p.ID]
+			if p.trafficPolicy().LimitBytes > 0 && r.Blocked == "" && !r.Pending {
+				renew = append(renew, p)
 			}
 		}
-		return e
-	}
-	for _, p := range state.Profiles {
-		r := db.Records[p.ID]
-		if p.trafficPolicy().LimitBytes > 0 && r.Blocked == "" && !r.Pending && !shutdown {
-			if e = m.Renew(p); e != nil {
-				errs = append(errs, e)
-				_ = m.Freeze(p)
-				_ = a.stopTrafficNode(p)
-				continue
-			}
-		}
-		if resume[p.ID] && !shutdown {
-			if e = a.setService(p, true); e != nil {
-				errs = append(errs, e)
+		// A failed renewal needs no freeze: the kernel lease expires by itself and the
+		// counters stay exact, so a transient error does not become a permanent fault.
+		failed := renewMeters(m, renew)
+		for _, p := range renew {
+			if e := failed[p.ID]; e != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", p.Name, e))
 			}
 		}
 	}
-	return errors.Join(errs...)
+	acts.warn = append(acts.warn, errs...)
+	return acts, nil
 }
 func (a *App) TrafficSync(now time.Time, shutdown bool) error {
-	unlock, e := a.lock()
+	return a.trafficSync(now, shutdown, nil)
+}
+
+// The full sync holds the configuration lock only briefly; when a long configuration
+// transaction owns it, a heartbeat keeps verified leases alive instead.
+func (a *App) trafficSync(now time.Time, shutdown bool, ready func()) error {
+	unlock, e := a.lockWait(monitorConfigWait)
 	if e != nil {
-		return a.trafficHeartbeat(now, shutdown)
+		if !errors.Is(e, errLockBusy) {
+			return e
+		}
+		acts, e := a.trafficHeartbeat(now, shutdown)
+		if ready != nil {
+			ready()
+		}
+		return errors.Join(e, acts.warning(), a.runTrafficActions(acts, shutdown))
 	}
 	defer unlock()
 	state, e := a.Load()
 	if e != nil {
+		if ready != nil {
+			ready()
+		}
 		return e
 	}
-	return a.syncTraffic(state, now, shutdown)
+	acts, e := a.syncTraffic(state, now, shutdown)
+	if ready != nil {
+		ready()
+	}
+	return errors.Join(e, acts.warning(), a.runTrafficActions(acts, shutdown))
 }
 
 // A slow engine download/service operation must not expire OTHER nodes' leases.
 // This path never changes policy/cycles. Except for an explicit shutdown it only
 // checkpoints counters and renews permits. The meter lock serializes transactions.
-func (a *App) trafficHeartbeat(now time.Time, shutdown bool) error {
-	unlock, e := a.trafficLock()
+func (a *App) trafficHeartbeat(now time.Time, shutdown bool) (trafficActions, error) {
+	var acts trafficActions
+	unlock, e := lockFile(filepath.Join(a.Home, ".traffic.lock"), heartbeatLockWait)
 	if e != nil {
-		return e
+		return acts, e
 	}
 	defer unlock()
 	state, e := a.Load()
 	if e != nil {
-		return e
+		return acts, e
 	}
 	db, e := a.loadTraffic()
 	if e != nil {
-		return e
+		return acts, e
 	}
-	boot, e := bootID()
+	boot, e := a.currentBoot()
 	if e != nil {
-		return e
+		return acts, e
 	}
+	m := a.meter()
+	before, previousUpdate := trafficFingerprint(db), db.Updated
+	reads, _ := readMeters(m, state.Profiles)
 	var renew []Profile
 	for _, p := range state.Profiles {
 		r, ok := db.Records[p.ID]
-		if !ok || r.Pending || r.Boot != boot || r.Shape != trafficShape(p) {
+		if !ok || r.Pending || r.Boot != boot || r.Shape != trafficShape(p) || r.Blocked == blockSealed {
 			continue
 		}
-		s, e := a.meter().Read(p)
-		if e != nil || s.Hash != r.Rules {
+		read := reads[p.ID]
+		if read.err != nil || read.snap.Hash != r.Rules {
 			continue
 		}
-		if e = mergeTraffic(&r, s); e != nil {
+		if e = mergeTraffic(&r, read.snap); e != nil {
 			continue
 		}
 		if now.After(r.Seen) {
 			r.Seen = now
 		}
-		if p.trafficPolicy().LimitBytes > 0 {
+		limit := p.trafficPolicy().LimitBytes
+		if limit > 0 {
 			if shutdown {
-				r.Blocked = "fault"
-				if e = a.meter().Freeze(p); e == nil {
-					if sealed, er := a.meter().Read(p); er == nil {
-						_ = mergeTraffic(&r, sealed)
-						r.Rules = sealed.Hash
+				sealed := false
+				if e = m.Freeze(p); e == nil {
+					if s, er := m.Read(p); er == nil && mergeTraffic(&r, s) == nil {
+						r.Rules = s.Hash
+						sealed = true
 					}
 				}
-			} else if r.Consumed >= p.trafficPolicy().LimitBytes {
-				r.Blocked = "quota"
+				if sealed && r.Blocked == "" {
+					r.Blocked = blockSealed
+				} else if !sealed && r.Blocked != blockQuota {
+					r.Blocked = blockFault
+					r.Incomplete = true
+				}
+				acts.stopNode(p)
+			} else if r.Consumed >= limit {
+				if r.Blocked != blockQuota {
+					r.Blocked = blockQuota
+					acts.stopNode(p)
+				}
 			} else if r.Blocked == "" {
 				renew = append(renew, p)
 			}
@@ -514,29 +738,47 @@ func (a *App) trafficHeartbeat(now time.Time, shutdown bool) error {
 		db.Records[p.ID] = r
 	}
 	db.Updated = now
-	if e = a.saveTraffic(db); e != nil {
-		return e
-	}
-	if shutdown {
-		for _, p := range state.Profiles {
-			if p.trafficPolicy().LimitBytes > 0 {
-				_ = a.stopTrafficNode(p)
-			}
+	if shutdown || needsTrafficSave(db, before, previousUpdate, now) {
+		if e = a.saveTraffic(db); e != nil {
+			return acts, e
 		}
-		return nil
 	}
+	failed := renewMeters(m, renew)
 	for _, p := range renew {
-		if e = a.meter().Renew(p); e != nil {
-			return e
+		if e := failed[p.ID]; e != nil {
+			acts.warn = append(acts.warn, fmt.Errorf("%s: %w", p.Name, e))
 		}
 	}
-	return nil
+	return acts, nil
 }
 
-// Only this explicit operation may weaken a policy or clear a quota. Normal apply/restore cannot.
+type trafficMode int
+
+const (
+	trafficKeep      trafficMode = iota // Preserve usage; never clears a fault.
+	trafficReset                        // Explicit, confirmed reset of this cycle.
+	trafficAcceptGap                    // Resume with known usage as a lower bound.
+)
+
+// Only these explicit operations may weaken a policy or clear a block. Apply/restore cannot.
 func (a *App) ConfigureTraffic(id string, policy TrafficPolicy, reset bool, now time.Time) error {
-	if e := policy.Validate(); e != nil {
-		return e
+	mode := trafficKeep
+	if reset {
+		mode = trafficReset
+	}
+	return a.configureTraffic(id, &policy, mode, now)
+}
+
+// RecoverTraffic reopens a fault-paused node WITHOUT resetting usage. Bytes during the
+// gap are unknown, so the cycle stays marked incomplete and its total is a lower bound.
+func (a *App) RecoverTraffic(id string, now time.Time) error {
+	return a.configureTraffic(id, nil, trafficAcceptGap, now)
+}
+func (a *App) configureTraffic(id string, requested *TrafficPolicy, mode trafficMode, now time.Time) error {
+	if requested != nil {
+		if e := requested.Validate(); e != nil {
+			return e
+		}
 	}
 	if !a.trafficActive() {
 		return errors.New("请先运行 rout traffic install，未启用流量监控")
@@ -546,117 +788,161 @@ func (a *App) ConfigureTraffic(id string, policy TrafficPolicy, reset bool, now 
 		return e
 	}
 	defer unlock()
-	meterUnlock, e := a.trafficLock()
-	if e != nil {
-		return e
-	}
-	defer meterUnlock()
-	state, e := a.Load()
-	if e != nil {
-		return e
-	}
-	p, e := Find(state, id)
-	if e != nil {
-		return e
-	}
-	if e = a.syncTrafficInner(state, now, false); e != nil {
-		if !reset && policy.LimitBytes > 0 {
+	var acts trafficActions
+	var previous, policy TrafficPolicy
+	var p Profile
+	var blocked string
+	// The traffic lock covers only kernel and journal work, never service commands.
+	e = func() error {
+		meterUnlock, e := a.trafficLock()
+		if e != nil {
 			return e
 		}
-		// Recovery is only permitted after explicit reset/unlimited confirmation.
-		if _, er := a.loadTraffic(); er == nil {
+		defer meterUnlock()
+		state, e := a.Load()
+		if e != nil {
 			return e
 		}
-		if e = a.recoverTraffic(state, now); e != nil {
+		if p, e = Find(state, id); e != nil {
 			return e
 		}
-		if e = a.syncTrafficInner(state, now, false); e != nil {
+		previous = p.trafficPolicy()
+		policy = previous
+		if requested != nil {
+			policy = *requested
+		}
+		if mode == trafficAcceptGap && policy.LimitBytes == 0 {
+			return errors.New("无限额节点不需要恢复")
+		}
+		x, e := a.syncTrafficInner(state, now, false)
+		acts.merge(x)
+		if e != nil {
+			if mode != trafficReset && policy.LimitBytes > 0 {
+				return e
+			}
+			if _, er := a.loadTraffic(); er == nil {
+				return e
+			}
+			// Recovery is only permitted after explicit reset/unlimited confirmation.
+			if e = a.recoverTraffic(state, now); e != nil {
+				return e
+			}
+			if x, e = a.syncTrafficInner(state, now, false); e != nil {
+				return e
+			}
+			acts.merge(x)
+		}
+		db, e := a.loadTraffic()
+		if e != nil {
 			return e
 		}
-	}
-	db, e := a.loadTraffic()
-	if e != nil {
-		return e
-	}
-	r := db.Records[id]
-	m := a.meter()
-	if e = m.Freeze(p); e != nil {
-		return e
-	}
-	snap, e := m.Read(p)
-	if e != nil {
-		return e
-	}
-	if e = mergeTraffic(&r, snap); e != nil {
-		return e
-	}
-	r.Pending = true
-	db.Records[id] = r
-	if e = a.saveTraffic(db); e != nil {
-		return e
-	}
-	previousPolicy := p.trafficPolicy()
-	p.Traffic = &policy
-	if policy.LimitBytes == 0 {
-		r.Consumed = 0
-	}
-	if now.Before(r.Seen) {
-		now = r.Seen
-	}
-	if reset {
-		r.reset(now, policy, true)
-	} else {
-		_, r.Next = trafficWindow(now, policy)
-		if policy.LimitBytes == 0 || (r.Blocked == "quota" && policy.LimitBytes > r.Consumed) {
+		r := db.Records[id]
+		m := a.meter()
+		kernel := previous.LimitBytes > 0 || policy.LimitBytes > 0 || mode == trafficReset
+		if kernel {
+			if e = m.Freeze(p); e != nil {
+				return e
+			}
+			snap, e := m.Read(p)
+			if e != nil {
+				return e
+			}
+			if e = mergeTraffic(&r, snap); e != nil {
+				return e
+			}
+			r.Pending = true
+			db.Records[id] = r
+			if e = a.saveTraffic(db); e != nil {
+				return e
+			}
+		}
+		p.Traffic = &policy
+		if policy.LimitBytes == 0 {
+			r.Consumed = 0
 			r.Blocked = ""
 		}
-		if policy.LimitBytes > 0 && r.Incomplete {
-			r.Blocked = "fault"
+		if now.Before(r.Seen) {
+			now = r.Seen
 		}
-	}
-	r.Schedule = trafficSchedule(policy, now)
-	if policy.LimitBytes > 0 {
-		_, _, total, er := r.totals()
-		if er != nil {
-			return er
+		switch mode {
+		case trafficReset:
+			r.reset(now, policy, true)
+		case trafficKeep:
+			_, r.Next = trafficWindow(now, policy)
+			if r.Blocked == blockQuota && policy.LimitBytes > r.Consumed {
+				r.Blocked = ""
+			}
+			// A NEW cap on a cycle with a metering gap needs explicit consent.
+			if policy.LimitBytes > 0 && previous.LimitBytes == 0 && r.Incomplete {
+				r.Blocked = blockFault
+			}
+		case trafficAcceptGap:
+			_, r.Next = trafficWindow(now, policy)
+			if r.Blocked == blockFault || r.Blocked == blockSealed || (r.Blocked == blockQuota && policy.LimitBytes > r.Consumed) {
+				r.Blocked = ""
+			}
 		}
-		if total > r.Consumed {
-			r.Consumed = total
+		r.Schedule = trafficSchedule(policy, now)
+		if policy.LimitBytes > 0 {
+			_, _, total, er := r.totals()
+			if er != nil {
+				return er
+			}
+			if total > r.Consumed {
+				r.Consumed = total
+			}
+			if r.Consumed >= policy.LimitBytes {
+				r.Blocked = blockQuota
+				r.Consumed = policy.LimitBytes
+			}
 		}
-	}
-	if policy.LimitBytes > 0 && r.Consumed >= policy.LimitBytes {
-		r.Blocked = "quota"
-		r.Consumed = policy.LimitBytes
-	}
-	// Keep the journal closed until both policy and kernel generation are durable/installed.
-	state = replace(state, p)
-	if policy.LimitBytes > 0 || state.Schema == 2 {
-		state.Schema = 2
-	}
-	b, _ := JSON(state)
-	if e = AtomicWrite(filepath.Join(a.Home, "state.json"), b, 0600); e != nil {
-		return e
-	}
-	if r.Rules, e = m.Replace(p, r); e != nil {
-		return e
-	}
-	r.Shape = trafficShape(p)
-	r.Pending = false
-	db.Records[id] = r
-	db.Updated = now
-	if e = a.saveTraffic(db); e != nil {
-		return e
-	}
-	if policy.LimitBytes > 0 && r.Blocked == "" {
-		if e = m.Renew(p); e != nil {
+		// Keep the journal closed until both policy and kernel generation are durable/installed.
+		old := state.Clone()
+		state = replace(state, p)
+		if policy.LimitBytes > 0 || state.Schema == 2 {
+			state.Schema = 2
+		}
+		if e = a.writeBackup(old); e != nil {
 			return e
 		}
+		b, _ := JSON(state)
+		if e = AtomicWrite(filepath.Join(a.Home, "state.json"), b, 0600); e != nil {
+			return e
+		}
+		if kernel {
+			if r.Rules, e = m.Replace(p, r); e != nil {
+				return e
+			}
+			r.Shape = trafficShape(p)
+			r.Pending = false
+		}
+		db.Records[id] = r
+		db.Updated = now
+		if e = a.saveTraffic(db); e != nil {
+			return e
+		}
+		if policy.LimitBytes > 0 && r.Blocked == "" {
+			if e = m.Renew(p); e != nil {
+				return e
+			}
+		}
+		blocked = r.Blocked
+		return nil
+	}()
+	if e != nil {
+		return e
 	}
-	// A limit adds a boot guard; removing one removes only this node's guard.
-	if previousPolicy.LimitBytes > 0 || policy.LimitBytes > 0 {
-		return a.setService(p, p.Enabled && r.Blocked == "")
+	ae := a.runTrafficActions(acts, false)
+	// A limit adds a start guard; removing one removes only this node's guard.
+	if previous.LimitBytes > 0 || policy.LimitBytes > 0 {
+		if blocked == "" && p.Enabled {
+			e = a.startService(p)
+		} else {
+			e = a.setService(p, false)
+		}
 	}
-	return nil
+	a.warnTraffic(acts)
+	return errors.Join(e, ae)
 }
 func (a *App) TrafficGuard(id string) error {
 	state, e := a.Load()
@@ -675,7 +961,7 @@ func (a *App) TrafficGuard(id string) error {
 		return e
 	}
 	r, ok := db.Records[id]
-	boot, e := bootID()
+	boot, e := a.currentBoot()
 	if e != nil {
 		return e
 	}
@@ -740,7 +1026,7 @@ func (a *App) recoverTraffic(state State, now time.Time) error {
 	if e = AtomicWrite(filepath.Join(a.Home, "backups", "traffic-corrupt-"+time.Now().UTC().Format("20060102T150405.000000000")+".json"), b, 0600); e != nil {
 		return e
 	}
-	boot, e := bootID()
+	boot, e := a.currentBoot()
 	if e != nil {
 		return e
 	}
@@ -760,11 +1046,10 @@ func (a *App) recoverTraffic(state State, now time.Time) error {
 		r.Rules = s.Hash
 		r.Shape = trafficShape(p)
 		if p.trafficPolicy().LimitBytes > 0 {
-			r.Blocked = "fault"
+			r.Blocked = blockFault
 			if e = a.meter().Freeze(p); e != nil {
 				return e
 			}
-			_ = a.stopTrafficNode(p)
 		}
 		db.Records[p.ID] = r
 	}

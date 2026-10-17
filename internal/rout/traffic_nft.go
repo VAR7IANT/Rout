@@ -16,10 +16,11 @@ import (
 // No shell, no global firewall flushes, no engine API, no packet capture daemon.
 type nftMeter struct{ home string }
 
-func (m nftMeter) table(p Profile) string {
+func (m nftMeter) prefix() string {
 	h := sha256.Sum256([]byte(m.home))
-	return fmt.Sprintf("rout_%x_%s", h[:4], p.ID)
+	return fmt.Sprintf("rout_%x_", h[:4])
 }
+func (m nftMeter) table(p Profile) string { return m.prefix() + p.ID }
 func nftRun(input string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -36,7 +37,14 @@ func nftRun(input string, args ...string) ([]byte, error) {
 		if len(b) > 2048 {
 			b = b[:2048]
 		}
-		return nil, fmt.Errorf("nftables 操作失败，请检查 nft、CAP_NET_ADMIN 和内核支持：%s", strings.TrimSpace(string(b)))
+		out := strings.TrimSpace(string(b))
+		if strings.Contains(out, "Operation not permitted") || strings.Contains(out, "Permission denied") {
+			return nil, fmt.Errorf("nftables 权限不足：需要 root 和 CAP_NET_ADMIN；OpenVZ/部分 LXC 容器不授予该权限，流量统计与限额不可用：%s", out)
+		}
+		if strings.Contains(out, "Protocol not supported") || strings.Contains(out, "not supported") {
+			return nil, fmt.Errorf("内核不支持 nf_tables，流量统计与限额不可用（容器内核可能缺少模块）：%s", out)
+		}
+		return nil, fmt.Errorf("nftables 操作失败，请检查 nft、CAP_NET_ADMIN 和内核支持：%s", out)
 	}
 	return b, nil
 }
@@ -48,15 +56,42 @@ func (m nftMeter) Read(p Profile) (MeterSnapshot, error) {
 	}
 	return parseNFT(b)
 }
-func parseNFT(b []byte) (MeterSnapshot, error) {
+func decodeNFT(b []byte) ([]map[string]any, error) {
 	var root struct {
 		NFT []map[string]any `json:"nftables"`
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.UseNumber()
 	if e := d.Decode(&root); e != nil {
+		return nil, e
+	}
+	return root.NFT, nil
+}
+func parseNFT(b []byte) (MeterSnapshot, error) {
+	entries, e := decodeNFT(b)
+	if e != nil {
 		return MeterSnapshot{}, e
 	}
+	return parseEntries(entries)
+}
+
+// The table an nft JSON object belongs to ("table" objects carry their own name).
+func entryTable(entry map[string]any) string {
+	for kind, v := range entry {
+		o, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if kind == "table" {
+			name, _ := o["name"].(string)
+			return name
+		}
+		name, _ := o["table"].(string)
+		return name
+	}
+	return ""
+}
+func parseEntries(entries []map[string]any) (MeterSnapshot, error) {
 	var snap MeterSnapshot
 	seenUp, seenDown, owned := false, false, false
 	number := func(v any) (uint64, error) {
@@ -67,7 +102,7 @@ func parseNFT(b []byte) (MeterSnapshot, error) {
 		return parseUint(n.String())
 	}
 	var canonical []map[string]any
-	for _, entry := range root.NFT {
+	for _, entry := range entries {
 		if _, ok := entry["metainfo"]; ok {
 			continue
 		}
@@ -133,15 +168,73 @@ func cleanNFT(v any) {
 		}
 	}
 }
+
+// ReadAll lists every inet table once. Each Rout table is parsed exactly like a single
+// "list table"; any table whose batched result is not healthy is re-read on its own,
+// so batching can only save work, never change a verdict.
+func (m nftMeter) ReadAll(ps []Profile) (map[string]meterRead, []string) {
+	out := map[string]meterRead{}
+	single := func(p Profile) { s, e := m.Read(p); out[p.ID] = meterRead{s, e} }
+	b, e := nftRun("", "-j", "list", "ruleset", "inet")
+	var entries []map[string]any
+	if e == nil {
+		entries, e = decodeNFT(b)
+	}
+	if e != nil {
+		for _, p := range ps {
+			single(p)
+		}
+		return out, nil
+	}
+	groups := map[string][]map[string]any{}
+	for _, entry := range entries {
+		if name := entryTable(entry); strings.HasPrefix(name, m.prefix()) {
+			groups[name] = append(groups[name], entry)
+		}
+	}
+	known := map[string]bool{}
+	for _, p := range ps {
+		name := m.table(p)
+		known[name] = true
+		group, ok := groups[name]
+		if !ok {
+			out[p.ID] = meterRead{err: errMeterMissing}
+			continue
+		}
+		snap, e := parseEntries(group)
+		if e != nil {
+			single(p)
+			continue
+		}
+		out[p.ID] = meterRead{snap: snap}
+	}
+	var orphans []string
+	for name, group := range groups {
+		// Only tables carrying Rout's own comment are ever considered for removal.
+		if _, e := parseEntries(group); e == nil && !known[name] && idPattern.MatchString(strings.TrimPrefix(name, m.prefix())) {
+			orphans = append(orphans, name)
+		}
+	}
+	return out, orphans
+}
+func (m nftMeter) RenewAll(ps []Profile) error {
+	var s strings.Builder
+	for _, p := range ps {
+		fmt.Fprintf(&s, "flush set inet %s alive\nadd element inet %s alive { %d timeout 15s }\n", m.table(p), m.table(p), p.Port)
+	}
+	return nftApply(s.String())
+}
+func (m nftMeter) DeleteTables(names []string) error {
+	var s strings.Builder
+	for _, name := range names {
+		s.WriteString("delete table inet " + name + "\n")
+	}
+	return nftApply(s.String())
+}
 func (m nftMeter) Replace(p Profile, r TrafficRecord) (string, error) {
 	name := m.table(p)
-	prefix := ""
-	if _, e := m.Read(p); e == nil {
-		prefix = "delete table inet " + name + "\n"
-	} else if !errors.Is(e, errMeterMissing) {
-		return "", e
-	}
-	s := prefix + fmt.Sprintf("table inet %s {\ncomment \"Rout traffic v1\";\ncounter up { packets 0 bytes %d; }\ncounter down { packets 0 bytes %d; }\n", name, r.RawUp, r.RawDown)
+	// "add" then "delete" removes any previous generation in the same atomic transaction.
+	s := "add table inet " + name + "\ndelete table inet " + name + "\n" + fmt.Sprintf("table inet %s {\ncomment \"Rout traffic v1\";\ncounter up { packets 0 bytes %d; }\ncounter down { packets 0 bytes %d; }\n", name, r.RawUp, r.RawDown)
 	policy := p.trafficPolicy()
 	limited := policy.LimitBytes > 0
 	if limited {

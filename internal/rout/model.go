@@ -302,6 +302,15 @@ func (p Profile) Validate() error {
 	return nil
 }
 
+// Combinations that are structurally valid but cannot carry traffic. Checked for new or
+// edited entries only, so an existing state file always stays loadable and repairable.
+func (p Profile) CheckCompatibility() error {
+	if p.Kind == "node" && p.Protocol == "ss" && p.Network == "udp" && p.Outbound != nil {
+		return errors.New("仅 UDP 的 Shadowsocks 不能使用代理出口（出口仅转发 TCP），请使用 TCP＋UDP 映射或改为 VPS 直连")
+	}
+	return nil
+}
+
 func (p Profile) Ready() error {
 	if p.Kind != "node" || (p.Protocol != "hy2" && p.Protocol != "tuic") || !p.Enabled {
 		return nil
@@ -437,8 +446,10 @@ func (p Profile) URI() (string, error) {
 			u.User = url.User(p.Password)
 		}
 	case "ss":
-		u.Scheme = "ss"
-		u.User = url.User(base64.RawURLEncoding.EncodeToString([]byte(p.Method + ":" + p.Password)))
+		// SIP002: AEAD-2022 userinfo MUST NOT be Base64URL-encoded; method and password
+		// are percent-encoded instead ("+", "/" and "=" of the key included).
+		fragment := (&url.URL{Fragment: p.Name}).String()
+		return "ss://" + url.QueryEscape(p.Method) + ":" + url.QueryEscape(p.Password) + "@" + u.Host + fragment, nil
 	case "hy2":
 		u.Scheme = "hysteria2"
 		u.User = url.User(p.Password)

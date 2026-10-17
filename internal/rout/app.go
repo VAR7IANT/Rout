@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"syscall"
 	"time"
@@ -16,8 +17,13 @@ import (
 type App struct {
 	Home, BinDir, ServiceMode string
 	Language                  string
+	BackupKeep                int
 	trafficMeter              TrafficMeter
 	trafficStop               func(Profile) error
+	trafficStart              func(Profile) error
+	bootID                    func() (string, error)
+	// Only the running monitor reopens sealed checkpoints.
+	monitorMode bool
 }
 
 func DefaultApp() *App                     { return &App{Home: "/etc/rout", BinDir: "/opt/rout/bin", ServiceMode: "auto"} }
@@ -62,6 +68,59 @@ func AtomicWrite(path string, b []byte, mode os.FileMode) error {
 	}
 	return e
 }
+
+const defaultBackupKeep = 20
+
+func (a *App) backupKeep() int {
+	if a.BackupKeep > 0 {
+		return a.BackupKeep
+	}
+	return defaultBackupKeep
+}
+
+// Automatic pre-change backups (timestamp names only). Explicit `rout backup` files and
+// corrupt-journal evidence are never pruned. The newest automatic backup always survives.
+func (a *App) writeBackup(s State) error {
+	b, e := JSON(s)
+	if e != nil {
+		return e
+	}
+	path := filepath.Join(a.Home, "backups", time.Now().UTC().Format("20060102T150405.000000000")+".json")
+	e = AtomicWrite(path, b, 0600)
+	for errors.Is(e, syscall.ENOSPC) && a.pruneOldestBackup() {
+		e = AtomicWrite(path, b, 0600)
+	}
+	if errors.Is(e, syscall.ENOSPC) {
+		return errors.New("磁盘空间不足，无法写入变更前备份；配置未修改")
+	}
+	if e != nil {
+		return e
+	}
+	a.pruneBackups(a.backupKeep())
+	return nil
+}
+func (a *App) automaticBackups() []string {
+	files, _ := filepath.Glob(filepath.Join(a.Home, "backups", "[0-9]*T*.json"))
+	sort.Strings(files) // UTC timestamp names sort chronologically.
+	return files
+}
+func (a *App) pruneOldestBackup() bool {
+	files := a.automaticBackups()
+	if len(files) <= 1 {
+		return false
+	}
+	return os.Remove(files[0]) == nil
+}
+func (a *App) pruneBackups(keep int) {
+	if keep < 1 {
+		keep = 1
+	}
+	files := a.automaticBackups()
+	for len(files) > keep {
+		_ = os.Remove(files[0])
+		files = files[1:]
+	}
+}
 func (a *App) Load() (State, error) {
 	b, e := os.ReadFile(filepath.Join(a.Home, "state.json"))
 	if os.IsNotExist(e) {
@@ -83,19 +142,43 @@ func DecodeState(b []byte) (State, error) {
 	s = s.MigrateLegacyExits()
 	return s, s.Validate()
 }
-func (a *App) lock() (func(), error) {
-	if e := os.MkdirAll(a.Home, 0700); e != nil {
+
+// Bounded waits: user operations queue behind short monitor checkpoints instead of
+// failing at random. A timeout (never an indefinite hang) reports a busy holder.
+const (
+	configLockWait  = 30 * time.Second
+	trafficLockWait = 15 * time.Second
+)
+
+var errLockBusy = errors.New("另一个 rout 操作仍在进行，请稍后重试")
+
+func lockFile(path string, wait time.Duration) (func(), error) {
+	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return nil, e
 	}
-	f, e := os.OpenFile(filepath.Join(a.Home, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if e != nil {
 		return nil, e
 	}
-	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		f.Close()
-		return nil, errors.New("另一个 rout 正在修改配置，请稍后重试")
+	deadline := time.Now().Add(wait)
+	for {
+		e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if e == nil {
+			return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+		}
+		if !errors.Is(e, syscall.EWOULDBLOCK) || !time.Now().Before(deadline) {
+			f.Close()
+			if errors.Is(e, syscall.EWOULDBLOCK) {
+				return nil, errLockBusy
+			}
+			return nil, e
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+}
+func (a *App) lock() (func(), error) { return a.lockWait(configLockWait) }
+func (a *App) lockWait(wait time.Duration) (func(), error) {
+	return lockFile(filepath.Join(a.Home, ".lock"), wait)
 }
 func Find(s State, id string) (Profile, error) {
 	for _, p := range s.Profiles {
@@ -202,13 +285,20 @@ func (a *App) Commit(old, next State, force bool) error {
 		return errors.New("配置已被其他操作修改，请重新打开菜单")
 	}
 	changed := map[string]bool{}
+	edited := map[string]bool{}
 	for _, p := range next.Profiles {
 		if p.trafficPolicy().LimitBytes > 0 && !a.trafficActive() {
 			return errors.New("请先运行 rout traffic install，未启用流量监控")
 		}
 		prev, err := Find(old, p.ID)
-		if force || err != nil || !runtimeEqual(prev, p) {
+		edited[p.ID] = err != nil || !runtimeEqual(prev, p)
+		if force || edited[p.ID] {
 			changed[p.ID] = true
+		}
+		if edited[p.ID] {
+			if e := p.CheckCompatibility(); e != nil {
+				return fmt.Errorf("%s: %w", p.Name, e)
+			}
 		}
 		if p.Enabled {
 			for _, network := range p.Networks() {
@@ -240,9 +330,17 @@ func (a *App) Commit(old, next State, force bool) error {
 			return e
 		}
 	}
+	var skipped []string
 	for _, p := range next.Profiles {
 		if changed[p.ID] {
 			if e := p.Ready(); e != nil {
+				// A forced re-apply leaves an unchanged node with an expired certificate
+				// untouched instead of blocking every other node.
+				if !edited[p.ID] {
+					delete(changed, p.ID)
+					skipped = append(skipped, fmt.Sprintf("%s (%s): %s", p.Name, p.Protocol, a.Error(e)))
+					continue
+				}
 				return fmt.Errorf("%s (%s): %w", p.Name, p.Protocol, e)
 			}
 			if e := a.EnsureEngine(a.engineName(p)); e != nil {
@@ -272,7 +370,7 @@ func (a *App) Commit(old, next State, force bool) error {
 	}
 	oldBytes, _ := JSON(old)
 	if !reflect.DeepEqual(old, next) || force {
-		if e := AtomicWrite(filepath.Join(a.Home, "backups", time.Now().UTC().Format("20060102T150405.000000000")+".json"), oldBytes, 0600); e != nil {
+		if e := a.writeBackup(old); e != nil {
 			return e
 		}
 	}
@@ -328,7 +426,11 @@ func (a *App) Commit(old, next State, force bool) error {
 			failures = append(failures, er)
 		}
 		if a.trafficActive() {
-			if er := a.syncTraffic(old, time.Now(), false); er != nil {
+			acts, er := a.syncTraffic(old, time.Now(), false)
+			if er != nil {
+				failures = append(failures, er)
+			}
+			if er = errors.Join(acts.warning(), a.runTrafficActions(acts, false)); er != nil {
 				failures = append(failures, er)
 			}
 		}
@@ -368,8 +470,9 @@ func (a *App) Commit(old, next State, force bool) error {
 	if e = AtomicWrite(filepath.Join(a.Home, "state.json"), b, 0600); e != nil {
 		return rollback(e)
 	}
+	var acts trafficActions
 	if a.trafficActive() {
-		if e = a.syncTraffic(next, time.Now(), false); e != nil {
+		if acts, e = a.syncTraffic(next, time.Now(), false); e != nil {
 			return rollback(e)
 		}
 	}
@@ -383,6 +486,13 @@ func (a *App) Commit(old, next State, force bool) error {
 				return rollback(e)
 			}
 		}
+	}
+	if e := a.runTrafficActions(acts, false); e != nil {
+		acts.warn = append(acts.warn, e)
+	}
+	a.warnTraffic(acts)
+	for _, line := range skipped {
+		a.printf("已跳过（未修改，证书需更新）：%s\n", line)
 	}
 	for _, p := range old.Profiles {
 		if _, er := Find(next, p.ID); er != nil {

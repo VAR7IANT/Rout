@@ -10,10 +10,19 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"math"
 	"math/big"
 	"net"
 	"time"
 )
+
+// Trust in a self-signed node certificate comes from the pinned/embedded certificate,
+// not from its validity period, and replacing it always requires re-importing clients.
+// A short expiry therefore only breaks embedded-trust clients (sing-box JSON) silently.
+const selfSignedYears = 10
+
+// Certificates expiring within this window are reported by list/status/doctor.
+const certificateWarnDays = 30
 
 func GenerateCertificate(host string) (string, string, error) {
 	if !validHost(host) {
@@ -27,7 +36,7 @@ func GenerateCertificate(host string) (string, string, error) {
 	if e != nil {
 		return "", "", e
 	}
-	c := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: host}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+	c := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: host}, NotBefore: time.Now().Add(-5 * time.Minute), NotAfter: time.Now().AddDate(selfSignedYears, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
 	if ip := net.ParseIP(host); ip != nil {
 		c.IPAddresses = []net.IP{ip}
 	} else {
@@ -53,4 +62,43 @@ func CertificatePin(cert string) (string, error) {
 	}
 	h := sha256.Sum256(b.Bytes)
 	return hex.EncodeToString(h[:]), nil
+}
+
+// CertificateExpiry reports when a node's TLS certificate stops being valid.
+func (p Profile) CertificateExpiry() (time.Time, bool) {
+	if p.Kind != "node" || (p.Protocol != "hy2" && p.Protocol != "tuic") {
+		return time.Time{}, false
+	}
+	b, _ := pem.Decode([]byte(p.CertPEM))
+	if b == nil {
+		return time.Time{}, false
+	}
+	c, e := x509.ParseCertificate(b.Bytes)
+	if e != nil {
+		return time.Time{}, false
+	}
+	return c.NotAfter, true
+}
+
+// CertificateDays is the number of whole days left (negative once expired).
+func (p Profile) CertificateDays(now time.Time) (int, bool) {
+	end, ok := p.CertificateExpiry()
+	if !ok {
+		return 0, false
+	}
+	return int(math.Floor(end.Sub(now).Hours() / 24)), true
+}
+
+// RegenerateCertificate issues a new self-signed certificate for the node's SNI. The
+// pin changes, so every client must re-import the link or exported configuration.
+func RegenerateCertificate(p Profile) (Profile, error) {
+	if p.Kind != "node" || (p.Protocol != "hy2" && p.Protocol != "tuic") {
+		return p, errors.New("该节点未使用文件证书")
+	}
+	cert, key, e := GenerateCertificate(p.SNI)
+	if e != nil {
+		return p, e
+	}
+	p.CertPEM, p.KeyPEM, p.TLSGenerated = cert, key, true
+	return p, nil
 }

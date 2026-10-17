@@ -13,6 +13,8 @@ import (
 type Settings struct {
 	Language string       `json:"language,omitempty"`
 	Server   *ServerSetup `json:"server,omitempty"`
+	// Automatic pre-change backups to keep; 0 means the default (20).
+	BackupKeep int `json:"backup_keep,omitempty"`
 }
 type ServerSetup struct {
 	NAT         bool   `json:"nat"`
@@ -58,6 +60,9 @@ func (a *App) LoadSettings() (Settings, error) {
 			return s, e
 		}
 	}
+	if s.BackupKeep < 0 || s.BackupKeep > 1000 {
+		return s, errors.New("备份保留数量无效")
+	}
 	return s, nil
 }
 func (a *App) SaveSettings(s Settings) error {
@@ -68,6 +73,9 @@ func (a *App) SaveSettings(s Settings) error {
 		if e := s.Server.Validate(); e != nil {
 			return e
 		}
+	}
+	if s.BackupKeep < 0 || s.BackupKeep > 1000 {
+		return errors.New("备份保留数量无效")
 	}
 	unlock, e := a.lock()
 	if e != nil {
