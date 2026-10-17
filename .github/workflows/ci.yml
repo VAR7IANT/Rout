@@ -65,14 +65,19 @@ jobs:
         run: |
           CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/rout-static.test" ./internal/rout
           CGO_ENABLED=0 go build -o "$RUNNER_TEMP/rout-static" ./cmd/rout
-          # Rout itself must select the static musl engines on Alpine (no glibc loader).
-          docker run --rm --privileged -v "$RUNNER_TEMP:/w" alpine:3.20 sh -euc '
+          # Boot OpenRC as PID 1 (sysinit/boot/default) like a real Alpine host; Rout itself
+          # must select the static musl engines there (no glibc loader).
+          docker run -d --name alpine-openrc --privileged -v "$RUNNER_TEMP:/w" alpine:3.20 sh -c '
             apk add --no-cache openrc >/dev/null
-            printf "auto lo\niface lo inet loopback\n" > /etc/network/interfaces
-            mkdir -p /run/openrc && touch /run/openrc/softlevel
+            sed -i "s/^#\{0,1\}rc_sys=.*/rc_sys=\"docker\"/" /etc/rc.conf
+            printf "::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\n::shutdown:/sbin/openrc shutdown\n" > /etc/inittab
+            exec /sbin/init'
+          for i in $(seq 1 60); do docker exec alpine-openrc test -x /sbin/openrc-run && docker exec alpine-openrc rc-status >/dev/null 2>&1 && break; sleep 2; done; sleep 3
+          docker exec alpine-openrc sh -euc '
             /w/rout-static --home /tmp/state --bin-dir /tmp/engines --service none engines
             cd /w && ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^(TestIntegrationProtocolsAndProxyExit|TestIntegrationGOSTTCPAndUDP)$" -test.v
-            ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v || { rc-status -a; tail -n 30 /var/log/rout-*.log 2>/dev/null; exit 1; }'
+            ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v || { rc-status -a; exit 1; }'
+          docker rm -f alpine-openrc
       - name: Build both Linux architectures
         run: sh scripts/release.sh
       - uses: actions/upload-artifact@v4
