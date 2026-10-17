@@ -670,7 +670,10 @@ func TestIntegrationDualStackListener(t *testing.T) {
 				if e := p.Validate(); e != nil {
 					t.Fatal(e)
 				}
-				conf, e := serverConfig(p, t.TempDir())
+				if e := isolated.writeProfile(p); e != nil { // HY2/TUIC read tls.crt/tls.key from the profile directory
+					t.Fatal(e)
+				}
+				conf, e := serverConfig(p, isolated.profileDir(p.ID))
 				if e != nil {
 					t.Fatal(e)
 				}
