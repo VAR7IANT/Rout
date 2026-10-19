@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -331,6 +332,9 @@ func TestRenderedServiceDefinitions(t *testing.T) {
 }
 
 func TestSocketBoundReadsProc(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux /proc socket tables")
+	}
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)

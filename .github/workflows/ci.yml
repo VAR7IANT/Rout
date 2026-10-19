@@ -28,6 +28,7 @@ jobs:
             exit 1
           fi
           grep -q "VERSION=\${ROUT_VERSION:-v$version}" install.sh || { echo 'install.sh default version does not match' >&2; exit 1; }
+          grep -qx "## v$version" CHANGELOG.md || { echo 'CHANGELOG version missing' >&2; exit 1; }
       - name: Unit tests and static checks
         run: |
           go vet ./...
@@ -56,7 +57,7 @@ jobs:
       - name: systemd lifecycle, sandboxed protocols, startup rollback and failed-exit isolation
         run: |
           go test -c -o "$RUNNER_TEMP/rout-integration.test" ./internal/rout
-          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^(TestIntegrationServiceLifecycle|TestIntegrationSystemdSandboxProtocols)$' -test.v
+          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^(TestIntegrationServiceLifecycle|TestIntegrationSystemdSandboxProtocols|TestIntegrationAIServiceIsolation)$' -test.v
       - name: Kernel accounting, quota recovery and hard quota tests in an isolated network namespace
         run: |
           sudo apt-get update
@@ -83,8 +84,8 @@ jobs:
           for i in $(seq 1 60); do docker exec alpine-openrc test -x /sbin/openrc-run && docker exec alpine-openrc rc-status >/dev/null 2>&1 && break; sleep 2; done; sleep 3
           docker exec alpine-openrc sh -euc '
             /w/rout-static --home /tmp/state --bin-dir /tmp/engines --service none engines
-            cd /w && ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^(TestIntegrationProtocolsAndProxyExit|TestIntegrationGOSTTCPAndUDP)$" -test.v
-            ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^TestIntegrationOpenRCLifecycle$" -test.v || { rc-status -a; exit 1; }'
+            cd /w && ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^(TestIntegrationProtocolsAndProxyExit|TestIntegrationGOSTTCPAndUDP|TestIntegrationAINetwork|TestIntegrationHTTPSConnect|TestIntegrationAIUDP|TestIntegrationAITLSSNI)$" -test.v
+            ROUT_TEST_OPENRC=1 ROUT_TEST_ENGINES=/tmp/engines ./rout-static.test -test.run "^(TestIntegrationOpenRCLifecycle|TestIntegrationAIServiceIsolation)$" -test.v || { rc-status -a; exit 1; }'
           docker rm -f alpine-openrc
       - name: Build both Linux architectures
         run: sh scripts/release.sh

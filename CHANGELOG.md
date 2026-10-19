@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased (Phase 1)
+## v0.3.2
+
+Release candidate preparation; not tagged or published.
 
 - **AI Smart Routing.** Server-side routing of AI-service domains to a chosen outbound proxy, for explicitly selected inbound nodes only. Settings (`enabled`, `bound_inbound_ids`, `ai_outbound_id`, `rule_set_version`) are stored in `state.json` under `ai_routing`; unbound nodes' configuration files are never rewritten; disabling restores the original files; an empty binding binds nothing; deleted inbounds are pruned and stale references ignored; an unavailable AI exit fails closed instead of falling back. Versioned built-in rules for OpenAI/ChatGPT, Claude/Anthropic, Gemini, Google AI Studio, Hugging Face, GitHub Copilot and Cursor. All changes use the existing validate → back up → atomic write → health check → rollback transaction. `rout ai [status|test|apply]`
 - **Menu refactoring.** Eight top-level entries became six: Quick create node, Manage nodes, AI Smart Routing, Port forwarding, Outbound proxies, Service & system. Selecting a node shows its connection link immediately; Quick create and *New node* share one implementation and can be cancelled at every step; Traffic and limits moved under Manage nodes; Services, Diagnostics, Updates and Settings moved under Service & system. Blue accent, ANSI-aware width handling, narrow-terminal wrapping of cards, hints and the status line
-- Compatibility: no stored data changes for existing hosts (the new `ai_routing` block is optional and ignored by v0.3.1, which would drop it the next time it saves). The version number is unchanged until release
+- **Secure AI exit transport:** explicit certificate-verified HTTPS CONNECT with TLS 1.2 minimum; existing HTTP/SOCKS5 remain unchanged with clear warnings and a documented authenticated SOCKS5-over-SSH procedure. No insecure TLS switch or plaintext retry. Proxy formatting/log output redacts credentials; service errors no longer forward raw init output.
+- **Routing hardening:** normalize case and trailing-root-dot domain spellings (a real traffic test caught a suffix-matcher bypass); match explicit AI destinations before sniffing so a different HTTP Host/SNI cannot hide an already identified destination; bounded TLS/HTTP/QUIC sniffing then matches IP destinations. Enabling/applying rejects previously broken references instead of accepting a pre-existing fault. Quotas and billing cycles remain unchanged.
+- **Real network coverage:** controlled proxies/origins and real sing-box processes test A/C binding, B isolation, both proxy address families, explicit domains, Host/SNI, UDP rejection, ordinary UDP, exit failures, disabling, HTTPS verification/authentication failures. Disposable systemd/OpenRC tests verify restart isolation and service-start rollback. Config/write rollback regressions remain covered.
+- **Release preparation:** version/install/CI documentation aligned to 0.3.2; Linux amd64/arm64 assets include version.txt and verified SHA256 checksums. Installer rejects a checksum-valid binary with the wrong version before replacement. No tag, Release or VPS deployment is part of preparation.
+- **Compatibility and limits:** optional `ai_routing` remains schema-compatible; old proxy transports and six menus are preserved. Older Rout cannot read the new `https` proxy protocol; explicitly restore compatible exits/backup before downgrade. Domain coverage, DNS, ECH, QUIC and pure-IP limitations and real VPS acceptance commands are in [docs/AI_ROUTING.md](docs/AI_ROUTING.md); no zero-leak or production acceptance claim.
 
 ## v0.3.1
 

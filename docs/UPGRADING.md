@@ -1,11 +1,15 @@
 # Upgrading and rollback safety
 
-## To the next release (menu refactoring and AI Smart Routing)
+## To v0.3.2 (candidate: menu refactoring and AI routing hardening)
 
 - **Data formats:** `state.json` gains an optional `ai_routing` object (`enabled`, `bound_inbound_ids`, `ai_outbound_id`, `rule_set_version`). Hosts that never use AI Smart Routing keep a byte-identical file and byte-identical node configurations, so nothing restarts on upgrade.
-- **Rolling back** to v0.3.1 or earlier is safe for nodes, relays and outbound proxies, but those versions do not know `ai_routing`: the next change they save drops it, and bound nodes then use their original routing again. Disable AI Smart Routing first if you want to keep the settings in a backup (`rout backup FILE`).
+- **Rolling back:** back up before upgrading. v0.3.1 and earlier do not understand `https` outbound entries and will refuse to load them. Before downgrade, explicitly move HTTPS users to tested compatible exits and remove HTTPS entries, or restore a pre-upgrade compatible backup. This can remove transport protection: never auto-convert HTTPS to plaintext. Older versions also drop `ai_routing` on their next save; disable AI routing first and keep a separate backup if its settings are needed. Do not describe downgrade as preserving AI protection.
 - **Menus:** the main menu has six entries; see the README for where each former entry moved. All commands (`rout list`, `rout restart ID`, `rout outbounds`, …) are unchanged.
 - Enabling AI routing restarts only the bound nodes whose effective routing changes. Unbound nodes and relays are neither rewritten nor restarted.
+
+- Existing HTTP/SOCKS5 connections remain unchanged and unencrypted unless separately tunneled. HTTPS CONNECT is opt-in and verifies the proxy host against the system CA store. Follow [AI transport security and acceptance](AI_ROUTING.md); do not change a working proxy to HTTPS until the remote endpoint supports it.
+- Updating the manager does not apply new AI rules or restart nodes. Use **AI Smart Routing → Apply changes** after reviewing the new behavior; only bound nodes are reapplied. No DNS policy is changed.
+- The installer on main targets the unpublished candidate v0.3.2 and safely fails until publication; build locally for testing or explicitly request the published stable version. Do not create a tag or release during preparation.
 
 ## To v0.3.1
 

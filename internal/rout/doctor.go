@@ -95,6 +95,11 @@ func (u *UI) doctor(fix bool) error {
 		d.bad("设置无法读取：%s", a.Error(e))
 	}
 	d.ok("配置有效：%d 个节点或中转，%d 个出站代理", len(s.Profiles), len(s.Exits))
+	for _, ex := range s.Exits {
+		if warning := proxySecurityWarning(ex.Proxy); warning != "" {
+			d.warn("%s: %s", ex.Name, a.T(warning))
+		}
+	}
 	d.permissions()
 
 	u.heading("内核")

@@ -57,6 +57,8 @@ func (m *fakeMeter) Delete(p Profile) error {
 func trafficTestApp(t *testing.T) (*App, *fakeMeter, Profile) {
 	t.Helper()
 	a := testApp(t)
+	// Fake-meter tests use a stable simulated boot, independent of host /proc.
+	a.bootID = func() (string, error) { return "fixture-boot", nil }
 	m := &fakeMeter{values: map[string]MeterSnapshot{}, frozen: map[string]bool{}}
 	a.trafficMeter = m
 	p := fixture(t, "ss")

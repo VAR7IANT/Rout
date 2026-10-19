@@ -3,7 +3,7 @@ set -eu
 umask 077
 
 REPO=VAR7IANT/Rout
-VERSION=${ROUT_VERSION:-v0.3.1}
+VERSION=${ROUT_VERSION:-v0.3.2}
 DEST=${ROUT_INSTALL_DIR:-/usr/local/bin}
 
 fail() { printf '%s\n' "错误 / Error: $*" >&2; exit 1; }
@@ -29,7 +29,9 @@ HASH=$(awk -v name="$ASSET" '$2 == name || $2 == "*"name { print $1 }' "$TMP/che
 [ "${#HASH}" = 64 ] || fail '没有唯一有效的 SHA256 校验值 / A unique SHA256 checksum is required'
 printf '%s  %s\n' "$HASH" "$TMP/$ASSET" | sha256sum -c - || fail '校验失败，保留原安装 / Checksum failed; keeping existing installation'
 chmod 755 "$TMP/$ASSET"
-"$TMP/$ASSET" version
+ACTUAL_VERSION=$("$TMP/$ASSET" version)
+[ "$ACTUAL_VERSION" = "rout ${VERSION#v}" ] || fail '文件版本与请求版本不一致，保留原安装 / Binary version mismatch; keeping existing installation'
+printf '%s\n' "$ACTUAL_VERSION"
 mkdir -p "$DEST"
 # Copy inside the destination filesystem before renaming atomically.
 STAGED=$DEST/.rout-install-$$

@@ -374,6 +374,9 @@ func (u *UI) outboundLine(s State, i int, e Exit) {
 		use = fmt.Sprintf(u.a.T("%d 个节点使用"), n)
 	}
 	fmt.Fprintf(u.writer(), "  %s %s — %s — %s — %s\n", u.paint(accent, fmt.Sprintf("%2d.", i)), u.bold(e.Name), strings.ToUpper(e.Proxy.Protocol), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), u.dim(use))
+	if warning := proxySecurityWarning(e.Proxy); warning != "" {
+		u.warn(warning)
+	}
 }
 
 // pickProxy selects an existing outbound proxy by its displayed number.
@@ -534,7 +537,10 @@ func (u *UI) assignOutbound(old State, nodes []Profile, id string) error {
 	return nil
 }
 func (u *UI) proxyInput() (Proxy, error) {
-	protocol := u.option("代理协议", []menuItem{item("socks5", "SOCKS5"), item("http", "HTTP CONNECT")}, "socks5")
+	protocol := u.option("代理协议", []menuItem{item("socks5", "SOCKS5"), item("http", "HTTP CONNECT"), item("https", "HTTPS CONNECT（验证证书）")}, "socks5")
+	if warning := proxySecurityWarning(Proxy{Protocol: protocol}); warning != "" {
+		u.warn(warning)
+	}
 	for u.err == nil {
 		raw := u.secret("输入代理 IP:端口:用户名:密码（IPv6 使用 [地址]:端口:用户名:密码）")
 		if u.err != nil {

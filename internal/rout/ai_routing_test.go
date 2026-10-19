@@ -273,10 +273,10 @@ func TestAIBoundNodesRouteAIDomainsOthersUnchanged(t *testing.T) {
 		if outboundByTag(cfg, "egress")["type"] != "direct" {
 			t.Fatal("original exit changed")
 		}
-		// sniff comes first so IP-only destinations can be classified.
+		// Explicit domains are classified before sniffing; IP destinations after it.
 		rules := cfg["route"].(map[string]any)["rules"].([]any)
-		if rules[0].(map[string]any)["action"] != "sniff" {
-			t.Fatal("sniff must be the first rule")
+		if rules[2].(map[string]any)["action"] != "sniff" {
+			t.Fatal("sniff must follow explicit-domain matching")
 		}
 	}
 }

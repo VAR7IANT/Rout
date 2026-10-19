@@ -749,5 +749,10 @@
  "新建节点":"New node",
  "端口":"Port",
  "编辑":"Edit",
- "连接":"Connection"
+ "连接":"Connection",
+ "请选择 SOCKS5、HTTP 或 HTTPS":"Choose SOCKS5, HTTP or HTTPS",
+ "AI 出口必须是 SOCKS5、HTTP 或 HTTPS 出站代理":"The AI exit must be a SOCKS5, HTTP or HTTPS outbound proxy",
+ "HTTPS CONNECT（验证证书）":"HTTPS CONNECT (verify certificate)",
+ "SOCKS5/HTTP 出站链路未加密，账号密码可能被窃听；旧配置保持原样。请显式改用验证证书的 HTTPS CONNECT，或将 SOCKS5 放入 SSH 隧道（见 docs/AI_ROUTING.md）":"SOCKS5/HTTP outbound transport is unencrypted; credentials may be intercepted. Existing settings are preserved. Explicitly switch to certificate-verified HTTPS CONNECT or carry SOCKS5 through SSH (see docs/AI_ROUTING.md)",
+ "域名识别：优先匹配客户端提交的域名；IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才可能识别":"Domain detection: match the explicit destination first; IP targets can only be identified when TLS SNI, HTTP Host or supported QUIC exposes the domain"
 }

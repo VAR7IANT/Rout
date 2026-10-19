@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -65,6 +66,17 @@ func aiSuffixes(version int) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// sing-box's suffix matcher does not normalize all domain spellings received via
+// proxy protocols. DNS names are case-insensitive and may end in a root dot.
+// Keep the fast suffix match and supplement it with this anchored RE2 expression.
+func aiDomainPattern(version int) string {
+	suffixes := aiSuffixes(version)
+	for i := range suffixes {
+		suffixes[i] = regexp.QuoteMeta(suffixes[i])
+	}
+	return `(?i)(^|\.)(?:` + strings.Join(suffixes, "|") + `)\.?$`
 }
 
 // matchAIDomain reports whether host is one of the rule set's destinations, with the same

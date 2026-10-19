@@ -175,6 +175,14 @@ func TestRelayRemoteTCPReachabilityIsReal(t *testing.T) {
 		t.Skip(e)
 	}
 	port := l.Addr().(*net.TCPAddr).Port
+	// Some development hosts expose interfaces they cannot dial (for example VM
+	// bridge addresses). This test needs real non-loopback connectivity.
+	probe, e := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if e != nil {
+		l.Close()
+		t.Skipf("host cannot dial its non-loopback listener: %v", e)
+	}
+	probe.Close()
 	p := Profile{Kind: "relay", RelayMode: relayRemote, Protocol: "tcp", Target: net.JoinHostPort(host, itoa(port))}
 	if c := checkRelayDestination(p); len(c) != 1 || !c[0].ok || !strings.Contains(c[0].text, "不代表代理协议可用") {
 		t.Fatalf("open port %+v", c)

@@ -413,7 +413,7 @@ func (u *UI) aiDiagnostics() error {
 	}
 	fmt.Fprintln(u.writer())
 	for _, line := range []string{
-		"域名识别：已绑定节点启用嗅探（TLS SNI、HTTP Host、QUIC），客户端直接发送域名或 IP 时都可识别",
+		"域名识别：优先匹配客户端提交的域名；IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才可能识别",
 		"无法识别的情况：ECH 加密握手、纯 IP 且无嗅探信息的连接；这些连接走原有路由",
 		"AI 出口不可用时，AI 域名的连接会失败（不会静默改走原有出口），请选择“选择 AI 出口”更换",
 	} {

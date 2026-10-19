@@ -4,7 +4,7 @@ Create proxy nodes, relay traffic to this or another server and manage reusable 
 
 - Five node protocols: **VLESS Reality, AnyTLS Reality, Shadowsocks 2022, Hysteria2, TUIC v5**
 - Guided TCP/UDP relays to a service on this server or to a remote server, with a full path preview, loop checks and the original node's credentials kept
-- Reusable **SOCKS5 / HTTP CONNECT outbound proxies** shared by many nodes, with no silent direct-IP fallback
+- Reusable **SOCKS5 / HTTP / certificate-verified HTTPS CONNECT outbound proxies** shared by many nodes, with no silent direct-IP fallback
 - Exact per-node **traffic accounting and hard monthly quotas** in the kernel (nftables)
 - **systemd and OpenRC**, IPv4-only, IPv6-only and dual-stack hosts; existing NAT-VPS mappings from older versions keep working
 - Low-memory friendly: engines are streamed to disk and verified incrementally, never held in memory (see [Low-memory installation](#low-memory-installation))
@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.1`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.2` (candidate; installation from main will fail safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -116,14 +116,14 @@ After saving, Rout prints the client endpoint and, when the destination is a kno
 
 Outbound proxies decide how a node reaches the internet. **Direct connection** (no proxy) is built in. Relays have no outbound proxy: they forward traffic unchanged to their destination.
 
-Outbound proxies → **Create**: choose SOCKS5 or HTTP CONNECT, then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Proxies are listed and selected **by number** (`Name — PROTOCOL — host:port — usage`), with Direct connection offered as the last choice. Their stable internal IDs never change and never need to be typed.
+Outbound proxies → **Create**: choose SOCKS5, HTTP CONNECT or HTTPS CONNECT (certificate verification), then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Proxies are listed and selected **by number** (`Name — PROTOCOL — host:port — usage`), with Direct connection offered as the last choice. Their stable internal IDs never change and never need to be typed.
 
 - **Test** shows the observed outgoing IP (IPv4, falling back to IPv6).
 - **Assign to nodes** changes only the nodes you pick, in one transaction, after testing the proxy once. Nodes that cannot use a proxy (UDP-only Shadowsocks) are skipped with the reason. You can also pick the outbound while creating nodes.
 - **Edit** updates every node using the proxy transactionally; renaming alone restarts nothing.
 - **Delete** is refused while any node uses the proxy, and names those nodes, so nothing silently falls back to the VPS IP.
 
-Outbound proxies carry TCP only: UDP through a proxy is rejected rather than leaked.
+Outbound proxies carry TCP only: UDP through a proxy is rejected rather than leaked. **SOCKS5 and HTTP CONNECT are unencrypted between the VPS and proxy, including proxy credentials.** HTTPS CONNECT verifies the proxy certificate using the system CA store and hostname, with no plaintext retry. Old entries retain their transport; migration is explicit. See [transport security, SSH tunnel setup and VPS acceptance](docs/AI_ROUTING.md).
 
 ## Node links
 
@@ -138,7 +138,7 @@ rout list                  # every node with its complete link
 
 ## AI Smart Routing
 
-Server-side routing of AI services, with no client configuration. For the inbound nodes you select, connections to AI domains leave through a chosen **AI exit** (for example a SOCKS5/HTTP proxy in Canada); everything else keeps the route the node already had.
+Server-side routing of AI services, with no client configuration. For the inbound nodes you select, connections to AI domains leave through a chosen **AI exit** (for example a verified HTTPS CONNECT proxy or SSH-tunneled SOCKS5 proxy in Canada); everything else keeps the route the node already had.
 
 ```text
 Client → US VPS · Rout inbound ──┬─ AI domains ──→ AI exit (outbound proxy)
@@ -147,15 +147,15 @@ Client → US VPS · Rout inbound ──┬─ AI domains ──→ AI exit (out
 
 Main menu → **AI Smart Routing**: *Enable / Disable*, *Select inbound nodes*, *Select AI exit*, *View AI rules*, *Test configuration*, *Status and diagnostics*, *Apply changes*. Also `rout ai [status|test|apply]`.
 
-- **The AI exit is an existing outbound proxy** (Outbound proxies menu; SOCKS5 or HTTP). No address is hard-coded. An exit that points back at a node on this server is refused as a routing loop, and an exit used for AI cannot be deleted.
+- **The AI exit is an existing outbound proxy** (Outbound proxies menu; SOCKS5, HTTP or HTTPS). No address is hard-coded. An exit that points back at a node on this server is refused as a routing loop, and an exit used for AI cannot be deleted.
 - **Inbound binding is explicit and isolated.** Nothing is selected by default and an empty selection binds nothing (never "all"). Rout runs one sing-box process per node, so only the configuration files of bound nodes receive AI rules; an unbound node's file is not rewritten and its service is not restarted. Bindings use the node's stable ID and every rule also matches the node's own inbound. Deleting a node removes it from the binding; a stale ID found in `state.json` is reported and ignored, never widened.
 - **Disabling** restores each bound node's original configuration byte-for-byte and keeps the exit and bindings. Enabling needs a selected exit.
 - **Rules** (`internal/rout/ai_rules.go`, versioned; `rule_set_version` is saved) cover OpenAI/ChatGPT, Claude/Anthropic, Gemini, Google AI Studio, Hugging Face, GitHub Copilot and Cursor, as domain suffixes dedicated to those products. Whole-company domains (google.com, github.com, googleapis.com…) are deliberately absent. **View AI rules** lists them.
-- **Order of rules on a bound node:** sniff (to learn the domain behind an IP-only destination) → UDP to AI domains rejected → AI domains to the AI exit → the node's existing rules. A node with its own outbound proxy keeps it for non-AI traffic.
+- **Order of rules on a bound node:** explicit AI domain match → sniff TLS/HTTP/supported QUIC → AI domain match again → the node's existing rules. Identified AI UDP is rejected. A node with its own outbound proxy keeps it for non-AI traffic.
 - **If the AI exit fails, AI connections fail.** There is no silent fallback to the original exit. If the exit disappears from the configuration, AI domains of bound nodes are rejected until a new exit is chosen.
 - **Safe changes:** every change goes through the same transaction as node edits: validation of references, `sing-box check` of each changed configuration in a staging directory, an automatic backup of `state.json`, atomic writes, a health check of every restarted service, and automatic rollback of files, state and services on failure. Only the bound nodes whose effective routing changes are restarted.
 
-Limits (also shown in the menu): matching is by domain. Connections that expose no domain (IP-only without sniffable TLS/HTTP/QUIC data, ECH-encrypted handshakes) take the original route. The AI exit is TCP-only, so QUIC to AI domains is rejected and clients fall back to TCP. The Copilot token endpoint `api.github.com` is not routed, to avoid sending ordinary GitHub traffic to the AI exit. A domain list cannot guarantee complete coverage; new AI products need a rule-set update followed by *Apply changes*. *Test configuration* validates the configuration and probes the exit; its routing simulation evaluates rules and makes no real request.
+Limits (also shown in the menu): matching is by domain. DNS is not hijacked or forced through Canada; client DNS/DoH/DoT keeps its behavior. Sniffing is limited to one second and supported protocols. Connections that expose no domain (IP-only without sniffable TLS/HTTP/QUIC data, ECH-encrypted handshakes) take the original route. The AI exit is TCP-only, so identified AI QUIC is rejected; TCP fallback depends on the client. Unrecognized QUIC may take the original route. This does not guarantee zero leakage. The Copilot token endpoint `api.github.com` is not routed, to avoid sending ordinary GitHub traffic to the AI exit. A domain list cannot guarantee complete coverage; new AI products need a rule-set update followed by *Apply changes*. *Test configuration* validates the configuration and probes the exit; its routing simulation evaluates rules and makes no real request.
 
 ## Traffic accounting, limits and monthly reset
 
@@ -249,6 +249,8 @@ sudo rout update      # refuses downgrades; keeps /usr/local/bin/rout.previous
 
 Real-host acceptance items outside CI: IPv6 reachability from real client networks, provider NAT reachability, behavior on the 1 GB VPS that reported the OOM kill, physical reboots and power loss, NIC offload and sustained high rates. Each node table adds a small per-packet cost; Rout is tuned for tens of nodes per host.
 
+See [docs/AI_ROUTING.md](docs/AI_ROUTING.md) for reproducible real-network tests, US/Canada VPS acceptance commands and the release gate. No real VPS acceptance is claimed by automated local tests.
+
 ## Development and releases
 
 Go 1.23+ (CI builds with the current stable Go), standard library only. Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy engines are separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their own licenses.
@@ -260,10 +262,12 @@ go build -o rout ./cmd/rout
 ROUT_TEST_ENGINES=/tmp/rout-engines go test -race -count=1 -v ./internal/rout
 ```
 
-Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, both outbound proxy types and TCP/UDP relays, including relays built through the interactive flow (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`. Engine-installation tests (download failure, corrupt archive, checksum mismatch, killed installer, concurrent installers, peak RSS of a 96 MiB engine against the old in-memory approach) run in every `go test`; IPv6 and dual-stack tests skip themselves on hosts without an IPv6 stack.
+Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, SOCKS5, HTTP and HTTPS CONNECT outbound proxies and TCP/UDP relays, including relays built through the interactive flow (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, orphan cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`. Engine-installation tests (download failure, corrupt archive, checksum mismatch, killed installer, concurrent installers, peak RSS of a 96 MiB engine against the old in-memory approach) run in every `go test`; IPv6 and dual-stack tests skip themselves on hosts without an IPv6 stack.
 
 CI runs everything above plus `govulncheck` and cross-compilation on every push. **Releases are published only from an explicit version tag** that matches the compiled version and `install.sh`; pushes to `main` never publish.
 
 ```sh
-git tag v0.3.1 && git push origin v0.3.1
+# Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
+git tag -a v0.3.2 -m 'Rout v0.3.2'
+git push origin v0.3.2
 ```

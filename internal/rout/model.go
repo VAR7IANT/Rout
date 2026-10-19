@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.1"
+const Version = "0.3.2"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -184,8 +184,8 @@ func ParseEndpoint(s string) (string, int, error) {
 
 // The protocol is selected before input. SplitN preserves colons in passwords.
 func ParseProxy(protocol, input string) (*Proxy, error) {
-	if protocol != "socks5" && protocol != "http" {
-		return nil, errors.New("请选择 SOCKS5 或 HTTP")
+	if protocol != "socks5" && protocol != "http" && protocol != "https" {
+		return nil, errors.New("请选择 SOCKS5、HTTP 或 HTTPS")
 	}
 	s := strings.TrimSpace(input)
 	var fields []string
@@ -218,6 +218,19 @@ func (p Proxy) Validate() error {
 	}
 	_, e := ParseProxy(p.Protocol, net.JoinHostPort(p.Host, strconv.Itoa(p.Port))+":"+p.Username+":"+p.Password)
 	return e
+}
+
+// Formatting a proxy must never disclose credentials, including in diagnostics.
+func (p Proxy) String() string {
+	return p.Protocol + "://" + net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
+}
+func (p Proxy) GoString() string { return p.String() }
+
+func proxySecurityWarning(p Proxy) string {
+	if p.Protocol == "https" {
+		return ""
+	}
+	return "SOCKS5/HTTP 出站链路未加密，账号密码可能被窃听；旧配置保持原样。请显式改用验证证书的 HTTPS CONNECT，或将 SOCKS5 放入 SSH 隧道（见 docs/AI_ROUTING.md）"
 }
 func (p Profile) Networks() []string {
 	if p.Kind == "relay" {

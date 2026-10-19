@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -21,8 +22,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -191,7 +194,7 @@ func startEngine(t *testing.T, ready []engineSocket, path string, args ...string
 	missing := func() []string {
 		var out []string
 		for _, s := range ready {
-			if !socketBound(s.network, s.port) {
+			if !testSocketBound(s.network, s.port) {
 				out = append(out, fmt.Sprintf("%s/%d", s.network, s.port))
 			}
 		}
@@ -218,6 +221,29 @@ func startEngine(t *testing.T, ready []engineSocket, path string, args ...string
 		}
 		time.Sleep(engineReadyPoll)
 	}
+}
+
+// Readiness outside Linux is test-only; production service health still uses
+// Linux /proc. Probe the exact loopback address used by the engine fixtures.
+func testSocketBound(network string, port int) bool {
+	if runtime.GOOS == "linux" {
+		return socketBound(network, port)
+	}
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	if network == "tcp" {
+		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		c.Close()
+		return true
+	}
+	l, err := net.ListenPacket("udp", addr)
+	if err == nil {
+		l.Close()
+		return false
+	}
+	return errors.Is(err, syscall.EADDRINUSE)
 }
 func configFile(t *testing.T, c M) string {
 	t.Helper()

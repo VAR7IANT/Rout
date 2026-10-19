@@ -1,11 +1,15 @@
 package rout
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,16 +32,10 @@ func (a *App) serviceManager() (string, error) {
 }
 func serviceName(p Profile) string { return "rout-" + p.ID }
 func command(name string, args ...string) error {
-	out, e := runOutput(25*time.Second, name, args...)
+	_, e := runOutput(25*time.Second, name, args...)
 	if e != nil {
-		// Init-system output names units and states only; keep the tail for diagnosis.
-		detail := strings.TrimSpace(string(out))
-		if len(detail) > 400 {
-			detail = "…" + detail[len(detail)-400:]
-		}
-		if detail != "" {
-			return fmt.Errorf("服务操作失败：%s %s：%s", name, strings.Join(args, " "), detail)
-		}
+		// Init output can include engine journal lines and authentication errors.
+		// Credentials must not escape via a failed service transaction.
 		return fmt.Errorf("服务操作失败：%s %s", name, strings.Join(args, " "))
 	}
 	return nil
@@ -336,6 +334,10 @@ func (a *App) Restart(id string) error {
 	return a.setService(p, true)
 }
 func (a *App) Logs(p Profile) error {
+	s, e := a.Load()
+	if e != nil {
+		return e // Cannot safely redact credentials without the state.
+	}
 	m, e := a.serviceManager()
 	if e != nil {
 		return e
@@ -344,10 +346,9 @@ func (a *App) Logs(p Profile) error {
 		return errors.New("测试模式没有服务日志")
 	}
 	if m == "systemd" {
-		cmd := exec.Command("journalctl", "-u", serviceName(p)+".service", "-n", "60", "--no-pager")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
+		b, er := runOutput(15*time.Second, "journalctl", "-u", serviceName(p)+".service", "-n", "60", "--no-pager")
+		fmt.Print(redactProxySecrets(string(b), s))
+		return er
 	}
 	b, e := os.ReadFile("/var/log/" + serviceName(p) + ".log")
 	if e != nil {
@@ -357,6 +358,39 @@ func (a *App) Logs(p Profile) error {
 	if len(lines) > 60 {
 		lines = lines[len(lines)-60:]
 	}
-	fmt.Println(strings.Join(lines, "\n"))
+	fmt.Println(redactProxySecrets(strings.Join(lines, "\n"), s))
 	return nil
+}
+
+func redactProxySecrets(text string, s State) string {
+	secrets := map[string]bool{}
+	add := func(p Proxy) {
+		for _, v := range []string{p.Username, p.Password, base64.StdEncoding.EncodeToString([]byte(p.Username + ":" + p.Password))} {
+			if v != "" {
+				secrets[v], secrets[url.QueryEscape(v)], secrets[url.PathEscape(v)] = true, true, true
+				quoted := strconv.Quote(v)
+				secrets[quoted[1:len(quoted)-1]] = true
+				encoded, _ := json.Marshal(v)
+				secrets[string(encoded[1:len(encoded)-1])] = true
+			}
+		}
+	}
+	for _, ex := range s.Exits {
+		add(ex.Proxy)
+	}
+	for _, p := range s.Profiles {
+		if p.Outbound != nil {
+			add(*p.Outbound)
+		}
+	}
+	var keys []string
+	for secret := range secrets {
+		keys = append(keys, secret)
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	var pairs []string
+	for _, secret := range keys {
+		pairs = append(pairs, secret, "[REDACTED]")
+	}
+	return strings.NewReplacer(pairs...).Replace(text)
 }

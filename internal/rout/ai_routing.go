@@ -69,8 +69,8 @@ func aiEligible(p Profile) error {
 
 // aiExitUsable checks that an outbound proxy can serve as the AI exit.
 func aiExitUsable(p Proxy) error {
-	if p.Protocol != "socks5" && p.Protocol != "http" {
-		return errors.New("AI 出口必须是 SOCKS5 或 HTTP 出站代理")
+	if p.Protocol != "socks5" && p.Protocol != "http" && p.Protocol != "https" {
+		return errors.New("AI 出口必须是 SOCKS5、HTTP 或 HTTPS 出站代理")
 	}
 	return p.Validate()
 }
@@ -199,28 +199,33 @@ const aiEgressTag = "ai-egress"
 
 // aiRouteRules renders the rules placed in front of a node's normal ones. Order matters:
 //
-//  1. sniff, so a destination given only as an IP can still be classified by its TLS SNI,
+//  1. match the explicit destination before sniffing, so HTTP Host/SNI cannot hide it;
+//  2. sniff, so a destination given only as an IP can still be classified by its TLS SNI,
 //     HTTP Host or QUIC server name (this only fills in the domain used for matching; it
 //     never rewrites the destination);
-//  2. UDP to AI domains is rejected: the AI exit is a TCP-only proxy, so letting QUIC go
+//  3. UDP to AI domains is rejected: the AI exit is a TCP-only proxy, so letting QUIC go
 //     out directly would leak AI traffic through the original exit. Clients fall back to TCP;
-//  3. TCP to AI domains goes to the AI exit.
+//  4. TCP to AI domains goes to the AI exit.
 //
-// All three match the node's own inbound, so no other node is ever affected.
+// Every rule matches the node's own inbound, so no other node is ever affected.
 func aiRouteRules(r AIRoute) (rules []any, outbound M) {
 	suffixes := aiSuffixes(r.RuleSet)
+	patterns := []string{aiDomainPattern(r.RuleSet)}
 	in := []string{"entry"}
-	rules = []any{
-		M{"inbound": in, "action": "sniff"},
-		M{"inbound": in, "domain_suffix": suffixes, "network": "udp", "action": "reject"},
+	match := []any{
+		M{"inbound": in, "domain_suffix": suffixes, "domain_regex": patterns, "network": "udp", "action": "reject"},
 	}
 	if r.Outbound == nil {
 		// Exit missing or invalid: fail closed, never fall back to the original exit.
-		return append(rules, M{"inbound": in, "domain_suffix": suffixes, "action": "reject"}), nil
+		match = append(match, M{"inbound": in, "domain_suffix": suffixes, "domain_regex": patterns, "action": "reject"})
+	} else {
+		outbound = proxyConfig(*r.Outbound)
+		outbound["tag"] = aiEgressTag
+		match = append(match, M{"inbound": in, "domain_suffix": suffixes, "domain_regex": patterns, "action": "route", "outbound": aiEgressTag})
 	}
-	out := proxyConfig(*r.Outbound)
-	out["tag"] = aiEgressTag
-	return append(rules, M{"inbound": in, "domain_suffix": suffixes, "action": "route", "outbound": aiEgressTag}), out
+	rules = append(rules, match...)
+	rules = append(rules, M{"inbound": in, "action": "sniff", "sniffer": []string{"tls", "http", "quic"}, "timeout": "1s"})
+	return append(rules, match...), outbound
 }
 
 // AIDecision reports where a bound or unbound node sends a TCP connection to host,
@@ -269,10 +274,16 @@ func (a *App) mutateAI(change func(*AIRouting, State) error) error {
 // SetAIEnabled switches AI routing on or off. Switching it off keeps the exit and the
 // bindings, and restores each bound node's original routing.
 func (a *App) SetAIEnabled(on bool) error {
-	return a.mutateAI(func(c *AIRouting, _ State) error {
+	return a.mutateAI(func(c *AIRouting, s State) error {
 		c.Enabled = on
 		if on && c.RuleSetVersion == 0 {
 			c.RuleSetVersion = AIRuleSetCurrent
+		}
+		if on {
+			s.AI = c
+			if probs := s.AIProblems(); len(probs) > 0 {
+				return errors.New(strings.Join(probs, "；"))
+			}
 		}
 		return nil
 	})
@@ -331,6 +342,9 @@ func (a *App) ApplyAI() error {
 	cfg := old.AI.clone()
 	cfg.RuleSetVersion = AIRuleSetCurrent
 	next.AI = &cfg
+	if probs := next.AIProblems(); len(probs) > 0 {
+		return errors.New(strings.Join(probs, "；"))
+	}
 	return a.commit(old, next, true, cfg.aiBound())
 }
 
@@ -401,6 +415,9 @@ func (a *App) AIStatus() (AIStatus, error) {
 	st := AIStatus{Config: s.aiConfigured(), Problems: s.AIProblems(), RuleSetAvailable: AIRuleSetCurrent}
 	if ex, er := FindExit(s, st.Config.AIOutboundID); er == nil {
 		st.ExitName, st.ExitProtocol = ex.Name, ex.Proxy.Protocol
+		if warning := proxySecurityWarning(ex.Proxy); warning != "" {
+			st.Problems = append(st.Problems, warning)
+		}
 	}
 	bound := st.Config.aiBound()
 	for _, p := range s.Profiles {
@@ -482,6 +499,9 @@ func (a *App) TestAI(probe func(Proxy) (string, error)) ([]AICheck, error) {
 	}
 	if probe != nil && s.AI.AIOutboundID != "" {
 		if ex, er := FindExit(s, s.AI.AIOutboundID); er == nil {
+			if warning := proxySecurityWarning(ex.Proxy); warning != "" {
+				add(false, true, warning)
+			}
 			if ip, er := probe(ex.Proxy); er != nil {
 				add(false, false, fmt.Sprintf("AI 出口不可用：%s", a.Error(er)))
 			} else {
