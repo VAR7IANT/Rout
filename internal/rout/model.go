@@ -23,6 +23,8 @@ type State struct {
 	Schema   int       `json:"schema"`
 	Profiles []Profile `json:"profiles"`
 	Exits    []Exit    `json:"exits,omitempty"`
+	// AI Smart Routing settings (see ai_routing.go); absent until first configured.
+	AI *AIRouting `json:"ai_routing,omitempty"`
 }
 
 type Proxy struct {
@@ -62,6 +64,8 @@ type Profile struct {
 	TLSGenerated bool           `json:"tls_generated,omitempty"`
 	Traffic      *TrafficPolicy `json:"traffic,omitempty"`
 	CreatedAt    *time.Time     `json:"created_at,omitempty"`
+	// AIRoute is derived from State.AI, never stored: see State.withAIRoutes.
+	AIRoute *AIRoute `json:"-"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
@@ -375,6 +379,9 @@ func (s State) Validate() error {
 		return errors.New("不支持的配置版本")
 	}
 	if e := s.validateExits(); e != nil {
+		return e
+	}
+	if e := s.validateAI(); e != nil {
 		return e
 	}
 	ids := map[string]bool{}

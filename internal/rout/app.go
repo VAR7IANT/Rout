@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -140,7 +141,10 @@ func DecodeState(b []byte) (State, error) {
 		return s, errors.New("配置 JSON 无效")
 	}
 	s = s.MigrateLegacyExits()
-	return s, s.Validate()
+	if e := s.Validate(); e != nil {
+		return s, e
+	}
+	return s.withAIRoutes(), nil
 }
 
 // Bounded waits: user operations queue behind short monitor checkpoints instead of
@@ -200,7 +204,7 @@ func replace(s State, p Profile) State {
 	return out
 }
 func removeProfile(s State, id string) State {
-	out := s.Clone()
+	out := pruneAIBinding(s.Clone(), id)
 	out.Profiles = []Profile{}
 	for _, p := range s.Profiles {
 		if p.ID != id {
@@ -257,8 +261,18 @@ func writeProfileIn(p Profile, dir string) error {
 }
 
 // Commit checks configuration first and rolls state, generated files and services back together.
-func (a *App) Commit(old, next State, force bool) error {
-	next = next.Clone()
+func (a *App) Commit(old, next State, force bool) error { return a.commit(old, next, force, nil) }
+
+// commit is Commit with an optional restriction: when only is non-nil, force applies to
+// just those node IDs (used to re-apply AI routing without restarting every node).
+func (a *App) commit(old, next State, force bool, only map[string]bool) error {
+	// Effective AI routes are derived from the settings so that a settings-only change still
+	// shows up as a change of the affected nodes, and of no others.
+	old = old.withAIRoutes()
+	next = next.withAIRoutes()
+	if probs := newAIProblems(old, next); len(probs) > 0 {
+		return errors.New(strings.Join(probs, "；"))
+	}
 	// Ordinary edits, apply and old backups cannot silently cancel a quota.
 	for i, p := range next.Profiles {
 		if prev, er := Find(old, p.ID); er == nil {
@@ -292,7 +306,7 @@ func (a *App) Commit(old, next State, force bool) error {
 		}
 		prev, err := Find(old, p.ID)
 		edited[p.ID] = err != nil || !runtimeEqual(prev, p)
-		if force || edited[p.ID] {
+		if (force && (only == nil || only[p.ID])) || edited[p.ID] {
 			changed[p.ID] = true
 		}
 		if edited[p.ID] {

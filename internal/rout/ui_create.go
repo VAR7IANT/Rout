@@ -13,10 +13,14 @@ var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022
 func (u *UI) selectProtocols() []string {
 	u.say("可创建的协议：")
 	for i, label := range createLabels {
-		fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", fmt.Sprintf("%2d", i+1)), label)
+		fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint(accent, fmt.Sprintf("%2d", i+1)), label)
 	}
 	for u.err == nil {
-		parts := strings.Fields(strings.ReplaceAll(u.ask("选择协议，可多选，如 1 2", "1"), ",", " "))
+		raw := u.ask("选择协议，可多选，如 1 2（0 取消）", "1")
+		if u.err == nil && (normalizeInput(raw) == "0" || menuShortcut(raw) == "back") {
+			return nil
+		}
+		parts := strings.Fields(strings.ReplaceAll(raw, ",", " "))
 		ok := len(parts) > 0
 		seen := map[string]bool{}
 		var selected []string
@@ -124,10 +128,18 @@ func (u *UI) create() error {
 	if e != nil {
 		return e
 	}
-	base := u.ask("基础节点名称（仅填写一次，例如 Tokyo）", "Rout")
+	base := u.ask("基础节点名称（仅填写一次，例如 Tokyo；输入 0 取消）", "Rout")
+	if u.err == nil && normalizeInput(base) == "0" {
+		u.say("已取消")
+		return nil
+	}
 	selected := u.selectProtocols()
 	if u.err != nil {
 		return u.err
+	}
+	if len(selected) == 0 {
+		u.say("已取消")
+		return nil
 	}
 	if setup.NAT && setup.Network == "udp" && contains(selected, "ss") {
 		u.warn("仅 UDP 映射下的 Shadowsocks 只能转发 UDP 应用流量，网页等 TCP 应用无法使用")

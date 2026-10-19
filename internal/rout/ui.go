@@ -239,15 +239,18 @@ func (u *UI) nodeCard(s State, i int, p Profile, db *TrafficState) {
 	}
 	prefix := "   "
 	if i > 0 {
-		prefix = u.paint("36", fmt.Sprintf("%2d.", i))
+		prefix = u.paint(accent, fmt.Sprintf("%2d.", i))
 	}
 	fmt.Fprintf(u.writer(), "  %s %s %s\n", prefix, u.bold(p.Name), u.dim("["+p.ID+"]"))
-	fmt.Fprintf(u.writer(), "      %s · %s · %s %d · %s %s\n", ProtocolLabel(p.Protocol), u.nodeStatus(p), u.a.T("监听端口"), p.Port, u.a.T("公网"), net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
-	line := u.a.T("出站：") + u.outboundLabel(s, p)
+	u.segments("      ", ProtocolLabel(p.Protocol), u.nodeStatus(p), fmt.Sprintf("%s %d", u.a.T("监听端口"), p.Port), u.a.T("公网")+" "+net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
+	segs := []string{u.a.T("出站：") + u.outboundLabel(s, p)}
 	if use := u.usage(db, p); use != "" {
-		line += " · " + use
+		segs = append(segs, use)
 	}
-	fmt.Fprintln(u.writer(), "      "+line)
+	if p.AIRoute != nil {
+		segs = append(segs, u.a.T("AI 分流"))
+	}
+	u.segments("      ", segs...)
 	if days, ok := p.CertificateDays(time.Now()); ok {
 		if days < 0 {
 			fmt.Fprintln(u.writer(), "      "+u.paint("31", u.a.T("证书已过期，请在证书管理中更新")))
@@ -370,7 +373,7 @@ func (u *UI) outboundLine(s State, i int, e Exit) {
 	if n := len(u.exitUsers(s, e.ID)); n > 0 {
 		use = fmt.Sprintf(u.a.T("%d 个节点使用"), n)
 	}
-	fmt.Fprintf(u.writer(), "  %s %s — %s — %s — %s\n", u.paint("36", fmt.Sprintf("%2d.", i)), u.bold(e.Name), strings.ToUpper(e.Proxy.Protocol), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), u.dim(use))
+	fmt.Fprintf(u.writer(), "  %s %s — %s — %s — %s\n", u.paint(accent, fmt.Sprintf("%2d.", i)), u.bold(e.Name), strings.ToUpper(e.Proxy.Protocol), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), u.dim(use))
 }
 
 // pickProxy selects an existing outbound proxy by its displayed number.
@@ -396,7 +399,7 @@ func (u *UI) pickOutbound(s State, current string) (string, bool) {
 		u.outboundLine(s, i+1, e)
 	}
 	direct := len(s.Exits) + 1
-	fmt.Fprintf(u.writer(), "  %s %s\n", u.paint("36", fmt.Sprintf("%2d.", direct)), u.bold(u.a.T("直连（不使用出站代理）")))
+	fmt.Fprintf(u.writer(), "  %s %s\n", u.paint(accent, fmt.Sprintf("%2d.", direct)), u.bold(u.a.T("直连（不使用出站代理）")))
 	def := itoa(direct)
 	for i, e := range s.Exits {
 		if e.ID == current {
@@ -578,7 +581,7 @@ func (u *UI) outbounds() error {
 		if direct > 0 {
 			use = fmt.Sprintf(u.a.T("%d 个节点使用"), direct)
 		}
-		fmt.Fprintf(u.writer(), "  %s %s — %s — %s\n", u.paint("36", "  ·"), u.bold(u.a.T("直连")), u.a.T("内置，不经过代理"), u.dim(use))
+		fmt.Fprintf(u.writer(), "  %s %s — %s — %s\n", u.paint(accent, "  ·"), u.bold(u.a.T("直连")), u.a.T("内置，不经过代理"), u.dim(use))
 		v := u.menu("", []menuItem{item("add", "创建出站代理"), item("edit", "编辑出站代理"), item("test", "测试出站代理"), item("delete", "删除出站代理"), item("assign", "分配给节点")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
@@ -806,44 +809,118 @@ func (u *UI) links() error {
 	return u.copy(p)
 }
 
-// manage is Node Management (proxy nodes; relays have their own menu).
+// manage is Node Management (proxy nodes; port forwarding has its own menu). Nodes are
+// listed once; choosing one opens its detail view with the connection link already shown.
+// "n" creates a node through the same create() that Quick Create uses.
 func (u *UI) manage() error {
 	for {
-		v := u.menu("节点管理", []menuItem{item("view", "查看节点"), item("add", "创建节点"), item("edit", "编辑节点"), item("delete", "删除节点"), item("restart", "重启节点"), item("links", "连接链接")}, "返回")
+		s, e := u.a.Load()
+		if e != nil {
+			return e
+		}
+		nodes := nodesOnly(s)
+		u.heading("节点管理")
+		allowed := []string{"0", "n", "l", "t"}
+		if len(nodes.Profiles) == 0 {
+			u.say("暂无节点")
+		}
+		db := u.trafficDB()
+		for i, p := range nodes.Profiles {
+			u.nodeCard(s, i+1, p, db)
+			allowed = append(allowed, itoa(i+1))
+		}
+		fmt.Fprintln(u.writer())
+		u.segments("  ", u.paint(accent, "n")+" "+u.a.T("新建节点"), u.paint(accent, "l")+" "+u.a.T("全部链接"), u.paint(accent, "t")+" "+u.a.T("流量与限额"), u.paint(accent, "0")+" "+u.a.T("返回"))
+		u.hint("输入节点编号查看详情和链接 · q 退出 Rout")
+		v := u.choose("选择", allowed, "0")
+		if u.err != nil || v == "0" || v == "" {
+			return u.err
+		}
+		switch v {
+		case "n":
+			e = u.create()
+		case "l":
+			e = u.exportAll(s)
+		case "t":
+			e = u.trafficMenu()
+		default:
+			n, _ := strconv.Atoi(v)
+			e = u.nodeDetail(nodes.Profiles[n-1].ID)
+		}
+		if e != nil {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
+				return e
+			}
+			u.fail(u.a.Error(e))
+		}
+		if u.err != nil {
+			return u.err
+		}
+	}
+}
+
+// nodeDetail shows one node with its connection link immediately, then the actions that
+// apply to it. Deleting returns to the list.
+func (u *UI) nodeDetail(id string) error {
+	for {
+		s, e := u.a.Load()
+		if e != nil {
+			return e
+		}
+		p, e := Find(s, id)
+		if e != nil {
+			return nil // deleted meanwhile
+		}
+		u.heading(p.Name)
+		w := u.writer()
+		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("协议"), 8), ProtocolLabel(p.Protocol))
+		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("地址"), 8), p.PublicHost)
+		fmt.Fprintf(w, "  %s  %d\n", pad(u.a.T("端口"), 8), p.PublicPort)
+		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("状态"), 8), u.nodeStatus(p))
+		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("出站"), 8), u.outboundLabel(s, p))
+		if s.AI != nil && s.AI.Enabled && p.AIRoute != nil {
+			fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("AI 分流"), 8), u.a.T("已绑定"))
+		}
+		fmt.Fprintf(w, "\n%s\n", u.bold(u.a.T("连接")))
+		if e = u.printLinks(p, nil); e != nil {
+			u.warn(u.a.Error(e))
+		}
+		toggle := "停用节点"
+		if !p.Enabled {
+			toggle = "启用节点"
+		}
+		v := u.menu("", []menuItem{item("edit", "编辑"), item("delete", "删除"), item("export", "复制链接或导出客户端配置"), item("toggle", toggle), item("restart", "重启")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
 		}
-		var e error
 		switch v {
-		case "view":
-			var s State
-			if s, e = u.a.Load(); e == nil {
-				u.viewNodes(nodesOnly(s))
-			}
-		case "add":
-			e = u.create()
-		case "links":
-			e = u.links()
-		default:
-			var s State
-			var p Profile
-			if s, e = u.a.Load(); e == nil {
-				if p, e = u.pick(s, true); e == nil && p.ID != "" {
-					switch v {
-					case "edit":
-						e = u.nodeMenu(p.ID)
-					case "delete":
-						if u.yes(fmt.Sprintf(u.a.T("删除 %s 及其服务"), p.Name), false) {
-							if e = u.a.Commit(s, removeProfile(s, p.ID), false); e == nil {
-								u.good("节点已删除")
-							}
-						}
-					case "restart":
-						if e = u.a.Restart(p.ID); e == nil {
-							u.good("节点已重启")
-						}
-					}
+		case "edit":
+			e = u.nodeMenu(p.ID)
+		case "delete":
+			if u.yes(fmt.Sprintf(u.a.T("删除 %s 及其服务"), p.Name), false) {
+				if e = u.a.Commit(s, removeProfile(s, p.ID), false); e == nil {
+					u.good("节点已删除")
+					return nil
 				}
+			} else if u.err != nil {
+				return u.err
+			}
+		case "export":
+			e = u.export(p)
+		case "toggle":
+			if p.Enabled && !u.yes(fmt.Sprintf(u.a.T("停用 %s（服务会停止，客户端将无法连接）"), p.Name), true) {
+				if u.err != nil {
+					return u.err
+				}
+				continue
+			}
+			p.Enabled = !p.Enabled
+			if e = u.a.Commit(s, replace(s, p), false); e == nil {
+				u.good("已保存")
+			}
+		case "restart":
+			if e = u.a.Restart(p.ID); e == nil {
+				u.good("节点已重启")
 			}
 		}
 		if e != nil {
@@ -874,11 +951,7 @@ func (u *UI) nodeMenu(id string) error {
 		}
 		u.heading(p.Name)
 		u.nodeCard(s, 0, p, u.trafficDB())
-		toggle := "停用节点"
-		if !p.Enabled {
-			toggle = "启用节点"
-		}
-		items := []menuItem{item("link", "查看或复制连接链接"), item("name", "重命名"), item("address", "修改端口或公网地址"), item("exit", "选择出站代理"), item("toggle", toggle), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据")}
+		items := []menuItem{item("name", "重命名"), item("address", "修改端口或公网地址"), item("exit", "选择出站代理"), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据")}
 		if _, ok := p.CertificateExpiry(); ok {
 			items = append(items, item("cert", "证书管理"))
 		}
@@ -1055,7 +1128,7 @@ func (u *UI) trafficMenu() error {
 		if use == "" {
 			use = u.a.T("暂无数据")
 		}
-		fmt.Fprintf(u.writer(), "  %s %s  %s\n", u.paint("36", fmt.Sprintf("%2d.", i+1)), u.bold(p.Name), use)
+		fmt.Fprintf(u.writer(), "  %s %s  %s\n", u.paint(accent, fmt.Sprintf("%2d.", i+1)), u.bold(p.Name), use)
 	}
 	n := u.number("选择节点编号查看或设置限额（0 返回）", len(s.Profiles))
 	if n <= 0 {
@@ -1268,6 +1341,7 @@ func (u *UI) summary(s State) string {
 	if paused > 0 {
 		line += " · " + fmt.Sprintf(u.a.T("%d 个因流量暂停"), paused)
 	}
+	line += " · " + u.aiSummary(s)
 	return line
 }
 
@@ -1302,8 +1376,38 @@ func (u *UI) notices(s State) {
 		}
 	}
 }
+
+// system groups the operational menus that used to be separate top-level entries.
+func (u *UI) system() error {
+	for {
+		v := u.menu("服务与系统", []menuItem{item("services", "服务管理"), item("doctor", "诊断"), item("updates", "更新"), item("settings", "设置")}, "返回")
+		if u.err != nil || v == "" {
+			return u.err
+		}
+		var e error
+		switch v {
+		case "services":
+			e = u.services()
+		case "doctor":
+			e = u.doctor(false)
+		case "updates":
+			e = u.updates()
+		case "settings":
+			e = u.settings()
+		}
+		if e != nil {
+			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {
+				return e
+			}
+			u.fail(u.a.Error(e))
+		}
+		if u.err != nil {
+			return u.err
+		}
+	}
+}
 func (u *UI) menu0() []menuItem {
-	return []menuItem{item("nodes", "节点管理"), item("relays", "中转管理"), item("outbounds", "出站代理"), item("traffic", "流量与限额"), item("services", "服务管理"), item("settings", "设置"), item("doctor", "诊断"), item("updates", "更新")}
+	return []menuItem{item("quick", "快速创建节点"), item("nodes", "节点管理"), item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理"), item("system", "服务与系统")}
 }
 func (u *UI) mainMenu() error {
 	u.showLogo()
@@ -1326,11 +1430,11 @@ func (u *UI) mainMenu() error {
 		u.notices(s)
 	}
 	for {
-		title := "Rout " + Version
+		u.heading("Rout " + Version)
 		if s, e := u.a.Load(); e == nil {
-			title += "  ·  " + u.summary(s)
+			u.segments("  ", strings.Split(u.summary(s), " · ")...)
 		}
-		v := u.menu(title, u.menu0(), "退出")
+		v := u.menu("", u.menu0(), "退出")
 		if u.err != nil {
 			if errors.Is(u.err, io.EOF) || errors.Is(u.err, errQuit) {
 				return nil
@@ -1341,22 +1445,18 @@ func (u *UI) mainMenu() error {
 		switch v {
 		case "":
 			return nil
+		case "quick":
+			e = u.create() // the same function Node Management uses
 		case "nodes":
 			e = u.manage()
+		case "ai":
+			e = u.aiMenu()
 		case "relays":
 			e = u.relays()
 		case "outbounds":
 			e = u.outbounds()
-		case "traffic":
-			e = u.trafficMenu()
-		case "services":
-			e = u.services()
-		case "settings":
-			e = u.settings()
-		case "doctor":
-			e = u.doctor(false)
-		case "updates":
-			e = u.updates()
+		case "system":
+			e = u.system()
 		}
 		if e != nil {
 			if errors.Is(e, io.EOF) || errors.Is(e, errQuit) {

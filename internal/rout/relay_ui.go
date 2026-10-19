@@ -32,7 +32,7 @@ func (u *UI) relayCard(i int, p Profile) {
 	if !p.Enabled {
 		state = u.a.T("停用")
 	}
-	fmt.Fprintf(u.writer(), "  %s %s %s\n", u.paint("36", fmt.Sprintf("%2d.", i)), u.bold(p.Name), u.dim("["+p.ID+"]"))
+	fmt.Fprintf(u.writer(), "  %s %s %s\n", u.paint(accent, fmt.Sprintf("%2d.", i)), u.bold(p.Name), u.dim("["+p.ID+"]"))
 	fmt.Fprintf(u.writer(), "      %s · %s/%s\n", relayTransport(p), state, u.a.Running(p))
 	fmt.Fprintf(u.writer(), "      "+u.a.T("公网入口 %s → 本机监听 %s → 目标 %s（%s）")+"\n", relayEndpoint(p), relayListen(p), p.Target, u.relayModeLabel(p))
 }
@@ -46,7 +46,7 @@ func (u *UI) relayDiagram(p Profile) {
 			fmt.Fprintf(w, "    %s\n", value)
 		}
 	}
-	arrow := func() { fmt.Fprintf(w, "      %s\n      %s\n", u.paint("36", "│"), u.paint("36", "▼")) }
+	arrow := func() { fmt.Fprintf(w, "      %s\n      %s\n", u.paint(accent, "│"), u.paint(accent, "▼")) }
 	line("客户端", "")
 	arrow()
 	line("当前服务器（中转入口）", fmt.Sprintf("%s %s", u.a.T("公网 IP:端口"), relayEndpoint(p)))
@@ -500,7 +500,7 @@ func (u *UI) pickRelay(s State) (Profile, bool) {
 // relays is Relay Management.
 func (u *UI) relays() error {
 	for {
-		v := u.menu("中转管理", []menuItem{item("view", "查看中转"), item("create", "创建中转"), item("edit", "编辑中转"), item("test", "测试中转"), item("delete", "删除中转")}, "返回")
+		v := u.menu("端口转发", []menuItem{item("view", "查看中转"), item("create", "创建中转"), item("edit", "编辑中转"), item("test", "测试中转"), item("delete", "删除中转")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
 		}

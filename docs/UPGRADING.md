@@ -1,5 +1,12 @@
 # Upgrading and rollback safety
 
+## To the next release (menu refactoring and AI Smart Routing)
+
+- **Data formats:** `state.json` gains an optional `ai_routing` object (`enabled`, `bound_inbound_ids`, `ai_outbound_id`, `rule_set_version`). Hosts that never use AI Smart Routing keep a byte-identical file and byte-identical node configurations, so nothing restarts on upgrade.
+- **Rolling back** to v0.3.1 or earlier is safe for nodes, relays and outbound proxies, but those versions do not know `ai_routing`: the next change they save drops it, and bound nodes then use their original routing again. Disable AI Smart Routing first if you want to keep the settings in a backup (`rout backup FILE`).
+- **Menus:** the main menu has six entries; see the README for where each former entry moved. All commands (`rout list`, `rout restart ID`, `rout outbounds`, …) are unchanged.
+- Enabling AI routing restarts only the bound nodes whose effective routing changes. Unbound nodes and relays are neither rewritten nor restarted.
+
 ## To v0.3.1
 
 Run `sudo rout update` (from v0.2.2 or later) or rerun the README installer. Nothing restarts except the traffic monitor helper, as in every release; nodes and relays keep running untouched.

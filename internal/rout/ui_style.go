@@ -19,6 +19,10 @@ func (u *UI) colorOn() bool {
 	st, e := os.Stdout.Stat()
 	return colorEnabled(e == nil && st.Mode()&os.ModeCharDevice != 0)
 }
+
+// accent is the single highlight color: bright blue, readable on dark and light terminals.
+const accent = "94"
+
 func (u *UI) paint(code, s string) string {
 	if !u.colorOn() {
 		return s
@@ -40,13 +44,52 @@ func (u *UI) warnf(s string, args ...any) {
 }
 func (u *UI) fail(s string) { fmt.Fprintln(u.writer(), u.paint("31", "✗ ")+s) }
 
+// segments prints parts joined by " · " on one line, continuing on a new line with the
+// same indent when the terminal is too narrow, so no line is cut or wrapped mid-item.
+func (u *UI) segments(indent string, parts ...string) {
+	limit := u.width() - 1
+	if limit < 24 {
+		limit = 24
+	}
+	line := indent
+	started := false
+	for _, part := range parts {
+		add := part
+		if started {
+			add = " · " + part
+		}
+		if started && displayWidth(line)+displayWidth(add) > limit {
+			fmt.Fprintln(u.writer(), line)
+			line, add = indent, part
+		}
+		line += add
+		started = true
+	}
+	fmt.Fprintln(u.writer(), line)
+}
+
+// hint prints a dim help line, wrapped at its " · " separators on narrow terminals.
+func (u *UI) hint(text string) {
+	parts := strings.Split(u.a.T(text), " · ")
+	for i := range parts {
+		parts[i] = u.dim(parts[i])
+	}
+	u.segments("  ", parts...)
+}
+
 // displayWidth counts East Asian wide characters as two terminal columns.
 func displayWidth(s string) int {
 	w := 0
+	inEscape := false
 	for _, r := range s {
 		switch {
+		case inEscape:
+			// A CSI color sequence ends at its first letter; none of it occupies a column.
+			if r >= '@' && r <= '~' && r != '[' {
+				inEscape = false
+			}
 		case r == '\033':
-			continue
+			inEscape = true
 		case unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hangul, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || (r >= 0xFF01 && r <= 0xFF60) || (r >= 0x3000 && r <= 0x303F):
 			w += 2
 		default:
@@ -70,7 +113,7 @@ func item(key, label string) menuItem { return menuItem{key: key, label: label} 
 // itemNote adds a one-line explanation printed under the label.
 func itemNote(key, label, note string) menuItem { return menuItem{key, label, note} }
 func (u *UI) printItem(n string, it menuItem) {
-	fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", fmt.Sprintf("%2s", n)), u.a.T(it.label))
+	fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint(accent, fmt.Sprintf("%2s", n)), u.a.T(it.label))
 	if it.note != "" {
 		fmt.Fprintf(u.writer(), "      %s\n", u.dim(u.a.T(it.note)))
 	}
@@ -88,12 +131,12 @@ func (u *UI) menu(title string, items []menuItem, back string) string {
 		allowed = append(allowed, n)
 		u.printItem(n, it)
 	}
-	fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint("36", " 0"), u.a.T(back))
+	fmt.Fprintf(u.writer(), "  %s  %s\n", u.paint(accent, " 0"), u.a.T(back))
 	hint := "输入编号 · 0 或 b 返回 · q 退出 Rout"
 	if back == "退出" {
 		hint = "输入编号 · 0 或 q 退出 Rout"
 	}
-	fmt.Fprintln(u.writer(), "  "+u.dim(u.a.T(hint)))
+	u.hint(hint)
 	v := u.choose("选择", allowed, "0")
 	if v == "" || v == "0" {
 		return ""

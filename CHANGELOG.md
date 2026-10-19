@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (Phase 1)
+
+- **AI Smart Routing.** Server-side routing of AI-service domains to a chosen outbound proxy, for explicitly selected inbound nodes only. Settings (`enabled`, `bound_inbound_ids`, `ai_outbound_id`, `rule_set_version`) are stored in `state.json` under `ai_routing`; unbound nodes' configuration files are never rewritten; disabling restores the original files; an empty binding binds nothing; deleted inbounds are pruned and stale references ignored; an unavailable AI exit fails closed instead of falling back. Versioned built-in rules for OpenAI/ChatGPT, Claude/Anthropic, Gemini, Google AI Studio, Hugging Face, GitHub Copilot and Cursor. All changes use the existing validate → back up → atomic write → health check → rollback transaction. `rout ai [status|test|apply]`
+- **Menu refactoring.** Eight top-level entries became six: Quick create node, Manage nodes, AI Smart Routing, Port forwarding, Outbound proxies, Service & system. Selecting a node shows its connection link immediately; Quick create and *New node* share one implementation and can be cancelled at every step; Traffic and limits moved under Manage nodes; Services, Diagnostics, Updates and Settings moved under Service & system. Blue accent, ANSI-aware width handling, narrow-terminal wrapping of cards, hints and the status line
+- Compatibility: no stored data changes for existing hosts (the new `ai_routing` block is optional and ignored by v0.3.1, which would drop it the next time it saves). The version number is unchanged until release
+
 ## v0.3.1
 
 Stability and usability release. Stored data is unchanged; v0.3.0 hosts upgrade in place.

@@ -70,7 +70,17 @@ func serverConfig(p Profile, dir string) (M, error) {
 		rules = append(rules, M{"network": "udp", "action": "reject"})
 	}
 	rules = append(rules, M{"inbound": []string{"entry"}, "action": "route", "outbound": "egress"})
-	return M{"log": M{"level": "warn", "timestamp": true}, "inbounds": []any{in}, "outbounds": []any{out}, "route": M{"rules": rules, "final": "egress"}}, nil
+	outbounds := []any{out}
+	if p.AIRoute != nil {
+		// AI rules come first so they win over the node's ordinary routing; they are scoped to
+		// this node's own inbound. The AI exit is a separate outbound next to "egress".
+		aiRules, aiOut := aiRouteRules(*p.AIRoute)
+		rules = append(aiRules, rules...)
+		if aiOut != nil {
+			outbounds = append(outbounds, aiOut)
+		}
+	}
+	return M{"log": M{"level": "warn", "timestamp": true}, "inbounds": []any{in}, "outbounds": outbounds, "route": M{"rules": rules, "final": "egress"}}, nil
 }
 
 // ClientConfig exports a complete, portable sing-box configuration without server secrets.

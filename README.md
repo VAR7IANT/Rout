@@ -30,18 +30,23 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-  1  Manage nodes          → view / create / edit / delete / restart / connection links
-  2  Relays                → view / create / edit / test / delete
-  3  Outbound proxies      → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
-  4  Traffic and limits    → usage of every node; limit in GB, billing day, reset, pause
-  5  Services
-  6  Settings              → language, server address (IPv4 / IPv6), backups, uninstall
-  7  Diagnostics
-  8  Updates
+Rout 0.3.1
+  Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
+  1  Quick create node     → the guided node creation, straight from the main menu
+  2  Manage nodes          → pick a node: its connection link is shown at once; edit / delete / copy / enable / restart
+                             n new node · l all links · t traffic and limits
+  3  AI Smart Routing      → send AI services to a chosen exit, for selected inbound nodes only
+  4  Port forwarding       → relays: view / create / edit / test / delete
+  5  Outbound proxies      → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
+  6  Service & system      → services · diagnostics · updates · settings (language, server address, backups, uninstall)
   0  Quit
 ```
 
+Earlier releases had eight top-level entries. *Traffic and limits* moved into Manage nodes (`t`); *Services*, *Diagnostics*, *Updates* and *Settings* moved under **Service & system**; the separate *view*, *edit*, *delete*, *restart* and *connection links* pickers of Manage nodes became one list where you choose a node first. Nothing was removed, and every `rout` command works as before.
+
 The interactive menu opens with a ROUT banner once per session: the logo in a blue gradient on 256-colour terminals, with "Support by VAR7IANT" and the running version centered beneath it, or a one-line title on terminals narrower than 39 columns. It is never printed for commands, pipes or scripts, and `NO_COLOR` or `TERM=dumb` disables all colour.
+
+**Quick create node** (1) and **New node** inside Manage nodes (`n`) run the same code, so defaults, validation and port checks are identical; `0` at the name or protocol prompt, or *Cancel* at the confirmation, creates nothing. The connection links are printed as soon as the node exists.
 
 Creating a node takes one pass: Rout detects the server address, you type the base name once and pick one or more protocols, ports and credentials are generated automatically, and a single confirmation lists every node with its port and address before anything is written. The confirmation also offers *Change ports* (checked for TCP and UDP conflicts) and *Advanced options* (custom credentials, Reality SNI, an existing PEM certificate). Pressing Enter at every prompt creates one VLESS node named `Rout-VLESS`.
 
@@ -122,7 +127,7 @@ Outbound proxies carry TCP only: UDP through a proxy is rejected rather than lea
 
 ## Node links
 
-Manage nodes → Connection links: one node's link (with an OSC52 copy request), **all links**, or a sing-box client configuration (local proxy `127.0.0.1:2080`). Selection menus show names, ports and status but never credentials. Share links contain client credentials; do not post screenshots of them.
+Manage nodes → choose a node: the detail view shows protocol, address, port, status and outbound, and prints the complete link (plus the other address family on a dual-stack host) before any further choice. *Copy link or export client configuration* repeats it with an OSC52 copy request and can save a sing-box client configuration (local proxy `127.0.0.1:2080`); `l` in the node list prints **all links**. Lists show names, ports and status but never credentials. Share links contain client credentials; do not post screenshots of them.
 
 ```sh
 rout export ID             # one link
@@ -130,6 +135,27 @@ rout export ID client.json # sing-box client configuration
 rout export all [FILE]     # every link (file mode 0600)
 rout list                  # every node with its complete link
 ```
+
+## AI Smart Routing
+
+Server-side routing of AI services, with no client configuration. For the inbound nodes you select, connections to AI domains leave through a chosen **AI exit** (for example a SOCKS5/HTTP proxy in Canada); everything else keeps the route the node already had.
+
+```text
+Client → US VPS · Rout inbound ──┬─ AI domains ──→ AI exit (outbound proxy)
+                                 └─ everything else → the node's original exit
+```
+
+Main menu → **AI Smart Routing**: *Enable / Disable*, *Select inbound nodes*, *Select AI exit*, *View AI rules*, *Test configuration*, *Status and diagnostics*, *Apply changes*. Also `rout ai [status|test|apply]`.
+
+- **The AI exit is an existing outbound proxy** (Outbound proxies menu; SOCKS5 or HTTP). No address is hard-coded. An exit that points back at a node on this server is refused as a routing loop, and an exit used for AI cannot be deleted.
+- **Inbound binding is explicit and isolated.** Nothing is selected by default and an empty selection binds nothing (never "all"). Rout runs one sing-box process per node, so only the configuration files of bound nodes receive AI rules; an unbound node's file is not rewritten and its service is not restarted. Bindings use the node's stable ID and every rule also matches the node's own inbound. Deleting a node removes it from the binding; a stale ID found in `state.json` is reported and ignored, never widened.
+- **Disabling** restores each bound node's original configuration byte-for-byte and keeps the exit and bindings. Enabling needs a selected exit.
+- **Rules** (`internal/rout/ai_rules.go`, versioned; `rule_set_version` is saved) cover OpenAI/ChatGPT, Claude/Anthropic, Gemini, Google AI Studio, Hugging Face, GitHub Copilot and Cursor, as domain suffixes dedicated to those products. Whole-company domains (google.com, github.com, googleapis.com…) are deliberately absent. **View AI rules** lists them.
+- **Order of rules on a bound node:** sniff (to learn the domain behind an IP-only destination) → UDP to AI domains rejected → AI domains to the AI exit → the node's existing rules. A node with its own outbound proxy keeps it for non-AI traffic.
+- **If the AI exit fails, AI connections fail.** There is no silent fallback to the original exit. If the exit disappears from the configuration, AI domains of bound nodes are rejected until a new exit is chosen.
+- **Safe changes:** every change goes through the same transaction as node edits: validation of references, `sing-box check` of each changed configuration in a staging directory, an automatic backup of `state.json`, atomic writes, a health check of every restarted service, and automatic rollback of files, state and services on failure. Only the bound nodes whose effective routing changes are restarted.
+
+Limits (also shown in the menu): matching is by domain. Connections that expose no domain (IP-only without sniffable TLS/HTTP/QUIC data, ECH-encrypted handshakes) take the original route. The AI exit is TCP-only, so QUIC to AI domains is rejected and clients fall back to TCP. The Copilot token endpoint `api.github.com` is not routed, to avoid sending ordinary GitHub traffic to the AI exit. A domain list cannot guarantee complete coverage; new AI products need a rule-set update followed by *Apply changes*. *Test configuration* validates the configuration and probes the exit; its routing simulation evaluates rules and makes no real request.
 
 ## Traffic accounting, limits and monthly reset
 
@@ -170,6 +196,7 @@ rout test ID                  # local entry → protocol → outbound proxy, IPv
 rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
 rout relays | outbounds | settings   # `exits` still works as an alias
+rout ai [status|test|apply]   # AI Smart Routing menu | status | check configuration | re-apply
 rout traffic                  # usage of all nodes
 rout traffic show|manage|recover ID
 rout traffic install          # install/update accounting (no node restarts)
@@ -183,7 +210,7 @@ Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`
 
 ## Files, services and security
 
-- Configuration `/etc/rout` (0700; files 0600): `state.json`, `traffic.json`, `settings.json` (language, server address and family, `backup_keep`).
+- Configuration `/etc/rout` (0700; files 0600): `state.json` (nodes, relays, outbound proxies and the optional `ai_routing` block), `traffic.json`, `settings.json` (language, server address and family, `backup_keep`).
 - Automatic pre-change backups in `/etc/rout/backups`, keeping the newest **20** by default (configurable 1–1000 in Settings). The newest backup is never removed, and explicit `rout backup` files are never pruned. Backups contain credentials and private keys.
 - Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256, streamed and installed atomically (see below) (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
 - One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, outbound label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.

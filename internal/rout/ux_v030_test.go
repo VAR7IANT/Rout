@@ -600,7 +600,8 @@ func TestEnglishMenusHaveNoChinese(t *testing.T) {
 	}
 	// main menu: every top-level section entered and left with 0.
 	in := ""
-	for i := 1; i <= 8; i++ {
+	// Quick create is cancelled with 0 at its first question; every other section is left with 0.
+	for i := 1; i <= 6; i++ {
 		in += itoa(i) + "\n0\n"
 	}
 	u, out := testUI(a, in+"0\n")
@@ -608,7 +609,7 @@ func TestEnglishMenusHaveNoChinese(t *testing.T) {
 		t.Fatal(e)
 	}
 	text := out.String()
-	for _, want := range []string{"Nodes", "Relays", "Outbound proxies", "Traffic", "Service", "Settings", "Diagnostics", "Updates", "Quit", "Direct connection"} {
+	for _, want := range []string{"Quick create node", "Manage nodes", "AI Smart Routing", "Port forwarding", "Outbound proxies", "Service & system", "Traffic", "Settings", "Diagnostics", "Updates", "Quit", "Direct connection"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("menu misses %q", want)
 		}

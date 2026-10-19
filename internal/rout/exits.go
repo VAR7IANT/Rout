@@ -20,6 +20,10 @@ func (s State) Clone() State {
 	out := s
 	out.Profiles = append([]Profile{}, s.Profiles...)
 	out.Exits = append([]Exit(nil), s.Exits...)
+	if s.AI != nil {
+		cp := s.AI.clone()
+		out.AI = &cp
+	}
 	return out
 }
 func FindExit(s State, id string) (Exit, error) {
@@ -141,6 +145,9 @@ func DeleteExit(s State, id string) (State, error) {
 		if p.ExitID == id {
 			return s, errors.New("出站代理仍被节点使用，请先改为其他出站或直连")
 		}
+	}
+	if s.AI != nil && s.AI.AIOutboundID == id {
+		return s, errors.New("出站代理正被 AI 智能分流用作 AI 出口，请先在 AI 智能分流中更换")
 	}
 	out := s.Clone()
 	out.Exits = nil
