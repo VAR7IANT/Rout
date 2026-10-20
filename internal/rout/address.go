@@ -103,6 +103,7 @@ func familyOf(host string) string {
 
 // listenCaps describes what this host's network stack lets a listener do.
 type listenCaps struct {
+	V4        bool // required sockets can bind 0.0.0.0
 	V6        bool // a socket can bind [::]
 	DualStack bool // a [::] listener also accepts IPv4 (IPV6_V6ONLY is off for it)
 }
@@ -110,31 +111,94 @@ type listenCaps struct {
 // probeCaps is replaced by tests.
 var probeCaps = probeListenCaps
 
-// probeListenCaps tests the real behaviour with the same socket options the engines get:
-// Go's listener on "::" clears IPV6_V6ONLY itself, so net.ipv6.bindv6only does not matter,
-// but IPv6 may be disabled (disable_ipv6=1) or IPv4-mapped addresses may be refused. The
-// only reliable answer is to listen on [::] and connect to it over IPv4.
+// probeListenCaps checks local sockets, independently of public address detection.
+// Explicit family binds avoid Go's wildcard fallback when a family is disabled.
+// Dual-stack is offered only when engine-style [::] sockets accept IPv4 on
+// every required transport; a successful IPv6 bind alone does not establish this.
 func probeListenCaps() listenCaps {
-	l, e := net.Listen("tcp", "[::]:0")
-	if e != nil {
-		return listenCaps{}
+	// Keep the existing server/relay TCP probe; new nodes pass their required transports.
+	return probeListenCapsWith(net.Listen, net.ListenPacket, net.DialTimeout, "tcp")
+}
+
+func probeListenCapsWith(listen func(string, string) (net.Listener, error), packet func(string, string) (net.PacketConn, error), dial func(string, string, time.Duration) (net.Conn, error), networks ...string) listenCaps {
+	if len(networks) == 0 {
+		networks = []string{"tcp", "udp"}
 	}
-	defer l.Close()
-	caps := listenCaps{V6: true}
-	go func() {
-		if c, e := l.Accept(); e == nil {
-			c.Close()
+	family := func(suffix, host string) bool {
+		for _, network := range networks {
+			addr := net.JoinHostPort(host, "0")
+			if network == "tcp" {
+				l, e := listen("tcp"+suffix, addr)
+				if e != nil {
+					return false
+				}
+				l.Close()
+			} else {
+				p, e := packet("udp"+suffix, addr)
+				if e != nil {
+					return false
+				}
+				p.Close()
+			}
 		}
-	}()
-	port := l.Addr().(*net.TCPAddr).Port
-	if c, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), time.Second); e == nil {
-		c.Close()
-		caps.DualStack = true
+		return true
 	}
+	caps := listenCaps{V4: family("4", "0.0.0.0"), V6: family("6", "::")}
+	if !caps.V4 || !caps.V6 {
+		return caps
+	}
+	if contains(networks, "tcp") {
+		l, e := listen("tcp", "[::]:0")
+		if e != nil {
+			return caps
+		}
+		defer l.Close()
+		// A generic wildcard can fall back to IPv4; that is not an IPv6 listener.
+		if l.Addr().(*net.TCPAddr).IP.To4() != nil {
+			return caps
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		c, e := dial("tcp4", net.JoinHostPort("127.0.0.1", itoa(port)), time.Second)
+		if e != nil {
+			return caps
+		}
+		c.Close()
+	}
+	if !contains(networks, "udp") {
+		caps.DualStack = true
+		return caps
+	}
+	p, e := packet("udp", "[::]:0")
+	if e != nil {
+		return caps
+	}
+	defer p.Close()
+	if p.LocalAddr().(*net.UDPAddr).IP.To4() != nil {
+		return caps
+	}
+	port := p.LocalAddr().(*net.UDPAddr).Port
+	c, e := dial("udp4", net.JoinHostPort("127.0.0.1", itoa(port)), time.Second)
+	if e != nil {
+		return caps
+	}
+	defer c.Close()
+	if e = c.SetWriteDeadline(time.Now().Add(time.Second)); e != nil {
+		return caps
+	}
+	if _, e = c.Write([]byte("rout")); e != nil {
+		return caps
+	}
+	if e = p.SetReadDeadline(time.Now().Add(time.Second)); e != nil {
+		return caps
+	}
+	b := make([]byte, 16)
+	n, _, e := p.ReadFrom(b)
+	caps.DualStack = e == nil && string(b[:n]) == "rout"
 	return caps
 }
 
-// chooseListen picks the local listening address for new nodes and relays.
+// chooseListen retains the server/relay defaults. New node creation uses
+// nodeListeningSetup independently so saved wildcard defaults cannot override IPv4.
 //
 //   - a host with a usable global IPv6 address and a working dual-stack socket listens on
 //     "::", which serves IPv4 and IPv6 clients with ONE listener (no duplicate nodes);

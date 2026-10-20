@@ -32,7 +32,7 @@ func testApp(t *testing.T) *App {
 }
 func testUI(a *App, input string) (*UI, *bytes.Buffer) {
 	out := &bytes.Buffer{}
-	return &UI{a: a, in: bufio.NewReader(strings.NewReader(input)), out: out, detectIP: func() string { return "203.0.113.10" }, checkReality: func(string) error { return nil }}, out
+	return &UI{a: a, in: bufio.NewReader(strings.NewReader(input)), out: out, caps: func() listenCaps { return listenCaps{V4: true} }, detectIP: func() string { return "203.0.113.10" }, checkReality: func(string) error { return nil }}, out
 }
 func TestLanguagePersistenceAndSwitch(t *testing.T) {
 	a := testApp(t)

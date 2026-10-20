@@ -581,7 +581,7 @@ func TestRelayFlowAcceptsIPv6Destinations(t *testing.T) {
 
 func TestIPv6OnlyNodeCreation(t *testing.T) {
 	requireIPv6(t)
-	caps := probeListenCaps()
+	caps := listenCaps{V6: true}
 	a := testApp(t)
 	u, out := testUI(a, "V6\n1 3 4\n\n")
 	u.detectAddrs = func() Addresses { return Addresses{IPv6: v6Addr} }
@@ -614,7 +614,7 @@ func TestDualStackNodeCreationOneServiceTwoLinks(t *testing.T) {
 		t.Skip("this host's [::] listener does not accept IPv4: dual-stack export is deliberately not offered")
 	}
 	a := testApp(t)
-	u, out := testUI(a, "\nDual\n1 3\n\n")
+	u, out := testUI(a, "\nDual\n1 3\n2\n\n")
 	u.detectAddrs = func() Addresses { return Addresses{IPv4: v4Addr, IPv6: v6Addr} }
 	u.caps = func() listenCaps { return caps }
 	if e := u.create(); e != nil {

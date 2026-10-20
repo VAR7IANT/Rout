@@ -153,7 +153,7 @@ func TestSwitchingLegacyHostToRegularVPSIsExplicitAndTouchesNothingElse(t *testi
 	// Confirmed: new entries become regular; existing NAT entries are not migrated.
 	u, out = testUI(a, "3\ny\n")
 	u.detectAddrs = func() Addresses { return Addresses{IPv4: v4Addr} }
-	u.caps = func() listenCaps { return listenCaps{} }
+	u.caps = func() listenCaps { return listenCaps{V4: true} }
 	if e := u.serverMenu(); e != nil {
 		t.Fatal(e, out.String())
 	}
@@ -186,7 +186,7 @@ func TestNoNATOrServerTypeQuestionOnARegularHost(t *testing.T) {
 		t.Helper()
 		u, out := testUI(a, input)
 		u.detectAddrs = func() Addresses { return Addresses{IPv4: v4Addr} }
-		u.caps = func() listenCaps { return listenCaps{} }
+		u.caps = func() listenCaps { return listenCaps{V4: true} }
 		if e := fn(u); e != nil {
 			t.Fatal(e, out.String())
 		}

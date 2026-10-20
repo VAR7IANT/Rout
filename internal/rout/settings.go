@@ -37,6 +37,8 @@ type ServerSetup struct {
 	// and a node listens on "::", its link is also offered for the other address.
 	IPv4 string `json:"ipv4,omitempty"`
 	IPv6 string `json:"ipv6,omitempty"`
+	// Creation-only capability; never changes the saved server defaults.
+	ipv4Mapped *bool
 }
 
 func (s ServerSetup) Validate() error {
@@ -147,6 +149,9 @@ func PlanPort(p Profile, setup ServerSetup, s State) (Profile, error) {
 	p.NAT = setup.NAT
 	p.PublicHost = setup.PublicHost
 	p.Listen = setup.Listen
+	if p.Kind == "node" {
+		p.IPv4Mapped = setup.ipv4Mapped
+	}
 	if setup.NAT && p.Protocol == "ss" && setup.Network != "both" {
 		p.Network = setup.Network
 	}
@@ -165,7 +170,11 @@ func PlanPort(p Profile, setup ServerSetup, s State) (Profile, error) {
 		port := setup.LocalStart + i
 		if !setup.NAT {
 			var e error
-			port, e = freePort()
+			if p.Kind == "node" {
+				port, e = freeNodePort(p)
+			} else {
+				port, e = freePort()
+			}
 			if e != nil {
 				return p, e
 			}
@@ -208,7 +217,7 @@ func AllowedPort(p Profile, setup ServerSetup) bool {
 // is reachable over either family. Legacy NAT entries never get one: their public port is
 // a provider mapping that is unknown for the other family.
 func (s ServerSetup) AltAddress(p Profile) (host, label string, ok bool) {
-	if p.NAT || s.NAT || p.Listen != "::" || s.IPv4 == "" || s.IPv6 == "" {
+	if p.NAT || s.NAT || (p.IPv4Mapped != nil && !*p.IPv4Mapped) || p.Listen != "::" || s.IPv4 == "" || s.IPv6 == "" {
 		return "", "", false
 	}
 	switch {

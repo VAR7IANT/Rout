@@ -2,6 +2,7 @@ package rout
 
 import (
 	"fmt"
+	"net"
 )
 
 // Server setup answers three questions without asking the user for technical detail:
@@ -26,9 +27,12 @@ func (u *UI) detectAddresses() Addresses {
 	}
 	return DetectAddresses()
 }
-func (u *UI) listenCapabilities() listenCaps {
+func (u *UI) listenCapabilities(networks ...string) listenCaps {
 	if u.caps != nil {
 		return u.caps()
+	}
+	if len(networks) > 0 {
+		return probeListenCapsWith(net.Listen, net.ListenPacket, net.DialTimeout, networks...)
 	}
 	return probeCaps()
 }

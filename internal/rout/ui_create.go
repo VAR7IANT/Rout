@@ -141,6 +141,12 @@ func (u *UI) create() error {
 		u.say("已取消")
 		return nil
 	}
+	// Keep the server's saved defaults for relays and future address settings.
+	serverDefaults := setup
+	setup, e = u.nodeListeningSetup(setup, selected...)
+	if e != nil {
+		return e
+	}
 	if setup.NAT && setup.Network == "udp" && contains(selected, "ss") {
 		u.warn("仅 UDP 映射下的 Shadowsocks 只能转发 UDP 应用流量，网页等 TCP 应用无法使用")
 	}
@@ -250,7 +256,7 @@ confirm:
 			return e
 		}
 	}
-	return u.saveServer(setup)
+	return u.saveServer(serverDefaults)
 }
 
 // createAdvanced groups the rarely needed choices so the default path stays short.

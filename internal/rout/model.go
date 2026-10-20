@@ -66,6 +66,9 @@ type Profile struct {
 	CreatedAt    *time.Time     `json:"created_at,omitempty"`
 	// AIRoute is derived from State.AI, never stored: see State.withAIRoutes.
 	AIRoute *AIRoute `json:"-"`
+	// IPv4Mapped records a new :: listener's probed IPv4 support for alternate
+	// links. Nil preserves the historical behavior of existing nodes.
+	IPv4Mapped *bool `json:"ipv4_mapped,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)

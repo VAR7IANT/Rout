@@ -790,5 +790,13 @@
  "%s: 无法证明是安装探针，保留该表":"%s: cannot prove this is an installation probe; table preserved",
  "安装探针名称无效":"Invalid installation probe name",
  "清理本次安装探针 %s 失败: %w":"Failed to remove this installation probe %s: %w",
- "恢复流量安装文件 %s 失败: %w":"Failed to restore traffic installation file %s: %w"
+ "恢复流量安装文件 %s 失败: %w":"Failed to restore traffic installation file %s: %w",
+ " [推荐]":" [Recommended]",
+ "公网连接地址与所选监听模式不匹配":"The public endpoint does not match the selected listening mode",
+ "选择监听地址":"Select listening address",
+ "IPv4 (0.0.0.0) [推荐]":"IPv4 (0.0.0.0) [Recommended]",
+ "双栈 (IPv4 + IPv6)":"Dual-stack (IPv4 + IPv6)",
+ "双栈 (IPv4 + IPv6) [推荐]":"Dual-stack (IPv4 + IPv6) [Recommended]",
+ "IPv6 (::) [推荐]":"IPv6 (::) [Recommended]",
+ "本机没有可用的监听地址":"No listening address is available on this host"
 }

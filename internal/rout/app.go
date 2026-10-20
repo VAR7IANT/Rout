@@ -529,6 +529,8 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 }
 
 func runtimeEqual(a, b Profile) bool {
+	// Listener capability metadata only controls exported alternate links.
+	a.IPv4Mapped, b.IPv4Mapped = nil, nil
 	a.CreatedAt = nil
 	b.CreatedAt = nil
 	a.Traffic = nil
