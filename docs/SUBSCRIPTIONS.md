@@ -1,12 +1,66 @@
-# Subscriptions and HTTPS (v0.3.5)
+# Subscriptions and HTTPS (v0.3.6)
 
-A subscription returns standard Base64 of the share links for the nodes you explicitly selected. It does not change proxy protocols, credentials, AI bindings, routing, traffic accounting or relay settings.
+A subscription dynamically returns either the original Base64 share links or native Mihomo YAML for the nodes you explicitly selected. It does not change proxy protocols, credentials, AI bindings, routing, traffic accounting or relay settings.
+
+## Native formats and imports
+
+The same existing token authenticates both formats, using the saved public URL and optional path prefix:
+
+```text
+https://sub.example.com/s/TOKEN                 # Base64 (unchanged default)
+https://sub.example.com/s/TOKEN?format=base64   # explicit Base64
+https://sub.example.com/s/TOKEN?format=mihomo   # complete native Mihomo YAML
+https://sub.example.com/s/TOKEN?format=clash    # alias for Mihomo
+```
+
+Keep the original saved URL in Shadowrocket and other Base64 clients. In Clash Verge Rev, FlClash or Mihomo Party, create a remote configuration from that same URL with `?format=mihomo` appended. This does not create a Rout subscription or rotate its token. `clash` requires a modern Mihomo core; it does not imply compatibility with the discontinued Clash core. Existing templates and newly shown URLs use the actual configured domain/prefix, never a fixed domain.
+
+New subscriptions show both complete URLs while the plaintext token exists. Existing entries show `/s/{access_token}` and `/s/{access_token}?format=mihomo`; retain the full URL previously saved in the client. A verification hash cannot reconstruct the original token. Listing or changing formats never rotates it.
+
+Requests still require a valid enabled token and share the same connection/concurrency limits. Unknown/disabled tokens retain the uniform 404, including with an invalid format. Authenticated unsupported, empty, repeated or malformed format parameters return a fixed HTTP 400 without echoing the URL/token. Unknown unrelated query keys remain ignored. Successful Mihomo responses use UTF-8 `application/yaml`, no-store/nosniff/no-referrer headers and correct GET/HEAD lengths. The default Base64 bytes and response headers are unchanged for unchanged selections.
+
+### Protocol coverage and failure behavior
+
+| Rout model | Native Mihomo representation |
+| --- | --- |
+| VLESS Reality Vision | UUID, TCP, TLS, actual SNI, Vision flow, canonical Chrome fingerprint, Reality public key/short ID; modern key-share support for Rout's pinned sing-box |
+| Shadowsocks 2022 | Actual cipher/password and public endpoint; TCP-only entries disable UDP |
+| Hysteria2 | Actual password/SNI and SHA256 fingerprint of the configured server leaf certificate |
+| TUIC v5 | Actual UUID/password/SNI, canonical h3 ALPN/bbr congestion control and server certificate fingerprint |
+| Share-link relays | Forwarded public endpoint/NAT port with original credentials/TLS identity; supported VLESS plain/TLS/Reality, Trojan, SS, Hysteria2 and TUIC links; representable TCP/WS/gRPC, ALPN, browser fingerprint, certificate pin and protocol options are retained |
+
+Rout has no VMess node/relay model; this release does not invent one. Mihomo v1.19.32 cannot express Rout's **AnyTLS Reality** backend; it is explicitly omitted, never converted to plain AnyTLS. UDP-only Shadowsocks, unchecked insecure TLS, unknown/duplicate relay parameters, unsupported ciphers/transports and a separate gRPC authority that Mihomo cannot preserve are also diagnosed. Plain TLS AnyTLS relay links are supported where representable.
+
+Selections are never altered in storage. Mixed selections produce supported nodes in the original order, a safe diagnostic comment for each omission and `X-Rout-Skipped-Nodes`. The CLI and sanitized service logs show the reasons by node ID. If no node can be exported, return HTTP 503 with actionable diagnostics, never an empty successful configuration that could erase a client's list. Existing Base64 handling remains independent.
+
+Native QUIC nodes use exact certificate pinning, including self-signed certificates, rather than `skip-cert-verify`. Certificates must be valid when exported. Mihomo's leaf-pin verification authenticates the exact certificate; it does not rely on a separate client CA file. A replaced node certificate requires refreshing the subscription to obtain its new pin. Neither server private keys nor public certificate PEMs are included. Reality output enables Mihomo's modern X25519/ML-KEM key shares, tested against Rout's pinned sing-box 1.14.3; do not assume interoperability with older external Reality implementations.
+
+### Groups, names and routing preferences
+
+The generated configuration includes `proxies`, `proxy-groups` and `rules`:
+
+1. **🚀 Proxy** — manual selection, original nodes first, then Auto, Fallback and DIRECT.
+2. **⚡ Auto** — lazy latency selection, 600-second interval.
+3. **🛡️ Fallback** — lazy failover, 600-second interval.
+
+Names and country flags are retained without IP geolocation. Duplicate or reserved names receive stable node-ID suffixes; all group references use those exact names. Dynamic strings are serialized as quoted JSON-compatible YAML flow values, preventing YAML tags/aliases/key injection, control-character injection and implicit scalar coercion. A real Mihomo core validates this YAML syntax and its proxy/group configuration in CI; no YAML/converter runtime dependency was added.
+
+The only default rule is `MATCH,🚀 Proxy`. No DNS, TUN, controller, listener port, geographic rule set or server-side routing is configured. Importing any complete remote configuration replaces that profile's rules; keep personal routing in the client's override/merge layer or use its proxy-provider integration. GUI-specific merge/provider behavior still needs manual verification.
+
+Health checks default to `https://www.gstatic.com/generate_204`. Change the HTTPS URL in **Subscription server settings → Mihomo health-check URL** or:
+
+```sh
+sudo rout subscription mihomo-test-url https://your-health.example/check
+sudo rout subscription mihomo-test-url default
+```
+
+This optional `settings.json` field is written only after explicit configuration. The server does not fetch the URL; clients perform the checks. Credentials/query parameters/fragments and non-HTTPS URLs are refused. Changing it needs no restart and does not touch Caddy, subscriptions or node credentials. Mihomo may run an initial health check; subsequent checks are lazy at the configured 600-second interval.
 
 ## Existing v0.3.4 subscriptions survive an upgrade
 
 There is **no subscription schema migration**. The optional `subscriptions` array in `state.json` retains each ID, name, ordered `node_ids`, `token_hash`, `enabled` and `created_at`. `settings.json` retains the subscription enablement, loopback port and public base URL. An unchanged selection produces the same Base64 body, names and order. Existing Shadowrocket URLs continue authenticating; do not delete/recreate subscriptions, rotate tokens, reselect nodes or reimport clients during an upgrade.
 
-Only SHA-256 verification hashes of 256-bit random tokens are stored. **The original plaintext token and full URL cannot be reconstructed from those hashes.** Existing entries show `https://YOUR-DOMAIN/s/{access_token}` using the configured base URL and tell you to keep the complete URL previously saved in your client. Tokens are printed only when explicitly creating or rotating a subscription. Ordinary changes and HTTPS operations never rotate them.
+Only SHA-256 verification hashes of 256-bit random tokens are stored. The same token authorizes both Base64 and Mihomo; protect both URLs equally. **The original plaintext token and full URL cannot be reconstructed from those hashes.** Existing entries show `https://YOUR-DOMAIN/s/{access_token}` using the configured base URL and tell you to keep the complete URL previously saved in your client. Tokens are printed only when explicitly creating or rotating a subscription. Ordinary changes and HTTPS operations never rotate them.
 
 The installer and newer updater create private, idempotent pre-upgrade snapshots, then refresh only the subscription helper when necessary. They do not recreate a database. Snapshots preserve original bytes, mode, UID and GID and are stored under `/etc/rout/backups` (0700; files 0600). Helper refresh preserves a deliberately stopped service and disabled boot startup. The subscription helper remains `/opt/rout/bin/rout-subscription-v1`.
 
@@ -23,6 +77,7 @@ Menu: **Subscriptions → Subscription server settings**:
 5. Restart subscription service
 6. Disable subscription service
 7. Remove Rout-managed HTTPS configuration
+8. Mihomo health-check URL
 0. Back (`b` also returns; `q` quits)
 
 The local HTTP service is off until enabled and always binds `127.0.0.1` (default 8787). The actual configured port is used by the proxy. No firewall rule is added, and no proxy node's port is changed.
@@ -124,6 +179,6 @@ For unsupported layouts/platforms, keep the loopback service and configure your 
 
 ## Test boundaries
 
-Unit/race tests cover v0.3.4 persistence, token validity, ordering/Base64 output, URL preservation, DNS families/Cloudflare, conflicts, ownership/adoption, rollback, port changes, diagnostics, bilingual menus and routing/traffic invariance. Isolated real Caddy tests cover a fresh signed-package installation, automatic private test-CA certificates, real TLS responses, preservation of an unrelated site and saved URL, repair/restart/removal, error-log redaction and failed replacement rollback. A disposable systemd CI test upgrades the checksum-verified published v0.3.4 helper and verifies the original token/body and persisted Reality/AI/traffic/relay state, restart and boot-state preservation.
+Unit/race tests cover v0.3.4 persistence, token validity, ordering/Base64 output, URL preservation, DNS families/Cloudflare, conflicts, ownership/adoption, rollback, port changes, diagnostics, bilingual menus and routing/traffic invariance. Isolated real Caddy tests cover a fresh signed-package installation, automatic private test-CA certificates, real TLS responses, preservation of an unrelated site and saved URL, repair/restart/removal, error-log redaction and failed replacement rollback. Disposable systemd CI tests upgrade the checksum-verified published v0.3.4 and v0.3.5 helpers and verifies the original token/body and persisted Reality/AI/traffic/relay state, restart and boot-state preservation.
 
-These tests do not claim public ACME issuance on your domain, real Shadowrocket interaction or production verification. Check public certificate issuance, external reachability, mobile client refresh and existing proxy/AI behavior on the actual VPS before release.
+The pinned Mihomo v1.19.32 core also validates generated configurations and sends real TCP/UDP traffic through VLESS Reality Vision, SS, Hysteria2 and TUIC, including rejection of wrong pins. GUI clients (Clash Verge Rev, FlClash and Mihomo Party) have not been exercised here. These tests do not claim public ACME issuance on your domain, real Shadowrocket interaction or production verification. Check public certificate issuance, external reachability, mobile client refresh and existing proxy/AI behavior on the actual VPS before release.

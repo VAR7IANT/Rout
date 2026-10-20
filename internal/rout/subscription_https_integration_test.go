@@ -283,6 +283,9 @@ func TestIntegrationSubscriptionCaddyFreshDeployment(t *testing.T) {
 	if code != 200 {
 		t.Fatal(code)
 	}
+	if yamlCode, yamlBody := f.request(t, "sub.rout.test", "/s/"+token+"?format=mihomo"); yamlCode != 200 || !strings.Contains(string(yamlBody), "proxy-groups:") {
+		t.Fatal("Caddy did not forward the Mihomo query")
+	}
 	decoded := decodeBody(t, string(body))
 	if len(decoded) != 3 {
 		t.Fatal("subscription format/order lost")
@@ -364,6 +367,12 @@ func TestIntegrationSubscriptionExistingCaddyZeroLoss(t *testing.T) {
 	code, body := f.request(t, "existing.rout.test", "/s/"+token)
 	if code != 200 {
 		t.Fatal(code)
+	}
+	if yamlCode, yamlBody := f.request(t, "existing.rout.test", "/s/"+token+"?format=mihomo"); yamlCode != 200 || !strings.Contains(string(yamlBody), "proxy-groups:") {
+		t.Fatal("external Caddy did not preserve the format query")
+	}
+	if after, _ := os.ReadFile(fragment); string(after) != string(original) {
+		t.Fatal("Mihomo request changed external Caddy configuration")
 	}
 	if e := a.PrepareSubscriptionUpgrade(); e != nil {
 		t.Fatal(e)

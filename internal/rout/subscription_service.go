@@ -25,6 +25,8 @@ type SubscriptionSettings struct {
 	Port int `json:"port,omitempty"`
 	// Public HTTPS base URL of the administrator's reverse proxy, e.g. https://sub.example.com
 	PublicURL string `json:"public_url,omitempty"`
+	// Optional client-side Mihomo health-check URL; absent keeps the default.
+	MihomoTestURL string `json:"mihomo_test_url,omitempty"`
 }
 
 func (s SubscriptionSettings) listenPort() int {
@@ -35,6 +37,11 @@ func (s SubscriptionSettings) listenPort() int {
 }
 
 func (s SubscriptionSettings) Validate() error {
+	if s.MihomoTestURL != "" {
+		if e := validateMihomoTestURL(s.MihomoTestURL); e != nil {
+			return e
+		}
+	}
 	if s.Port != 0 && (s.Port < 1024 || s.Port > 65535) {
 		return errors.New("订阅服务端口应为 1024–65535")
 	}
@@ -62,6 +69,14 @@ func normalizePublicURL(raw string) (string, error) {
 		return "", errors.New("公网地址无效，应类似 https://sub.example.com")
 	}
 	return strings.TrimRight(u.Scheme+"://"+u.Host+u.EscapedPath(), "/"), nil
+}
+
+// MihomoURL reuses the same token and public base URL, without storing either URL.
+func (s SubscriptionSettings) MihomoURL(token string) string {
+	if base := s.SubscriptionURL(token); base != "" {
+		return base + "?format=mihomo"
+	}
+	return ""
 }
 
 // SubscriptionURL builds the client URL, or "" when no HTTPS public URL is configured.

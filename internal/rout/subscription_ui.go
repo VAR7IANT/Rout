@@ -129,6 +129,10 @@ func (u *UI) subscriptionList(s State) {
 		for _, w := range s.exportSubscription(sub).Warnings {
 			u.warn(w)
 		}
+		_, warnings := s.exportMihomo(sub)
+		for _, warning := range warnings {
+			u.warn(u.a.T("Mihomo：") + u.a.T(warning))
+		}
 	}
 	u.showExistingSubscriptionURL()
 }
@@ -154,10 +158,13 @@ func (u *UI) showToken(token, heading string) {
 	u.good(heading)
 	u.warn("访问令牌只显示这一次，请立即保存；Rout 只保存它的校验值")
 	fmt.Fprintf(u.writer(), "  %s  %s\n", pad(u.a.T("访问令牌"), 10), token)
-	if url := cfg.SubscriptionURL(token); url != "" {
-		fmt.Fprintf(u.writer(), "  %s  %s\n", pad(u.a.T("订阅链接"), 10), url)
-	} else {
-		fmt.Fprintf(u.writer(), "  %s  https://YOUR-DOMAIN/s/%s\n", pad(u.a.T("链接模板"), 10), token)
+	u.heading("订阅链接")
+	base := cfg.SubscriptionURL(token)
+	if base == "" {
+		base = "https://YOUR-DOMAIN/s/" + token
+	}
+	fmt.Fprintf(u.writer(), "  Base64:\n  %s\n  Mihomo:\n  %s?format=mihomo\n", base, base)
+	if cfg.PublicURL == "" {
 		u.warn("尚未配置 HTTPS 公网地址：订阅服务只监听本机，请先用反向代理提供 HTTPS，再在“订阅服务设置”中填写公网地址")
 	}
 	if !cfg.Enabled {
@@ -376,7 +383,7 @@ func (u *UI) subscriptionServer() error {
 			return e
 		}
 		u.hint("服务只监听回环地址；可自动部署 HTTPS，或继续使用已有反向代理")
-		items := []menuItem{item("enable", "启用／修改端口"), item("public", "设置 HTTPS 公网地址"), item("deploy", "自动部署／修复 HTTPS"), item("diagnostics", "HTTPS 状态与诊断"), item("restart", "重启服务"), item("disable", "停用服务"), item("remove", "移除 Rout 管理的 HTTPS 配置")}
+		items := []menuItem{item("enable", "启用／修改端口"), item("public", "设置 HTTPS 公网地址"), item("deploy", "自动部署／修复 HTTPS"), item("diagnostics", "HTTPS 状态与诊断"), item("restart", "重启服务"), item("disable", "停用服务"), item("remove", "移除 Rout 管理的 HTTPS 配置"), item("mihomo", "Mihomo 健康检查地址")}
 
 		v := u.menu("", items, "返回")
 		if v == "" || u.err != nil {
@@ -384,6 +391,19 @@ func (u *UI) subscriptionServer() error {
 		}
 		var err error
 		switch v {
+		case "mihomo":
+			cfg, e := u.a.subscriptionSettings()
+			if e != nil {
+				err = e
+				break
+			}
+			u.hint("此 HTTPS 地址仅由客户端用于测速，每 600 秒按需检查；Rout 服务端不会访问")
+			raw := u.ask("Mihomo 健康检查 HTTPS 地址", cfg.mihomoTestURL())
+			if u.err == nil {
+				if err = u.a.SetMihomoTestURL(raw); err == nil {
+					u.good("Mihomo 健康检查地址已保存，无需重启服务")
+				}
+			}
 		case "enable":
 			port := u.port("本机监听端口", st.Settings.listenPort())
 			if u.err == nil {
@@ -529,6 +549,15 @@ func (u *UI) subscriptionCommand(args []string) (err error) {
 			fmt.Fprintln(u.writer(), logs)
 		}
 		return e
+	case "mihomo-test-url":
+		if len(args) != 3 {
+			return errors.New("用法：rout subscription mihomo-test-url HTTPS_URL（default 恢复默认）")
+		}
+		raw := args[2]
+		if raw == "default" {
+			raw = ""
+		}
+		return u.a.SetMihomoTestURL(raw)
 	case "https":
 		if len(args) < 3 || args[2] == "status" {
 			return u.subscriptionHTTPSDiagnostics()

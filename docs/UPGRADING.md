@@ -1,5 +1,31 @@
 # Upgrading and rollback safety
 
+## To v0.3.6
+
+v0.3.5 subscriptions need no migration, recreation, token rotation, node reselection or Caddy changes. `/s/TOKEN` still returns the same Base64 bytes for an unchanged selection. Append `?format=mihomo` to the full URL already saved in your client for native Mihomo YAML; `format=clash` is an alias for modern Mihomo. The original URL continues working in Shadowrocket.
+
+After publication, upgrade through `sudo rout update` or the installer. Before publication, download the exact reviewed commit's CI artifact, verify its checksums and stage the matching architecture's binary as `./rout-v036`:
+
+```sh
+./rout-v036 version
+sudo ./rout-v036 subscription prepare-upgrade
+sudo cp -p /usr/local/bin/rout /usr/local/bin/rout.previous
+sudo install -m 755 ./rout-v036 /usr/local/bin/.rout-v036-stage
+sudo mv -f /usr/local/bin/.rout-v036-stage /usr/local/bin/rout
+sudo rout subscription refresh
+sudo rout version
+sudo rout subscription list
+sudo rout subscription status
+```
+
+Use the same `--home`/`--bin-dir` flags on every command for a custom installation. A still-running v0.3.5 helper ignores the format query and returns Base64; confirm the helper was refreshed before importing YAML. Refresh restarts only a changed subscription helper, preserving configured port, public URL, disabled startup and an intentionally stopped service.
+
+No existing persistence field is rewritten by this upgrade. The optional `subscription.mihomo_test_url` appears in `settings.json` only when explicitly set; older managers safely ignore it. State schema, subscription IDs/names/token hashes/selections/order, credentials, AI bindings, traffic data and relay configurations remain unchanged. No YAML snapshots are stored, no converter/core is installed at runtime, and Caddy ownership metadata/configuration is unchanged.
+
+Native AnyTLS Reality cannot be represented by the tested Mihomo core. Mixed selections omit it with explicit diagnostics; a selection with no compatible node returns 503. Base64 stays available. Check [format/protocol coverage](SUBSCRIPTIONS.md#native-formats-and-imports) before importing the new format. Complete remote configurations have minimal default rules; retain personal routing through client overrides.
+
+For rollback, restore the previous manager and run `sudo rout subscription restart` to refresh its helper. Original Base64 URLs and token hashes remain compatible. Mihomo query support requires the v0.3.6 helper; clients using YAML need that helper or must switch back to their original Base64-capable client URL. Never delete persistence files or rotate tokens to perform an upgrade/rollback.
+
 ## To v0.3.5
 
 Existing v0.3.4 subscriptions require no migration or recreation. IDs, names, verification hashes, previously issued token validity, selected node IDs/order, enabled states, response bytes, public base URL and loopback port are preserved. No node/AI/traffic/relay state or Caddy configuration is modified by an ordinary upgrade. Keep the original Shadowrocket entry and URL.

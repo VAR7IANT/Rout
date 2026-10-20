@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// A real published v0.3.4 helper is started by real systemd. The new manager then
+// A real published v0.3.4/v0.3.5 helper is started by real systemd. The new manager then
 // refreshes only that helper, without recreating the database or touching Caddy.
 // This test is opt-in on a disposable root/systemd runner, never a production VPS.
 func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
@@ -22,8 +22,16 @@ func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
 	}
 	manager, previous := os.Getenv("ROUT_TEST_MANAGER"), os.Getenv("ROUT_TEST_PREVIOUS_SUBSCRIPTION_MANAGER")
 	if manager == "" || previous == "" {
-		t.Fatal("new manager and checksum-verified v0.3.4 manager required")
+		t.Fatal("new manager and checksum-verified previous manager required")
 	}
+	previousVersion := os.Getenv("ROUT_TEST_PREVIOUS_SUBSCRIPTION_VERSION")
+	if previousVersion == "" {
+		previousVersion = "0.3.4"
+	}
+	if out, er := runOutput(5*time.Second, previous, "version"); er != nil || strings.TrimSpace(string(out)) != "rout "+previousVersion {
+		t.Fatal("previous subscription helper version mismatch")
+	}
+	t.Log("Published helper upgrade from v" + previousVersion)
 	if os.Geteuid() != 0 {
 		t.Fatal("root required")
 	}
@@ -101,6 +109,15 @@ func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
 		}
 		if body := fetch(); !bytes.Equal(beforeBody, body) {
 			t.Fatal("upgrade changed the selected node output or ordering")
+		}
+		mihomoResponse, er := http.Get("http://127.0.0.1:" + itoa(port) + "/s/" + token + "?format=mihomo")
+		if er != nil {
+			t.Fatal("Mihomo response unavailable (URL withheld)")
+		}
+		mihomoBody, _ := io.ReadAll(mihomoResponse.Body)
+		mihomoResponse.Body.Close()
+		if mihomoResponse.StatusCode != 200 || mihomoResponse.Header.Get("Content-Type") != "application/yaml; charset=utf-8" || !strings.Contains(string(mihomoBody), "proxy-groups:") {
+			t.Fatal("original token did not authenticate the new format")
 		}
 		current, _ := a.Load()
 		if !reflect.DeepEqual(baseline, current) {

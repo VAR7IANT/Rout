@@ -289,7 +289,9 @@ func (u *UI) showExistingSubscriptionURL() {
 	if base == "" {
 		base = "https://YOUR-DOMAIN"
 	}
-	u.printf("链接模板：%s/s/{access_token}\n", base)
+	u.heading("订阅链接模板")
+	u.printf("Base64：%s/s/{access_token}\n", base)
+	u.printf("Mihomo：%s/s/{access_token}?format=mihomo\n", base)
 	u.hint("令牌只保存校验值，无法还原；请继续使用之前保存的完整订阅 URL，无需更换令牌或重新导入客户端")
 }
 

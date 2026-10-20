@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -57,11 +58,12 @@ func (c *stateCache) load() (State, error) {
 }
 
 type subscriptionHandler struct {
-	load func() (State, error)
-	logf func(format string, args ...any)
-	sem  chan struct{}
-	mu   sync.Mutex
-	last map[string]string // subscription ID -> last logged warning set, to avoid log floods
+	load           func() (State, error)
+	mihomoSettings func() (SubscriptionSettings, error)
+	logf           func(format string, args ...any)
+	sem            chan struct{}
+	mu             sync.Mutex
+	last           map[string]string // subscription ID -> last logged warning set, to avoid log floods
 }
 
 func newSubscriptionHandler(load func() (State, error), logf func(string, ...any)) *subscriptionHandler {
@@ -112,17 +114,47 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		notFound(w)
 		return
 	}
-	exp := s.exportSubscription(sub)
-	h.report(sub, exp)
-	if len(exp.URIs) == 0 {
-		// An explicit failure, never an empty success a client would use to erase its nodes.
-		w.Header().Set("Retry-After", "300")
-		plain(w, http.StatusServiceUnavailable, "no available nodes")
+	format, e := subscriptionFormat(r.URL.RawQuery)
+	if e != nil {
+		plain(w, http.StatusBadRequest, "unsupported format; use base64, mihomo or clash once")
 		return
 	}
-	body := renderSubscription(exp.URIs)
+	contentType := "text/plain; charset=utf-8"
+	var body string
+	if format == "mihomo" {
+		cfg := SubscriptionSettings{}
+		if h.mihomoSettings != nil {
+			cfg, e = h.mihomoSettings()
+			if e != nil {
+				plain(w, http.StatusServiceUnavailable, "Mihomo settings unavailable; check subscription service settings")
+				return
+			}
+		}
+		proxies, warnings := s.exportMihomo(sub)
+		for i := range warnings {
+			warnings[i] = Translate("en", warnings[i])
+		}
+		h.report(sub, SubscriptionExport{Warnings: warnings}, "mihomo")
+		if len(proxies) == 0 {
+			w.Header().Set("Retry-After", "300")
+			plain(w, http.StatusServiceUnavailable, "no Mihomo-compatible nodes; use Base64 or check the selected nodes: "+strings.Join(warnings, "; "))
+			return
+		}
+		body = renderMihomo(proxies, warnings, cfg.mihomoTestURL())
+		contentType = "application/yaml; charset=utf-8"
+		w.Header().Set("X-Rout-Skipped-Nodes", strconv.Itoa(len(warnings)))
+	} else {
+		exp := s.exportSubscription(sub)
+		h.report(sub, exp)
+		if len(exp.URIs) == 0 {
+			w.Header().Set("Retry-After", "300")
+			plain(w, http.StatusServiceUnavailable, "no available nodes")
+			return
+		}
+		body = renderSubscription(exp.URIs)
+	}
 	hd := w.Header()
-	hd.Set("Content-Type", "text/plain; charset=utf-8")
+	hd.Set("Content-Type", contentType)
 	hd.Set("Cache-Control", "no-store")
 	hd.Set("Pragma", "no-cache")
 	hd.Set("X-Content-Type-Options", "nosniff")
@@ -135,11 +167,15 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 // report logs export warnings (subscription ID and node names only) when they change.
-func (h *subscriptionHandler) report(sub Subscription, exp SubscriptionExport) {
+func (h *subscriptionHandler) report(sub Subscription, exp SubscriptionExport, format ...string) {
+	key := sub.ID
+	if len(format) > 0 {
+		key += ":" + format[0]
+	}
 	joined := strings.Join(exp.Warnings, "; ")
 	h.mu.Lock()
-	changed := h.last[sub.ID] != joined
-	h.last[sub.ID] = joined
+	changed := h.last[key] != joined
+	h.last[key] = joined
 	h.mu.Unlock()
 	if changed && joined != "" {
 		h.logf("subscription %s: %s", sub.ID, joined)
@@ -233,6 +269,7 @@ func (a *App) ServeSubscriptions(ctx context.Context) error {
 // Diagnostic responses share the subscription transport, but can never export nodes.
 func (a *App) subscriptionHTTPHandler(load func() (State, error), logf func(string, ...any)) http.Handler {
 	normal := newSubscriptionHandler(load, logf)
+	normal.mihomoSettings = a.subscriptionSettings
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == subscriptionProbePath {
 			a.serveSubscriptionProbe(w, r)
@@ -240,4 +277,27 @@ func (a *App) subscriptionHTTPHandler(load func() (State, error), logf func(stri
 		}
 		normal.ServeHTTP(w, r)
 	})
+}
+
+// Authenticate first: unknown tokens keep the same uniform 404 even with a bad
+// format. Unknown non-format query keys retain v0.3.5's behavior.
+func subscriptionFormat(raw string) (string, error) {
+	q, e := url.ParseQuery(raw)
+	if e != nil {
+		return "", e
+	}
+	values, ok := q["format"]
+	if !ok {
+		return "base64", nil
+	}
+	if len(values) != 1 {
+		return "", errors.New("ambiguous subscription format")
+	}
+	switch values[0] {
+	case "base64":
+		return "base64", nil
+	case "mihomo", "clash":
+		return "mihomo", nil
+	}
+	return "", errors.New("unsupported subscription format")
 }
