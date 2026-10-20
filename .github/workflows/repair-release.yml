@@ -101,10 +101,19 @@ jobs:
                       'workflow': {'repository': repo, 'path': '.github/workflows/repair-release.yml', 'ref': os.environ['GITHUB_REF']},
                       'source': {'tag': tag, 'commit': source},
                   },
-                  'resolvedDependencies': [{'uri': 'git+' + repo + '@refs/tags/' + tag, 'digest': {'gitCommit': source}}],
+                  'internalParameters': {'github': {
+                      'event_name': os.environ['GITHUB_EVENT_NAME'],
+                      'repository_id': os.environ['GITHUB_REPOSITORY_ID'],
+                      'repository_owner_id': os.environ['GITHUB_REPOSITORY_OWNER_ID'],
+                      'runner_environment': os.environ['RUNNER_ENVIRONMENT'],
+                  }},
+                  'resolvedDependencies': [
+                      {'uri': 'git+' + repo + '@' + os.environ['GITHUB_REF'], 'digest': {'gitCommit': os.environ['GITHUB_SHA']}},
+                      {'uri': 'git+' + repo + '@refs/tags/' + tag, 'digest': {'gitCommit': source}},
+                  ],
               },
               'runDetails': {
-                  'builder': {'id': 'https://github.com/actions/runner/github-hosted'},
+                  'builder': {'id': repo + '/.github/workflows/repair-release.yml@' + os.environ['GITHUB_REF']},
                   'metadata': {'invocationId': repo + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '/attempts/' + os.environ['GITHUB_RUN_ATTEMPT']},
               },
           }
