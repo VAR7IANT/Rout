@@ -50,6 +50,9 @@ func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
 		t.Error("upgrade attempted Caddy management")
 		return nil, fmt.Errorf("Caddy must not be changed")
 	}}
+	if e = os.MkdirAll(a.BinDir, 0755); e != nil {
+		t.Fatal(e)
+	}
 	if e = copyFileAtomic(previous, a.subscriptionHelper(), 0755); e != nil {
 		t.Fatal(e)
 	}
