@@ -6,7 +6,7 @@
 - Model-based VLESS Reality Vision, Shadowsocks 2022, Hysteria2 and TUIC export, plus representable share-link relays including plain/TLS VLESS and Trojan TCP/WS/gRPC. Preserve auth, endpoints/NAT ports, TLS/Reality, ALPN and protocol options. Exact server-certificate pins protect QUIC nodes; modern Reality key shares are validated against the pinned sing-box. Unsupported/unsafe nodes produce explicit diagnostics; no compatible node returns 503.
 - Complete proxy/manual/auto/fallback groups and minimal routing; stable unique names preserve Unicode and flags. Safe quoted YAML flow serialization prevents injection. Client health checks are lazy at 600 seconds with an optional CLI-configured HTTPS URL.
 - Chinese/English CLI shows both full URLs only when the token is available, and both safe templates for existing subscriptions. Hash-only token storage and HTTPS/Caddy ownership boundaries remain unchanged.
-- Regression coverage includes original token/Base64 preservation, format/auth/error handling, dynamic selections, names/references, real pinned Mihomo configuration validation and live TCP/UDP traffic with wrong-pin rejection, unchanged Caddy query forwarding, and published v0.3.4/v0.3.5 real-systemd helper upgrades. GUI clients and production acceptance remain manual.
+- Regression coverage includes original token/Base64 preservation, format/auth/error handling, dynamic selections, names/references, real pinned Mihomo configuration validation and live TCP/UDP traffic with wrong-pin rejection, unchanged Caddy query forwarding, and real-systemd helper upgrades from the published v0.3.4 binary and pinned v0.3.5 source (its release has no binary assets). GUI clients and production acceptance remain manual.
 
 ## v0.3.5
 

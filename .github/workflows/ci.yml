@@ -58,15 +58,27 @@ jobs:
         run: |
           CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/rout-subscription.test" ./internal/rout
           sh scripts/test-subscription-https.sh "$RUNNER_TEMP/rout-subscription.test"
-      - name: Published v0.3.4/v0.3.5 subscription helper upgrades with real systemd
+      - name: v0.3.4 release and pinned v0.3.5 subscription helper upgrades with real systemd
         run: |
           go build -o "$RUNNER_TEMP/rout-subscription-manager" ./cmd/rout
           for previous_version in 0.3.4 0.3.5; do
-            curl --proto '=https' -fsSL "https://github.com/VAR7IANT/Rout/releases/download/v$previous_version/rout-linux-amd64" -o "$RUNNER_TEMP/rout-subscription-previous"
-            curl --proto '=https' -fsSL "https://github.com/VAR7IANT/Rout/releases/download/v$previous_version/checksums.txt" -o "$RUNNER_TEMP/previous-checksums.txt"
-            expected=$(awk '$2 == "rout-linux-amd64" {print $1}' "$RUNNER_TEMP/previous-checksums.txt")
-            test "${#expected}" = 64
-            printf '%s  %s\n' "$expected" "$RUNNER_TEMP/rout-subscription-previous" | sha256sum -c -
+            if [ "$previous_version" = 0.3.5 ]; then
+              # The published v0.3.5 tag has no binary assets. Build its exact
+              # verified commit instead of skipping the required upgrade test.
+              previous_commit=7110276c9c4d7b833f702f2f14c04189e09ce598
+              git fetch --depth=1 origin "$previous_commit"
+              test "$(git rev-parse FETCH_HEAD)" = "$previous_commit"
+              git archive "$previous_commit" -o "$RUNNER_TEMP/rout-v035.tar"
+              mkdir "$RUNNER_TEMP/rout-v035-source"
+              tar -xf "$RUNNER_TEMP/rout-v035.tar" -C "$RUNNER_TEMP/rout-v035-source"
+              (cd "$RUNNER_TEMP/rout-v035-source" && go build -buildvcs=false -o "$RUNNER_TEMP/rout-subscription-previous" ./cmd/rout)
+            else
+              curl --proto '=https' -fsSL "https://github.com/VAR7IANT/Rout/releases/download/v$previous_version/rout-linux-amd64" -o "$RUNNER_TEMP/rout-subscription-previous"
+              curl --proto '=https' -fsSL "https://github.com/VAR7IANT/Rout/releases/download/v$previous_version/checksums.txt" -o "$RUNNER_TEMP/previous-checksums.txt"
+              expected=$(awk '$2 == "rout-linux-amd64" {print $1}' "$RUNNER_TEMP/previous-checksums.txt")
+              test "${#expected}" = 64
+              printf '%s  %s\n' "$expected" "$RUNNER_TEMP/rout-subscription-previous" | sha256sum -c -
+            fi
             chmod 755 "$RUNNER_TEMP/rout-subscription-previous"
             sudo env ROUT_TEST_SUBSCRIPTION_SYSTEMD=1 ROUT_TEST_PREVIOUS_SUBSCRIPTION_VERSION="$previous_version" ROUT_TEST_MANAGER="$RUNNER_TEMP/rout-subscription-manager" ROUT_TEST_PREVIOUS_SUBSCRIPTION_MANAGER="$RUNNER_TEMP/rout-subscription-previous" "$RUNNER_TEMP/rout-subscription.test" -test.run '^TestIntegrationSubscriptionV034SystemdUpgrade$' -test.v
           done

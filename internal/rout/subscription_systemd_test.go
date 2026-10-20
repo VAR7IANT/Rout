@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-// A real published v0.3.4/v0.3.5 helper is started by real systemd. The new manager then
+// A v0.3.4 release or pinned v0.3.5 source-built helper is started by real systemd.
+// The v0.3.5 tag has no published binary assets. The new manager then
 // refreshes only that helper, without recreating the database or touching Caddy.
 // This test is opt-in on a disposable root/systemd runner, never a production VPS.
 func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
@@ -31,7 +32,7 @@ func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
 	if out, er := runOutput(5*time.Second, previous, "version"); er != nil || strings.TrimSpace(string(out)) != "rout "+previousVersion {
 		t.Fatal("previous subscription helper version mismatch")
 	}
-	t.Log("Published helper upgrade from v" + previousVersion)
+	t.Log("Previous helper upgrade from v" + previousVersion)
 	if os.Geteuid() != 0 {
 		t.Fatal("root required")
 	}
