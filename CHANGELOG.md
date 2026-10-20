@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.3.7
 
-- Accept `rout --version` and `rout -v` without node IDs, root or configuration reads; keep `rout version`. This application fix is for a future release, not the repaired v0.3.6 binaries.
+- Node Management displays every node’s complete protocol links directly below its card, including existing dual-stack alternatives; command/export output and link generation remain unchanged.
+- View subscriptions shows complete Base64/Mihomo/Clash URLs for newly created/rotated tokens. A separate 0600 private file (0700 directory) preserves token copies across restarts/upgrades; authentication, shared/state backups and HTTP remain hash-only. No database migration or automatic token rotation.
+- Legacy subscriptions keep their URLs and hashes, with clear recovery guidance and confirmed regeneration. New tests cover bilingual/mobile rendering, restart persistence, interrupted/failed writes, private permissions, and backup/log/HTTP exclusion.
+- Accept `rout --version` and `rout -v` without node IDs, root or configuration reads; keep `rout version`. The repaired v0.3.6 binaries retain their original CLI behavior.
 - Verify every release artifact, source commit, checksum, API asset and public download. Complete existing releases safely, publish new releases only after draft verification, and provide an exact-tag repair workflow. See [release integrity and repair](docs/RELEASING.md).
 
 ## v0.3.6

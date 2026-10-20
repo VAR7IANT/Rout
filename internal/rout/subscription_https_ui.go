@@ -292,7 +292,8 @@ func (u *UI) showExistingSubscriptionURL() {
 	u.heading("订阅链接模板")
 	u.printf("Base64：%s/s/{access_token}\n", base)
 	u.printf("Mihomo：%s/s/{access_token}?format=mihomo\n", base)
-	u.hint("令牌只保存校验值，无法还原；请继续使用之前保存的完整订阅 URL，无需更换令牌或重新导入客户端")
+	u.printf("Clash：%s/s/{access_token}?format=clash\n", base)
+	u.hint("此处仅显示链接模板；完整链接请在“查看订阅”中查看，旧订阅仍可使用之前保存的 URL")
 }
 
 // New HTTPS internals return stable English diagnostics for automation. Present

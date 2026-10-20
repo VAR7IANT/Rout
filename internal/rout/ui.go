@@ -815,8 +815,8 @@ func (u *UI) links() error {
 	return u.copy(p)
 }
 
-// manage is Node Management (proxy nodes; port forwarding has its own menu). Nodes are
-// listed once; choosing one opens its detail view with the connection link already shown.
+// manage is Node Management (proxy nodes; port forwarding has its own menu). Every
+// node's complete links appear below its card, before any selection is needed.
 // "n" creates a node through the same create() that Quick Create uses.
 func (u *UI) manage() error {
 	for {
@@ -833,11 +833,15 @@ func (u *UI) manage() error {
 		db := u.trafficDB()
 		for i, p := range nodes.Profiles {
 			u.nodeCard(s, i+1, p, db)
+			fmt.Fprintln(u.writer(), "      "+u.a.T("连接"))
+			if e := u.printLinks(p, nil); e != nil {
+				u.warn("无法生成节点链接，请检查节点配置")
+			}
 			allowed = append(allowed, itoa(i+1))
 		}
 		fmt.Fprintln(u.writer())
 		u.segments("  ", u.paint(accent, "n")+" "+u.a.T("新建节点"), u.paint(accent, "l")+" "+u.a.T("全部链接"), u.paint(accent, "t")+" "+u.a.T("流量与限额"), u.paint(accent, "0")+" "+u.a.T("返回"))
-		u.hint("输入节点编号查看详情和链接 · q 退出 Rout")
+		u.hint("输入节点编号管理节点 · q 退出 Rout")
 		v := u.choose("选择", allowed, "0")
 		if u.err != nil || v == "0" || v == "" {
 			return u.err

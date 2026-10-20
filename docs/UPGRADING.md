@@ -1,5 +1,15 @@
 # Upgrading and rollback safety
 
+## To v0.3.7
+
+Existing nodes, subscription IDs/hashes, selections/order, URLs, local port, public domain, Caddy ownership, routing and traffic state need no migration. Node Management now shows complete links immediately, using the original link generator. Existing command/export and HTTP subscription formats stay unchanged.
+
+Tokens created or explicitly rotated by v0.3.7 are saved in `secrets/subscription-tokens.json` under the configured home (0600 file, 0700 directory). **Subscriptions → View subscriptions** shows full Base64/Mihomo/Clash URLs after restarting Rout or rebooting. Authentication still reads hashes from `state.json`, independently of that private file. Do not include `secrets/` in shared backups; ordinary state/upgrade/HTTPS backups exclude it. A full VPS migration needs a separate private copy if you want to keep URL retrieval.
+
+Older hash-only subscriptions retain their existing tokens and client URLs. They show templates and guidance, not recovered plaintext. Keep the saved client URL. Only an explicit confirmed **Rotate access token** creates a recoverable replacement and invalidates the old URL. No upgrade or read-only view does this automatically.
+
+Before publication, use a checksum-verified v0.3.7 CI artifact with the staged-binary upgrade procedure below (use `rout-v037` as the staged filename), then `sudo rout subscription refresh`. After publication, the existing updater/installer works as before. No reinstall, node restart or subscription recreation is required. For rollback, restore the previous manager and refresh its helper; older managers ignore the separate token file and continue authenticating existing hashes. A token explicitly rotated by an older manager will be hash-only when returning to v0.3.7.
+
 ## To v0.3.6
 
 v0.3.5 subscriptions need no migration, recreation, token rotation, node reselection or Caddy changes. `/s/TOKEN` still returns the same Base64 bytes for an unchanged selection. Append `?format=mihomo` to the full URL already saved in your client for native Mihomo YAML; `format=clash` is an alias for modern Mihomo. The original URL continues working in Shadowrocket.

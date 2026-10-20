@@ -1,4 +1,4 @@
-# Subscriptions and HTTPS (v0.3.6)
+# Subscriptions and HTTPS (v0.3.7)
 
 A subscription dynamically returns either the original Base64 share links or native Mihomo YAML for the nodes you explicitly selected. It does not change proxy protocols, credentials, AI bindings, routing, traffic accounting or relay settings.
 
@@ -15,7 +15,7 @@ https://sub.example.com/s/TOKEN?format=clash    # alias for Mihomo
 
 Keep the original saved URL in Shadowrocket and other Base64 clients. In Clash Verge Rev, FlClash or Mihomo Party, create a remote configuration from that same URL with `?format=mihomo` appended. This does not create a Rout subscription or rotate its token. `clash` requires a modern Mihomo core; it does not imply compatibility with the discontinued Clash core. Existing templates and newly shown URLs use the actual configured domain/prefix, never a fixed domain.
 
-New subscriptions show both complete URLs while the plaintext token exists. Existing entries show `/s/{access_token}` and `/s/{access_token}?format=mihomo`; retain the full URL previously saved in the client. A verification hash cannot reconstruct the original token. Listing or changing formats never rotates it.
+Open **Subscriptions → View subscriptions** to see full Base64, Mihomo and Clash URLs for tokens created or explicitly rotated in v0.3.7. Each URL is printed on its own untruncated line, using the configured public domain/prefix. Legacy hash-only entries show templates and explain that the original token cannot be recovered. Keep using your previously saved URL, or explicitly choose **Rotate access token**, confirm the warning and update clients to the new URL. Listing or changing formats never rotates a token.
 
 Requests still require a valid enabled token and share the same connection/concurrency limits. Unknown/disabled tokens retain the uniform 404, including with an invalid format. Authenticated unsupported, empty, repeated or malformed format parameters return a fixed HTTP 400 without echoing the URL/token. Unknown unrelated query keys remain ignored. Successful Mihomo responses use UTF-8 `application/yaml`, no-store/nosniff/no-referrer headers and correct GET/HEAD lengths. The default Base64 bytes and response headers are unchanged for unchanged selections.
 
@@ -60,7 +60,11 @@ This optional `settings.json` field is written only after explicit configuration
 
 There is **no subscription schema migration**. The optional `subscriptions` array in `state.json` retains each ID, name, ordered `node_ids`, `token_hash`, `enabled` and `created_at`. `settings.json` retains the subscription enablement, loopback port and public base URL. An unchanged selection produces the same Base64 body, names and order. Existing Shadowrocket URLs continue authenticating; do not delete/recreate subscriptions, rotate tokens, reselect nodes or reimport clients during an upgrade.
 
-Only SHA-256 verification hashes of 256-bit random tokens are stored. The same token authorizes both Base64 and Mihomo; protect both URLs equally. **The original plaintext token and full URL cannot be reconstructed from those hashes.** Existing entries show `https://YOUR-DOMAIN/s/{access_token}` using the configured base URL and tell you to keep the complete URL previously saved in your client. Tokens are printed only when explicitly creating or rotating a subscription. Ordinary changes and HTTPS operations never rotate them.
+Authentication still uses SHA-256 verification hashes of 256-bit random tokens in `state.json`. The same token authorizes all formats. v0.3.7 also keeps a local token copy in `/etc/rout/secrets/subscription-tokens.json`, with mode 0600 inside a 0700 directory (under `--home` for custom installs). This plain JSON file is for the owner’s CLI only; no encryption key, database, manager endpoint or external service is added. It is never read by the HTTP handler or diagnostics, and is excluded from `rout backup`, automatic state backups and upgrade/HTTPS snapshots. These backups still contain existing node credentials and should remain private.
+
+The token copy is written atomically before its state hash is committed. The previous valid copy is retained across an interrupted rotation; obsolete copies are pruned on the next creation/rotation. Revoked tokens cannot authenticate, even while a private copy remains. Missing/corrupt/insecure token storage never changes HTTP authentication or silently rotates tokens. A corrupt file or wrong permissions blocks new creation/rotation with a sanitized error, while existing URLs continue working.
+
+The private file survives normal upgrades/restarts because the home directory stays in place. For a full server migration, copy `secrets/` separately and privately, preserving its permissions; a state-only backup preserves authentication but cannot restore plaintext copies. **Legacy plaintext tokens cannot be reconstructed from hashes.** Read-only views never initialize missing token storage. Ordinary edits and HTTPS operations never rotate tokens.
 
 The installer and newer updater create private, idempotent pre-upgrade snapshots, then refresh only the subscription helper when necessary. They do not recreate a database. Snapshots preserve original bytes, mode, UID and GID and are stored under `/etc/rout/backups` (0700; files 0600). Helper refresh preserves a deliberately stopped service and disabled boot startup. The subscription helper remains `/opt/rout/bin/rout-subscription-v1`.
 

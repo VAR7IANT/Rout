@@ -194,11 +194,11 @@ func TestNodeSelectionShowsConnectionLinkDirectly(t *testing.T) {
 	nodes := createdNodes(t, a)
 	vless := nodes[0]
 	link, _ := vless.URI()
-	// List first: no links, no secrets.
+	// The node list shows full links without selecting a node.
 	u, listOut := testUI(a, "2\n0\n0\n")
 	_ = u.mainMenu()
-	if strings.Contains(listOut.String(), "vless://") || strings.Contains(listOut.String(), vless.UUID) {
-		t.Fatal("credentials shown in the node list")
+	if !strings.Contains(listOut.String(), link) {
+		t.Fatal("complete connection link missing from the node list")
 	}
 	// Selecting a node shows its link at once, before any further choice.
 	u, out := testUI(a, "2\n1\n0\n0\n0\n")
@@ -218,8 +218,10 @@ func TestNodeSelectionShowsConnectionLinkDirectly(t *testing.T) {
 	// A different protocol shows only its own fields.
 	u, ssOut := testUI(a, "2\n2\n0\n0\n0\n")
 	_ = u.mainMenu()
-	if !strings.Contains(ssOut.String(), "ss://") || strings.Contains(ssOut.String(), "pbk=") {
-		t.Fatalf("Shadowsocks detail wrong:\n%s", ssOut.String())
+	ssDetail := ssOut.String()[strings.Index(ssOut.String(), "Edge-SS\n"):]
+	ssDetail = strings.SplitN(ssDetail, "\nManage nodes\n", 2)[0]
+	if !strings.Contains(ssDetail, "ss://") || strings.Contains(ssDetail, "pbk=") {
+		t.Fatal("Shadowsocks detail has another protocol's settings")
 	}
 }
 

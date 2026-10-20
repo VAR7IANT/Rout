@@ -779,7 +779,7 @@ func TestSubscriptionMenuCreateEditRotateDelete(t *testing.T) {
 	text := out.String()
 	s := sc.state(t)
 	if len(s.Subscriptions) != 1 || !reflect.DeepEqual(s.Subscriptions[0].NodeIDs, sc.ids(2, 0)) {
-		t.Fatalf("menu did not create the chosen subscription: %+v\n%s", s.Subscriptions, text)
+		t.Fatal("menu did not create the chosen subscription")
 	}
 	tokenLine := ""
 	for _, l := range strings.Split(text, "\n") {
@@ -789,10 +789,10 @@ func TestSubscriptionMenuCreateEditRotateDelete(t *testing.T) {
 	}
 	token := strings.Fields(tokenLine)[len(strings.Fields(tokenLine))-1]
 	if _, ok := s.matchSubscription(token); !ok {
-		t.Fatalf("displayed token invalid: %q", tokenLine)
+		t.Fatal("displayed token invalid")
 	}
 	if !strings.Contains(text, "https://YOUR-DOMAIN/s/"+token) || !strings.Contains(text, "No public HTTPS address") || !strings.Contains(text, "not enabled yet") {
-		t.Fatalf("missing HTTPS/enable guidance:\n%s", text)
+		t.Fatal("missing HTTPS/enable guidance")
 	}
 	if strings.Contains(text, "Selected") && strings.Contains(text, "://") {
 		t.Fatal("create review shows links")
@@ -804,21 +804,21 @@ func TestSubscriptionMenuCreateEditRotateDelete(t *testing.T) {
 	if e := sc.a.SetSubscriptionPublicURL("https://sub.example.com"); e != nil {
 		t.Fatal(e)
 	}
-	// List shows names, never credentials, links or tokens.
+	// The explicit list shows saved subscription URLs, without node credentials.
 	u, out = testUI(sc.a, "1\n0\n")
 	if e := u.subscriptions(); e != nil {
 		t.Fatal(e)
 	}
-	for _, secret := range []string{token, sc.nodes[0].UUID, sc.nodes[0].PublicKey, sc.nodes[2].Password} {
+	for _, secret := range []string{sc.nodes[0].UUID, sc.nodes[0].PublicKey, sc.nodes[2].Password} {
 		if strings.Contains(out.String(), secret) {
-			t.Fatalf("list view exposes %q", secret)
+			t.Fatal("subscription list exposes node credentials")
 		}
 	}
-	if !strings.Contains(out.String(), "https://sub.example.com/s/{access_token}") {
-		t.Fatal("missing safe URL template")
+	if !strings.Contains(out.String(), "https://sub.example.com/s/"+token) {
+		t.Fatal("missing saved subscription URL")
 	}
 	if !strings.Contains(out.String(), "My Phone") || !strings.Contains(out.String(), "charlie") || !strings.Contains(out.String(), "2/2 nodes available") {
-		t.Fatalf("list view:\n%s", out.String())
+		t.Fatal("list view misses subscription details")
 	}
 	// Edit: rename (3), add node 2 (2→ first remaining item), reorder, toggle.
 	u, _ = testUI(sc.a, "3\n1\n1\nRenamed\n0\n0\n0\n")
@@ -868,7 +868,7 @@ func TestSubscriptionMenuCreateEditRotateDelete(t *testing.T) {
 		t.Fatal(e)
 	}
 	if sc.state(t).Subscriptions[0].TokenHash == old || !strings.Contains(out.String(), "https://sub.example.com/s/") || !strings.Contains(out.String(), "needs the new link") {
-		t.Fatalf("rotation output:\n%s", out.String())
+		t.Fatal("rotation output missing new URL or revocation warning")
 	}
 	// Delete: default answer cancels; "YES" (any case) confirms.
 	u, _ = testUI(sc.a, "4\n1\n\n0\n")
@@ -959,7 +959,7 @@ func TestSubscriptionCommandsAndHelp(t *testing.T) {
 	if !found {
 		t.Fatal("help lacks the subscription command")
 	}
-	if Version != "0.3.6" {
+	if Version != "0.3.7" {
 		t.Fatalf("version %s", Version)
 	}
 }

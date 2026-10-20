@@ -119,12 +119,25 @@ func (u *UI) subscriptionList(s State) {
 		u.say("暂无订阅")
 		return
 	}
+	cfg, _ := u.a.subscriptionSettings()
+	tokens, tokenError := u.a.loadSubscriptionTokens()
+	if tokenError != nil {
+		u.warn(u.a.Error(tokenError))
+	}
 	for i, sub := range s.Subscriptions {
 		fmt.Fprintf(u.writer(), "\n%s  %s  [%s]\n      %s\n", u.paint(accent, fmt.Sprintf("%2d", i+1)), u.bold(sub.Name), sub.ID, u.subStatus(s, sub))
 		for _, id := range sub.NodeIDs {
 			if p, e := Find(s, id); e == nil {
 				fmt.Fprintln(u.writer(), "      "+u.nodeText(p))
 			}
+		}
+		if token := tokens[sub.TokenHash]; token != "" {
+			u.subscriptionURLs(cfg, token)
+		} else {
+			if tokenError == nil {
+				u.hint("此订阅仅保存了令牌校验值，无法还原原令牌；请使用之前保存的 URL，或在“更换访问令牌”中确认生成新链接（旧链接会失效）")
+			}
+			u.subscriptionURLs(cfg, "{access_token}")
 		}
 		for _, w := range s.exportSubscription(sub).Warnings {
 			u.warn(w)
@@ -134,7 +147,6 @@ func (u *UI) subscriptionList(s State) {
 			u.warn(u.a.T("Mihomo：") + u.a.T(warning))
 		}
 	}
-	u.showExistingSubscriptionURL()
 }
 
 func (u *UI) pickSubscription(s State, prompt string) (Subscription, bool) {
@@ -152,24 +164,28 @@ func (u *UI) pickSubscription(s State, prompt string) (Subscription, bool) {
 	return s.Subscriptions[n-1], true
 }
 
-// showToken is the only place a plaintext token is ever printed.
+// Tokens are shown only in explicit subscription creation/rotation/list views.
 func (u *UI) showToken(token, heading string) {
 	cfg, _ := u.a.subscriptionSettings()
 	u.good(heading)
-	u.warn("访问令牌只显示这一次，请立即保存；Rout 只保存它的校验值")
+	u.hint("令牌已私密保存；以后可在“查看订阅”中查看完整链接，请勿公开分享")
 	fmt.Fprintf(u.writer(), "  %s  %s\n", pad(u.a.T("访问令牌"), 10), token)
 	u.heading("订阅链接")
-	base := cfg.SubscriptionURL(token)
-	if base == "" {
-		base = "https://YOUR-DOMAIN/s/" + token
-	}
-	fmt.Fprintf(u.writer(), "  Base64:\n  %s\n  Mihomo:\n  %s?format=mihomo\n", base, base)
+	u.subscriptionURLs(cfg, token)
 	if cfg.PublicURL == "" {
 		u.warn("尚未配置 HTTPS 公网地址：订阅服务只监听本机，请先用反向代理提供 HTTPS，再在“订阅服务设置”中填写公网地址")
 	}
 	if !cfg.Enabled {
 		u.warn("订阅服务尚未启用：请在“订阅服务设置”中启用")
 	}
+}
+
+func (u *UI) subscriptionURLs(cfg SubscriptionSettings, token string) {
+	base := cfg.SubscriptionURL(token)
+	if base == "" {
+		base = "https://YOUR-DOMAIN/s/" + token
+	}
+	fmt.Fprintf(u.writer(), "      Base64:\n%s\n      Mihomo:\n%s?format=mihomo\n      Clash:\n%s?format=clash\n", base, base, base)
 }
 
 func (u *UI) subscriptionCreate() error {

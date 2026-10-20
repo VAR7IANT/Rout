@@ -1031,5 +1031,13 @@
  "中转认证信息无效":"Invalid relay authentication",
  "中转 Shadowsocks 加密方式尚未验证，请使用 Base64":"Relay Shadowsocks cipher is not verified; use Base64",
  "中转 Shadowsocks 密钥无效":"Invalid relay Shadowsocks key",
- "中转参数不是有效的 UTF-8，请检查分享链接":"Invalid UTF-8 relay parameters; inspect the share link"
+ "中转参数不是有效的 UTF-8，请检查分享链接":"Invalid UTF-8 relay parameters; inspect the share link",
+ "无法读取或保存订阅令牌文件；请检查 secrets 目录权限 0700、文件权限 0600 及文件内容；原有订阅认证不受影响":"Cannot read or save subscription tokens; check the secrets directory (0700), file (0600) and contents. Existing subscription authentication is unaffected",
+ "订阅状态回滚未完成；请保留 secrets 文件并检查 state.json：%w；%w":"Subscription state rollback is incomplete; preserve the secrets file and inspect state.json: %w; %w",
+ "此订阅仅保存了令牌校验值，无法还原原令牌；请使用之前保存的 URL，或在“更换访问令牌”中确认生成新链接（旧链接会失效）":"This subscription has only a token hash; its original token cannot be recovered. Use your saved URL, or confirm Rotate access token to generate a new URL (the old URL will stop working)",
+ "令牌已私密保存；以后可在“查看订阅”中查看完整链接，请勿公开分享":"Token saved privately. Full URLs remain available in View subscriptions; do not share them publicly",
+ "无法生成节点链接，请检查节点配置":"Cannot generate the node link; check its configuration",
+ "输入节点编号管理节点 · q 退出 Rout":"Enter a node number to manage it · q quits Rout",
+ "Clash：%s/s/{access_token}?format=clash\n":"Clash: %s/s/{access_token}?format=clash\n",
+ "此处仅显示链接模板；完整链接请在“查看订阅”中查看，旧订阅仍可使用之前保存的 URL":"Only URL templates are shown here. View subscriptions shows saved full URLs; legacy subscriptions can keep using their previously saved URL"
 }

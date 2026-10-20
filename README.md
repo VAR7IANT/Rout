@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.6`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.7` (candidate; main installation fails safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -30,10 +30,10 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.3.6
+Rout 0.3.7
   Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   1  Quick create node     → the guided node creation, straight from the main menu
-  2  Manage nodes          → pick a node: its connection link is shown at once; edit / delete / copy / enable / restart
+  2  Manage nodes          → full links below every node; pick one to edit / delete / copy / enable / restart
                              n new node · l all links · t traffic and limits
   3  AI Smart Routing      → send AI services to a chosen exit, for selected inbound nodes only
   4  Port forwarding       → relays: view / create / edit / test / delete
@@ -162,14 +162,14 @@ Limits (also shown in the menu): matching is by domain. DNS is not hijacked or f
 
 A subscription is a private URL with two native formats: the unchanged Base64 node list (`GET /s/TOKEN`) and a complete Mihomo YAML configuration (`GET /s/TOKEN?format=mihomo`; `format=clash` is an alias for Mihomo, not legacy Clash). Both use the same token, selection and ordered node settings, without a converter service or a second subscription. It is a link-management feature, not a proxy client, and covers only nodes you select by hand. Menu: **Subscriptions** (the seventh entry).
 
-1. **Create** — *Create subscription*: name it, pick nodes from the numbered list (several at once, e.g. `3 1 2`; the order you type is the subscription order), review, confirm. The access token is shown **once**; Rout stores only its SHA-256. Nodes are never added automatically, and "all nodes" is not offered. A node may be in several subscriptions. Relays are listed only if they have a share link.
+1. **Create** — *Create subscription*: name it, pick nodes from the numbered list (several at once, e.g. `3 1 2`; the order you type is the subscription order), review, confirm. The access token is saved privately so **View subscriptions** can show complete Base64, Mihomo and Clash URLs later. Authentication still uses its SHA-256 in state.json. Nodes are never added automatically, and "all nodes" is not offered. A node may be in several subscriptions. Relays are listed only if they have a share link.
 2. **Edit** — rename, add, remove, reorder, enable/disable. Edits keep the token. Links are generated per request from the current nodes, so renamed, moved or re-keyed nodes show up on the client's next update; disabled nodes are left out until re-enabled; deleted nodes are removed from every subscription.
 3. **Serve** — *Subscription server settings → Enable*. The server is **off by default**, listens on `127.0.0.1:8787` (port configurable, loopback only), runs as the `rout-subscription` systemd/OpenRC service and starts at boot. It never opens a firewall port.
 4. **Publish over HTTPS** — choose *Subscription server settings → Deploy / repair HTTPS automatically*. Enter your domain; Rout checks A/AAAA records and TCP 80/443, asks before installing Caddy from Debian/Ubuntu's signed apt repository, validates an isolated fragment and the shared layout, then verifies TLS and an authenticated subscription response. Caddy handles automatic certificate issuance/renewal. A working existing proxy is detected first: **Use existing HTTPS configuration** preserves it without taking ownership or restarting it. Optional adoption is limited to an explicitly confirmed, standalone simple imported fragment; shared/manual configurations remain external and cannot be deleted by Rout. Other platforms/layouts can keep their existing HTTPS proxy and set its public URL in the CLI.
-5. **Import** — keep `https://sub.example.com/s/TOKEN` in Shadowrocket/Base64 clients. For Clash Verge Rev, FlClash or Mihomo Party, add `https://sub.example.com/s/TOKEN?format=mihomo` as a remote configuration. Use your configured domain/prefix, and append the query to the original saved URL. New subscriptions show both complete URLs once; existing subscriptions show both safe templates. No token rotation, node reselection, client reimport or Caddy change is needed for existing Base64 clients. Mihomo responses use `application/yaml; charset=utf-8`; both formats use `Cache-Control: no-store`.
-6. **Rotate** — *Rotate access token* invalidates the old URL immediately and shows the new one once. *Delete* also revokes the URL at once.
+5. **Import** — keep `https://sub.example.com/s/TOKEN` in Shadowrocket/Base64 clients. For Clash Verge Rev, FlClash or Mihomo Party, add `https://sub.example.com/s/TOKEN?format=mihomo` as a remote configuration. Use your configured domain/prefix, and append the query to the original saved URL. Newly created/rotated subscriptions keep all three complete URLs available under View subscriptions. Legacy hash-only entries show templates and recovery guidance. No token rotation, node reselection, client reimport or Caddy change is needed for existing Base64 clients. Mihomo responses use `application/yaml; charset=utf-8`; both formats use `Cache-Control: no-store`.
+6. **Rotate** — *Rotate access token* invalidates the old URL immediately. The new URLs are displayed and saved for later viewing. *Delete* also revokes the URL at once.
 
-**Upgrading from v0.3.4 preserves existing subscriptions and URLs.** IDs, names, token hashes, enabled state, selected nodes/order, local port and public domain are retained; no schema migration, token rotation, recreation or client reimport is needed. Hashes cannot recover the original plaintext token: use the complete URL already saved in Shadowrocket. Existing-entry views show a safe URL template. The newer installer/updater snapshots private persistence and refreshes only the subscription helper; the older v0.3.4 updater keeps its old helper serving, and opening the new subscription menu or running `sudo rout subscription refresh` updates it safely.
+**Upgrading from v0.3.4 preserves existing subscriptions and URLs.** IDs, names, token hashes, enabled state, selected nodes/order, local port and public domain are retained; no schema migration, token rotation, recreation or client reimport is needed. Hashes cannot recover the original plaintext token: use the complete URL already saved in Shadowrocket. Legacy hash-only entries show URL templates; newly saved tokens remain viewable. The newer installer/updater snapshots private persistence and refreshes only the subscription helper; the older v0.3.4 updater keeps its old helper serving, and opening the new subscription menu or running `sudo rout subscription refresh` updates it safely.
 
 **DNS and ports:** all A/AAAA records must point to appropriate origin addresses. Cloudflare proxy records are identified as inconclusive origin evidence; DNS-only is preferable for initial issuance. Rout never stops nginx/Apache/other listeners or changes a node's port/firewall. Automatic management supports Debian/Ubuntu with systemd. Diagnostics separate loopback, reverse proxy, origin-local TLS, a request through public DNS from this server, and independent external verification. A root 404 is expected. Always check the original client subscription from an external network; local success does not prove public availability.
 
@@ -231,7 +231,7 @@ Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`
 
 ## Files, services and security
 
-- Configuration `/etc/rout` (0700; files 0600): `state.json` (nodes, relays, outbound proxies and the optional `ai_routing` block), `traffic.json`, `settings.json` (language, server address and family, `backup_keep`, subscription server port and public URL). Subscriptions live in the optional `subscriptions` array of `state.json` (token hashes only).
+- Configuration `/etc/rout` (0700; files 0600): `state.json` (nodes, relays, outbound proxies and the optional `ai_routing` block), `traffic.json`, `settings.json` (language, server address and family, `backup_keep`, subscription server port and public URL). Subscriptions live in the optional `subscriptions` array of `state.json` (token hashes only). New token copies live separately in `secrets/subscription-tokens.json` (0600, parent 0700), excluded from state backups, diagnostics and HTTP access.
 - Automatic pre-change backups in `/etc/rout/backups`, keeping the newest **20** by default (configurable 1–1000 in Settings). The newest backup is never removed, and explicit `rout backup` files are never pruned. Backups contain credentials and private keys.
 - Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256, streamed and installed atomically (see below) (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
 - One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, outbound label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
@@ -290,6 +290,6 @@ CI runs everything above plus `govulncheck` and cross-compilation on every push.
 
 ```sh
 # Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
-git tag -a v0.3.6 -m 'Rout v0.3.6'
-git push origin v0.3.6
+git tag -a v0.3.7 -m 'Rout v0.3.7'
+git push origin v0.3.7
 ```

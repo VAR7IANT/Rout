@@ -30,7 +30,8 @@ type Subscription struct {
 	Name string `json:"name"`
 	// Ordered selection of node IDs. Never expanded automatically.
 	NodeIDs []string `json:"node_ids"`
-	// Hex SHA-256 of the access token. The token itself is never stored.
+	// Authentication uses only this hash. An optional CLI token copy lives in a
+	// separate private file, never in State or its backups.
 	TokenHash string    `json:"token_hash"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
@@ -231,7 +232,7 @@ func nameTaken(s State, name, except string) bool {
 // mutateSubscriptions applies one change under the configuration lock to the freshly loaded
 // state, then writes it atomically with the usual backup. Nodes, services and traffic
 // accounting are never touched, and a concurrent CLI or monitor write cannot be lost.
-func (a *App) mutateSubscriptions(change func(*State) error) error {
+func (a *App) mutateSubscriptions(change func(*State) error, tokens ...string) error {
 	unlock, e := a.lock()
 	if e != nil {
 		return e
@@ -255,11 +256,30 @@ func (a *App) mutateSubscriptions(change func(*State) error) error {
 	if e != nil {
 		return e
 	}
-	return AtomicWrite(filepath.Join(a.Home, "state.json"), b, 0600)
+	path := filepath.Join(a.Home, "state.json")
+	if len(tokens) == 0 {
+		return AtomicWrite(path, b, 0600)
+	}
+	previous, e := snapshotSubscriptionFile(path)
+	if e != nil {
+		return e
+	}
+	if e = a.saveSubscriptionTokens(old, tokens); e != nil {
+		return e
+	}
+	if e = AtomicWrite(path, b, 0600); e != nil {
+		// AtomicWrite can report an fsync error after rename. Restore the exact
+		// previous state, retaining both token copies if rollback fails.
+		if rollback := previous.restore(); rollback != nil {
+			return fmt.Errorf("订阅状态回滚未完成；请保留 secrets 文件并检查 state.json：%w；%w", e, rollback)
+		}
+		return e
+	}
+	return nil
 }
 
-// CreateSubscription adds a subscription with the given ordered nodes. The plaintext token
-// is returned once and is not stored.
+// CreateSubscription adds a subscription with the given ordered nodes. Authentication
+// remains hash-only; the private token copy lets the local CLI display URLs later.
 func (a *App) CreateSubscription(name string, nodeIDs []string) (Subscription, string, error) {
 	name = strings.TrimSpace(name)
 	if e := validSubscriptionName(name); e != nil {
@@ -284,14 +304,14 @@ func (a *App) CreateSubscription(name string, nodeIDs []string) (Subscription, s
 		}
 		s.Subscriptions = append(s.Subscriptions, sub)
 		return nil
-	})
+	}, token)
 	if e != nil {
 		return Subscription{}, "", e
 	}
 	return sub, token, nil
 }
 
-func (a *App) editSubscription(id string, change func(*State, *Subscription) error) error {
+func (a *App) editSubscription(id string, change func(*State, *Subscription) error, tokens ...string) error {
 	return a.mutateSubscriptions(func(s *State) error {
 		i, e := findSubscription(*s, id)
 		if e != nil {
@@ -303,7 +323,7 @@ func (a *App) editSubscription(id string, change func(*State, *Subscription) err
 		}
 		s.Subscriptions[i] = sub
 		return nil
-	})
+	}, tokens...)
 }
 
 func (a *App) RenameSubscription(id, name string) error {
@@ -350,7 +370,7 @@ func (a *App) DeleteSubscription(id string) error {
 }
 
 // RotateSubscriptionToken swaps the token hash in one atomic write; the old token stops
-// working the moment the write lands. The new plaintext token is returned once.
+// working the moment the write lands. The new token is saved privately first.
 func (a *App) RotateSubscriptionToken(id string) (string, error) {
 	token, hash, e := newSubscriptionToken()
 	if e != nil {
@@ -359,7 +379,7 @@ func (a *App) RotateSubscriptionToken(id string) (string, error) {
 	e = a.editSubscription(id, func(_ *State, sub *Subscription) error {
 		sub.TokenHash = hash
 		return nil
-	})
+	}, token)
 	if e != nil {
 		return "", e
 	}
