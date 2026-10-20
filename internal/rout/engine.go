@@ -524,7 +524,9 @@ func (a *App) selfUpdate() error {
 		return errors.New("subscription backup failed; previous manager and services preserved")
 	}
 	// Keep the previous manager for a one-command rollback.
-	_ = copyFileAtomic(exe, exe+".previous", 0755)
+	if e = copyFileAtomic(exe, exe+".previous", 0755); e != nil {
+		return fmt.Errorf("cannot back up the previous manager; update aborted: %w", e)
+	}
 	if e = os.Rename(p, exe); e != nil {
 		return e
 	}
@@ -538,8 +540,10 @@ func (a *App) selfUpdate() error {
 			fmt.Println(msg)
 		}
 	}
-	if _, er := runOutput(45*time.Second, exe, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "subscription", "refresh"); er != nil {
-		return errors.New("manager updated; subscription helper refresh failed and rolled back, run rout subscription refresh; existing tokens and Caddy configuration were preserved")
+	if out, er := runOutput(45*time.Second, exe, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "subscription", "refresh"); er != nil {
+		// Preserve the helper transaction's exact recovery state. It may report an
+		// incomplete rollback; a failed child is not proof that rollback succeeded.
+		return fmt.Errorf("manager updated; inspect subscription status and retry rout subscription refresh: %w: %s", er, strings.TrimSpace(sanitizeSubscriptionLogs(out)))
 	}
 
 	return nil
