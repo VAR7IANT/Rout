@@ -18,7 +18,25 @@ func aiTestNode(t *testing.T, a *App, protocol, name string) Profile {
 	t.Helper()
 	p := fixture(t, protocol)
 	p.Name = name
-	p.Port, _ = freePort()
+	s, e := a.Load()
+	if e != nil {
+		t.Fatal(e)
+	}
+	// freePort closes its probe socket; the kernel can return a previously chosen
+	// fixture port again even though that profile remains in the saved state.
+	for {
+		p.Port, e = freePort()
+		if e != nil {
+			t.Fatal(e)
+		}
+		used := false
+		for _, previous := range s.Profiles {
+			used = used || previous.Port == p.Port
+		}
+		if !used {
+			break
+		}
+	}
 	p.PublicPort = p.Port
 	if protocol == "hy2" || protocol == "tuic" {
 		cert, key, e := GenerateCertificate("203.0.113.10")
@@ -26,10 +44,6 @@ func aiTestNode(t *testing.T, a *App, protocol, name string) Profile {
 			t.Fatal(e)
 		}
 		p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = "203.0.113.10", cert, key, true
-	}
-	s, e := a.Load()
-	if e != nil {
-		t.Fatal(e)
 	}
 	if e = a.Commit(s, replace(s, p), false); e != nil {
 		t.Fatal(e)
