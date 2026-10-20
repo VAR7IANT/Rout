@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.5
+
+- One-click Caddy HTTPS subscription deployment from the bilingual CLI on Debian/Ubuntu systemd hosts: strict hostname/DNS checks (including A/AAAA and Cloudflare), TCP listener ownership, explicit trusted-package installation, isolated path-restricted proxy configuration, automatic TLS, validation and authenticated response verification.
+- Detect and preserve working external Caddy endpoints without reinstalling/reloading them or claiming ownership. Explicit safe adoption is limited to one separately imported simple site; complex/shared configurations remain external. Confirmed removal touches only verified owned fragments and preserves Caddy, certificates and subscription data.
+- Zero-loss v0.3.4 compatibility: unchanged subscription schema, IDs, names, token hashes/validity, enabled state, node selections/order, Base64 output, public URL and loopback port. No token recovery/rotation, database recreation or node/proxy changes. Existing entries show a safe URL template and refer to the user's saved URL.
+- Transactional proxy/service changes with private backups, atomic mode/owner-preserving files, bounded validation, rollback verification and explicit incomplete-recovery errors. Port changes update only a verified owned upstream; external proxies block unsafe automatic port changes. Managed domain additions retain older hostnames.
+- Upgrade snapshots and conditional subscription helper refresh; stopped services and disabled boot startup are preserved. The older v0.3.4 updater keeps its existing helper serving until the new subscription menu or `subscription refresh` updates it. Add service start/stop/startup controls and sanitized bounded logs.
+- Diagnostics distinguish service/process/listener, local TLS/certificate expiry, same-host public-DNS requests and independent external testing. Header-authenticated short-lived synthetic probes never use or persist existing plaintext tokens; a root 404 is expected.
+- Tests include deterministic failure/ownership regressions, a fresh Debian signed-package Caddy installation with real private-CA TLS/reload/restart, and a real-systemd upgrade from the checksum-verified published v0.3.4 helper. Production DNS/public ACME, Shadowrocket and VPS acceptance remain manual; no tag/release is created during preparation.
+
 ## v0.3.4
 
 Release candidate preparation; not tagged or published.

@@ -809,10 +809,13 @@ func TestSubscriptionMenuCreateEditRotateDelete(t *testing.T) {
 	if e := u.subscriptions(); e != nil {
 		t.Fatal(e)
 	}
-	for _, secret := range []string{token, sc.nodes[0].UUID, sc.nodes[0].PublicKey, sc.nodes[2].Password, "://"} {
+	for _, secret := range []string{token, sc.nodes[0].UUID, sc.nodes[0].PublicKey, sc.nodes[2].Password} {
 		if strings.Contains(out.String(), secret) {
 			t.Fatalf("list view exposes %q", secret)
 		}
+	}
+	if !strings.Contains(out.String(), "https://sub.example.com/s/{access_token}") {
+		t.Fatal("missing safe URL template")
 	}
 	if !strings.Contains(out.String(), "My Phone") || !strings.Contains(out.String(), "charlie") || !strings.Contains(out.String(), "2/2 nodes available") {
 		t.Fatalf("list view:\n%s", out.String())
@@ -956,7 +959,7 @@ func TestSubscriptionCommandsAndHelp(t *testing.T) {
 	if !found {
 		t.Fatal("help lacks the subscription command")
 	}
-	if Version != "0.3.4" {
+	if Version != "0.3.5" {
 		t.Fatalf("version %s", Version)
 	}
 }

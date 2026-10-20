@@ -1,14 +1,17 @@
 package rout
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -78,26 +81,57 @@ func (a *App) subscriptionSettings() (SubscriptionSettings, error) {
 }
 
 func (a *App) saveSubscriptionSettings(cfg SubscriptionSettings) error {
+	if e := cfg.Validate(); e != nil {
+		return e
+	}
+	unlock, e := a.lock()
+	if e != nil {
+		return e
+	}
+	defer unlock()
 	st, e := a.LoadSettings()
 	if e != nil {
 		return e
 	}
 	if st.Language == "" {
-		st.Language = a.Language
+		st.Language = languageOr(a.Language)
 	}
 	st.Subscription = &cfg
-	return a.SaveSettings(st)
+	b, e := JSON(st)
+	if e != nil {
+		return e
+	}
+	old, e := snapshotSubscriptionFile(filepath.Join(a.Home, "settings.json"))
+	if e != nil {
+		return e
+	}
+	if old.Exists && bytes.Equal(old.Data, b) {
+		return nil
+	}
+	return atomicSubscriptionFile(old, b, 0600)
 }
 
 // SetSubscriptionPublicURL stores (or, when empty, clears) the HTTPS base URL.
 func (a *App) SetSubscriptionPublicURL(raw string) error {
+	unlock, e := lockFile(filepath.Join(a.Home, ".subscription.lock"), trafficLockWait)
+	if e != nil {
+		return e
+	}
+	defer unlock()
+
 	cfg, e := a.subscriptionSettings()
 	if e != nil {
 		return e
 	}
+	original := cfg
 	cfg.PublicURL = ""
 	if strings.TrimSpace(raw) != "" {
 		if cfg.PublicURL, e = normalizePublicURL(raw); e != nil {
+			return e
+		}
+	}
+	if cfg != original {
+		if _, e = a.backupSubscriptionFiles("https-url", filepath.Join(a.Home, "settings.json"), filepath.Join(a.Home, "state.json")); e != nil {
 			return e
 		}
 	}
@@ -155,7 +189,7 @@ func (a *App) SubscriptionServerStatus() (SubscriptionServerStatus, error) {
 
 // installSubscriptionService writes the helper and init definition and (re)starts the
 // service, returning once the port accepts connections.
-func (a *App) installSubscriptionService(m string, port int, restart bool) error {
+func (a *App) installSubscriptionService(m string, port int, restart, activate bool) error {
 	exe, e := os.Executable()
 	if e != nil {
 		return e
@@ -186,7 +220,7 @@ func (a *App) installSubscriptionService(m string, port int, restart bool) error
 		if e = command("systemctl", "enable", name+".service"); e != nil {
 			return e
 		}
-		if restart || !serviceActive(m, name) {
+		if activate && (restart || !serviceActive(m, name)) {
 			_ = command("systemctl", "reset-failed", name+".service")
 			if e = command("systemctl", "restart", name+".service"); e != nil {
 				return fmt.Errorf("订阅服务启动失败，请运行 journalctl -u %s 查看原因", name)
@@ -200,11 +234,14 @@ func (a *App) installSubscriptionService(m string, port int, restart bool) error
 		if e = command("rc-update", "add", name, "default"); e != nil {
 			return e
 		}
-		if written || restart || !serviceActive(m, name) {
+		if activate && (written || restart || !serviceActive(m, name)) {
 			if e = command("rc-service", name, "restart"); e != nil && !strings.Contains(e.Error(), "already starting") {
 				return fmt.Errorf("订阅服务启动失败，请查看 /var/log/%s.log", name)
 			}
 		}
+	}
+	if !activate {
+		return nil
 	}
 	deadline := time.Now().Add(healthTimeout)
 	for {
@@ -250,8 +287,156 @@ func (a *App) removeSubscriptionService(m string) error {
 	return nil
 }
 
-// EnableSubscriptionServer saves the settings and starts the service. On failure the
-// previous settings and service state are restored.
+// Subscription operations never rewrite state.json. The transaction preserves the
+// helper, unit, listener settings and previous running state if a restart fails.
+func (a *App) subscriptionServiceChange(next SubscriptionSettings, force, preserveStartup bool) (err error) {
+	prev, e := a.subscriptionSettings()
+	if e != nil {
+		return e
+	}
+	m, e := a.serviceManager()
+	if e != nil {
+		return e
+	}
+	oldHTTPS, e := a.loadHTTPSState()
+	if e != nil {
+		return e
+	}
+	changePort := prev.listenPort() != next.listenPort()
+	owned := !oldHTTPS.Removed && (oldHTTPS.Ownership == "managed" || oldHTTPS.Ownership == "adopted") && httpsOwnsPublicURL(oldHTTPS, prev.PublicURL)
+	if changePort && prev.Enabled && prev.PublicURL != "" && !owned {
+		return errors.New("the HTTPS proxy is external; keep the current port or update that proxy explicitly before changing ports")
+	}
+	state, e := a.Load()
+	if e != nil {
+		return e
+	}
+	for _, p := range state.Profiles {
+		if p.Enabled && sharesNetwork(p.Networks(), []string{"tcp"}) && p.Port == next.listenPort() {
+			return fmt.Errorf("端口 %d 已被节点 %s 使用", next.listenPort(), p.Name)
+		}
+	}
+	running := m != "none" && serviceActive(m, a.subscriptionService())
+	activate := !preserveStartup || force || running
+	startup := a.subscriptionStartupEnabled(m)
+	if (!running || changePort) && activate {
+		l, er := net.Listen("tcp", net.JoinHostPort("127.0.0.1", itoa(next.listenPort())))
+		if er != nil {
+			return fmt.Errorf("端口 %d 不可用：%w", next.listenPort(), er)
+		}
+		l.Close()
+	}
+	var files []subscriptionFileSnapshot
+	if m != "none" {
+		for _, path := range []string{a.subscriptionHelper(), a.subscriptionUnitPath(m)} {
+			f, er := snapshotSubscriptionFile(path)
+			if er != nil {
+				return er
+			}
+			files = append(files, f)
+		}
+	}
+	backupPath := ""
+	if m != "none" {
+		exe, er := os.Executable()
+		if er != nil {
+			return er
+		}
+		data, er := os.ReadFile(exe)
+		if er != nil {
+			return er
+		}
+		unit := a.subscriptionUnit()
+		if m == "openrc" {
+			unit = a.subscriptionOpenRC()
+		}
+		unchanged := files[0].Exists && bytes.Equal(files[0].Data, data) && files[1].Exists && string(files[1].Data) == unit
+		if preserveStartup && !force && next == prev && unchanged {
+			return nil
+		}
+		saved, er := a.backupSubscriptionFiles("service", filepath.Join(a.Home, "state.json"), filepath.Join(a.Home, "settings.json"), a.subscriptionHelper(), a.subscriptionUnitPath(m))
+		if er != nil {
+			return er
+		}
+		backupPath = saved[0].backup
+	}
+	changedSettings := next != prev
+	changedService := false
+	defer func() {
+		if err == nil {
+			return
+		}
+		var rollback []error
+		if changedSettings {
+			rollback = append(rollback, a.saveSubscriptionSettings(prev))
+		}
+		if changedService && m != "none" {
+			if !running {
+				if m == "systemd" {
+					rollback = append(rollback, command("systemctl", "stop", a.subscriptionService()+".service"))
+				} else {
+					rollback = append(rollback, command("rc-service", a.subscriptionService(), "stop"))
+				}
+			}
+			if len(files) > 1 && !files[1].Exists {
+				if m == "systemd" {
+					rollback = append(rollback, command("systemctl", "disable", a.subscriptionService()+".service"))
+				} else {
+					rollback = append(rollback, command("rc-update", "del", a.subscriptionService(), "default"))
+				}
+			}
+			rollback = append(rollback, restoreSubscriptionFiles(files))
+			if m == "systemd" {
+				rollback = append(rollback, command("systemctl", "daemon-reload"))
+			}
+			if running {
+				if m == "systemd" {
+					rollback = append(rollback, command("systemctl", "restart", a.subscriptionService()+".service"))
+				} else {
+					rollback = append(rollback, command("rc-service", a.subscriptionService(), "restart"))
+				}
+				if c, er := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", itoa(prev.listenPort())), 3*time.Second); er != nil {
+					rollback = append(rollback, errors.New("old subscription listener could not be verified after rollback"))
+				} else {
+					c.Close()
+				}
+			}
+			if !startup && len(files) > 1 && files[1].Exists {
+				rollback = append(rollback, a.subscriptionSetStartup(m, false))
+			}
+			for _, f := range files {
+				if !sameFileSnapshot(f) {
+					rollback = append(rollback, fmt.Errorf("subscription file rollback not verified: %s", f.Path))
+				}
+			}
+		}
+		if rb := errors.Join(rollback...); rb != nil {
+			err = errors.Join(err, fmt.Errorf("subscription rollback incomplete: %w; inspect recovery snapshot %s", rb, backupPath))
+		}
+	}()
+	if changedSettings {
+		if e = a.saveSubscriptionSettings(next); e != nil {
+			return e
+		}
+	}
+	if m != "none" {
+		changedService = true
+		if e = a.installSubscriptionService(m, next.listenPort(), force || changePort, activate); e != nil {
+			return e
+		}
+	}
+	if preserveStartup && len(files) > 1 && files[1].Exists && !startup {
+		if e = a.subscriptionSetStartup(m, false); e != nil {
+			return e
+		}
+	}
+	if changePort && owned {
+		if e = a.deploySubscriptionHTTPSLocked(oldHTTPS.Domain, false); e != nil {
+			return e
+		}
+	}
+	return nil
+}
 func (a *App) EnableSubscriptionServer(port int) error {
 	if port < 1024 || port > 65535 {
 		return errors.New("订阅服务端口应为 1024–65535")
@@ -261,72 +446,40 @@ func (a *App) EnableSubscriptionServer(port int) error {
 		return e
 	}
 	defer unlock()
-	m, e := a.serviceManager()
+	next, e := a.subscriptionSettings()
 	if e != nil {
 		return e
 	}
-	prev, e := a.subscriptionSettings()
-	if e != nil {
-		return e
-	}
-	s, e := a.Load()
-	if e != nil {
-		return e
-	}
-	for _, p := range s.Profiles {
-		if p.Enabled && sharesNetwork(p.Networks(), []string{"tcp"}) && p.Port == port {
-			return fmt.Errorf("端口 %d 已被节点 %s 使用", port, p.Name)
-		}
-	}
-	running := m != "none" && prev.Enabled && prev.listenPort() == port && serviceActive(m, a.subscriptionService())
-	if !running {
-		l, er := net.Listen("tcp", net.JoinHostPort("127.0.0.1", itoa(port)))
-		if er != nil {
-			return fmt.Errorf("端口 %d 不可用：%w", port, er)
-		}
-		l.Close()
-	}
-	next := prev
 	next.Enabled, next.Port = true, port
-	if e = a.saveSubscriptionSettings(next); e != nil {
-		return e
-	}
-	if m == "none" {
-		return nil
-	}
-	if e = a.installSubscriptionService(m, port, prev.listenPort() != port); e != nil {
-		errs := []error{e}
-		if !prev.Enabled {
-			errs = append(errs, a.removeSubscriptionService(m))
-		}
-		errs = append(errs, a.saveSubscriptionSettings(prev))
-		return errors.Join(errs...)
-	}
-	return nil
+	return a.subscriptionServiceChange(next, false, false)
 }
-
-// RestartSubscriptionServer refreshes the helper (after `rout update`) and restarts.
-func (a *App) RestartSubscriptionServer() error {
-	cfg, e := a.subscriptionSettings()
-	if e != nil {
-		return e
-	}
-	if !cfg.Enabled {
-		return errors.New("订阅服务未启用")
-	}
-	m, e := a.serviceManager()
-	if e != nil || m == "none" {
-		return e
-	}
+func (a *App) RestartSubscriptionServer() error { return a.refreshSubscriptionServer(true) }
+func (a *App) RefreshSubscriptionServer() error { return a.refreshSubscriptionServer(false) }
+func (a *App) refreshSubscriptionServer(force bool) error {
 	unlock, e := lockFile(filepath.Join(a.Home, ".subscription.lock"), trafficLockWait)
 	if e != nil {
 		return e
 	}
 	defer unlock()
-	return a.installSubscriptionService(m, cfg.listenPort(), true)
+	cfg, e := a.subscriptionSettings()
+	if e != nil {
+		return e
+	}
+	if !cfg.Enabled {
+		if force {
+			return errors.New("订阅服务未启用")
+		}
+		return nil
+	}
+	if m, er := a.serviceManager(); er != nil {
+		return er
+	} else if m == "none" {
+		return nil
+	}
+	return a.subscriptionServiceChange(cfg, force, true)
 }
 
-// DisableSubscriptionServer stops and removes the service; existing subscriptions are kept.
+// Stop/disable only the subscription unit. Caddy and all subscription data remain.
 func (a *App) DisableSubscriptionServer() error {
 	unlock, e := lockFile(filepath.Join(a.Home, ".subscription.lock"), trafficLockWait)
 	if e != nil {
@@ -346,4 +499,113 @@ func (a *App) DisableSubscriptionServer() error {
 	}
 	cfg.Enabled = false
 	return a.saveSubscriptionSettings(cfg)
+}
+
+// Logs are bounded and every subscription token-shaped URL is redacted before
+// display, including messages from an older helper or a failing reverse proxy.
+var subscriptionLogToken = regexp.MustCompile(`/s/[A-Za-z0-9_-]{43}`)
+
+func sanitizeSubscriptionLogs(b []byte) string {
+	return subscriptionLogToken.ReplaceAllString(string(b), "/s/[redacted]")
+}
+func (a *App) SubscriptionLogs() (string, error) {
+	m, e := a.serviceManager()
+	if e != nil {
+		return "", e
+	}
+	if m == "systemd" {
+		b, e := runOutput(5*time.Second, "journalctl", "-u", a.subscriptionService(), "-n", "50", "--no-pager", "-o", "cat")
+		if e != nil {
+			return "", errors.New("cannot read subscription service logs")
+		}
+		return sanitizeSubscriptionLogs(b), nil
+	}
+	if m == "openrc" {
+		f, e := os.Open("/var/log/" + a.subscriptionService() + ".log")
+		if e != nil {
+			return "", e
+		}
+		defer f.Close()
+		st, e := f.Stat()
+		if e != nil {
+			return "", e
+		}
+		if st.Size() > 32<<10 {
+			_, _ = f.Seek(-(32 << 10), 2)
+		}
+		b, e := io.ReadAll(io.LimitReader(f, 32<<10))
+		return sanitizeSubscriptionLogs(b), e
+	}
+	return "", errors.New("no managed subscription service logs in test mode")
+}
+
+func (a *App) StopSubscriptionServer() error {
+	unlock, e := lockFile(filepath.Join(a.Home, ".subscription.lock"), trafficLockWait)
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	m, e := a.serviceManager()
+	if e != nil || m == "none" {
+		return e
+	}
+	if m == "systemd" {
+		return command("systemctl", "stop", a.subscriptionService()+".service")
+	}
+	return command("rc-service", a.subscriptionService(), "stop")
+}
+func (a *App) subscriptionStartupEnabled(m string) bool {
+	if m == "systemd" {
+		_, e := runOutput(3*time.Second, "systemctl", "is-enabled", a.subscriptionService()+".service")
+		return e == nil
+	}
+	if m == "openrc" {
+		b, e := runOutput(3*time.Second, "rc-update", "show", "default")
+		if e != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			f := strings.Fields(line)
+			if len(f) > 0 && f[0] == a.subscriptionService() {
+				return true
+			}
+		}
+	}
+	return false
+}
+func (a *App) subscriptionSetStartup(m string, enabled bool) error {
+	if m == "systemd" {
+		action := "disable"
+		if enabled {
+			action = "enable"
+		}
+		return command("systemctl", action, a.subscriptionService()+".service")
+	}
+	if m == "openrc" {
+		action := "del"
+		if enabled {
+			action = "add"
+		}
+		return command("rc-update", action, a.subscriptionService(), "default")
+	}
+	return nil
+}
+func (a *App) SubscriptionStartup(enabled bool) error {
+	unlock, e := lockFile(filepath.Join(a.Home, ".subscription.lock"), trafficLockWait)
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	cfg, e := a.subscriptionSettings()
+	if e != nil {
+		return e
+	}
+	if !cfg.Enabled {
+		return errors.New("订阅服务未启用")
+	}
+	m, e := a.serviceManager()
+	if e != nil {
+		return e
+	}
+	return a.subscriptionSetStartup(m, enabled)
 }

@@ -1,5 +1,34 @@
 # Upgrading and rollback safety
 
+## To v0.3.5
+
+Existing v0.3.4 subscriptions require no migration or recreation. IDs, names, verification hashes, previously issued token validity, selected node IDs/order, enabled states, response bytes, public base URL and loopback port are preserved. No node/AI/traffic/relay state or Caddy configuration is modified by an ordinary upgrade. Keep the original Shadowrocket entry and URL.
+
+After publication, use `sudo rout update` or rerun the installer. v0.3.5 installer/newer updater snapshots private subscription persistence before replacement and refreshes only an enabled subscription helper when needed, preserving stopped state and disabled startup. The **v0.3.4 updater cannot know the new helper-refresh command**: its old helper continues serving unchanged URLs. Open subscription management in the new CLI or run `sudo rout subscription refresh` to refresh it; this takes a private backup and never calls Caddy. `sudo rout subscription restart` is an explicit restart, not required for token/data compatibility.
+
+Before publication, the default installer cannot download unpublished v0.3.5 assets. Use the exact-commit CI artifact or build the reviewed commit. On the VPS, with the candidate binary staged as `./rout-v035`:
+
+```sh
+./rout-v035 version
+sudo ./rout-v035 subscription prepare-upgrade
+sudo cp -p /usr/local/bin/rout /usr/local/bin/rout.previous
+sudo install -m 755 ./rout-v035 /usr/local/bin/.rout-v035-stage
+sudo mv -f /usr/local/bin/.rout-v035-stage /usr/local/bin/rout
+sudo rout subscription refresh
+sudo rout subscription status
+sudo rout subscription https status
+```
+
+Use the same `--home`/`--bin-dir` flags on every command for a custom installation. Persistent data stays in place; never delete `state.json`/`settings.json`, recreate subscriptions or rotate tokens to perform this upgrade. Backup snapshots include original bytes/modes/UID/GID and contain secrets; keep the backup directory private.
+
+For the existing `xhx.oioio.uk` deployment, keep the working Caddy site. In **Subscription server settings → Deploy / repair HTTPS**, accept the existing domain, then choose **Use existing HTTPS configuration**. This verifies the existing endpoint without rewriting/reloading Caddy or transferring deletion rights. Optional adoption requires explicit confirmation and a proven isolated fragment; a site in the main/shared Caddyfile remains external.
+
+Verify the original Shadowrocket entry over mobile data: refresh it without deleting/reimporting, check the node names/order, then connect to the existing Reality node and check the existing AI routing. Local diagnostics explicitly do not prove external reachability. Public ACME issuance and actual client/VPS acceptance are not claimed by automated tests.
+
+Rollback the manager with `sudo mv /usr/local/bin/rout.previous /usr/local/bin/rout`, then `sudo rout subscription restart` to refresh its helper. v0.3.4 reads the unchanged subscription schema and original tokens. It does not understand the separate HTTPS ownership file or manage Caddy, so leave working HTTPS configuration intact. If a deployment rollback reports incomplete recovery, follow the exact private snapshot/resource instructions and validate Caddy before reloading; do not restore an old whole database over newer subscription edits.
+
+See [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) for ownership, DNS/ports, automatic renewal, diagnostics, removal and manual fallbacks.
+
 ## To v0.3.4
 
 Adds subscriptions. Nothing is required on upgrade: `state.json`, nodes, outbounds, AI routing, relays, traffic data and node services are unchanged, and the subscription server stays disabled until you enable it. The optional `subscriptions` array and `subscription` settings key appear only after you use the feature. To use a newer binary in an already running subscription server, run `sudo rout subscription restart` after `rout update` (the service runs a copy under `/opt/rout/bin`). To go back to v0.3.3, disable the server first (`Subscriptions → Subscription server settings → Disable`); v0.3.3 ignores the new fields and drops them on its next state write, and the pre-change backups keep them. See [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md).

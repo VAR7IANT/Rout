@@ -23,6 +23,7 @@ type App struct {
 	trafficStop               func(Profile) error
 	trafficStart              func(Profile) error
 	bootID                    func() (string, error)
+	subscriptionHTTPS         *subscriptionHTTPSRuntime
 	// Only the running monitor reopens sealed checkpoints.
 	monitorMode bool
 }

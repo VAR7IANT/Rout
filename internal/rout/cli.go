@@ -56,7 +56,7 @@ var helpLines = [][2]string{
 	{"rout copy ID", "输出链接并请求终端复制"},
 	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
 	{"rout relays", "端口转发（中转）管理"},
-	{"rout subscription [list|status|restart|serve]", "订阅管理：菜单、列表、服务状态、重启；serve 为订阅服务进程"},
+	{"rout subscription [list|status|restart|https|logs|serve]", "订阅管理：菜单、列表、服务状态、重启；serve 为订阅服务进程"},
 	{"rout ai [status|test|apply]", "AI 智能分流：菜单、状态、测试配置或重新应用"},
 	{"rout outbounds", "出站代理管理（旧名称 exits 仍可用）"},
 	{"rout traffic", "全部节点流量"},
@@ -180,7 +180,7 @@ func Run(args []string) (result error) {
 		}
 		return u.settings()
 	case "update":
-		return SelfUpdate(a.Language)
+		return a.selfUpdate()
 	case "engines":
 		for _, name := range []string{"sing-box", "gost"} {
 			if e := a.EnsureEngine(name); e != nil {

@@ -1,84 +1,129 @@
-# Subscriptions (v0.3.4)
+# Subscriptions and HTTPS (v0.3.5)
 
-A subscription is an independent, token-protected URL that returns a standard Base64 list of share links for nodes you chose. Rout only generates the list; it does not run a local proxy client and never changes routing, firewall rules or node services.
+A subscription returns standard Base64 of the share links for the nodes you explicitly selected. It does not change proxy protocols, credentials, AI bindings, routing, traffic accounting or relay settings.
 
-## Data model
+## Existing v0.3.4 subscriptions survive an upgrade
 
-`state.json` gains an optional `subscriptions` array (absent until the first subscription exists, so older state files load unchanged and `schema` stays 1/2):
+There is **no subscription schema migration**. The optional `subscriptions` array in `state.json` retains each ID, name, ordered `node_ids`, `token_hash`, `enabled` and `created_at`. `settings.json` retains the subscription enablement, loopback port and public base URL. An unchanged selection produces the same Base64 body, names and order. Existing Shadowrocket URLs continue authenticating; do not delete/recreate subscriptions, rotate tokens, reselect nodes or reimport clients during an upgrade.
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Stable 12-hex ID |
-| `name` | Unique (case-insensitive), 1–80 characters |
-| `node_ids` | Ordered list of node IDs (never indexes); at most 200 |
-| `token_hash` | SHA-256 of the access token (hex). The token is never stored |
-| `enabled` | Disabled subscriptions answer `404` |
-| `created_at` | UTC timestamp |
+Only SHA-256 verification hashes of 256-bit random tokens are stored. **The original plaintext token and full URL cannot be reconstructed from those hashes.** Existing entries show `https://YOUR-DOMAIN/s/{access_token}` using the configured base URL and tell you to keep the complete URL previously saved in your client. Tokens are printed only when explicitly creating or rotating a subscription. Ordinary changes and HTTPS operations never rotate them.
 
-Server settings (`settings.json`, key `subscription`): `enabled` (default off), `port` (default 8787, 1024–65535), `public_url` (`https://` only).
+The installer and newer updater create private, idempotent pre-upgrade snapshots, then refresh only the subscription helper when necessary. They do not recreate a database. Snapshots preserve original bytes, mode, UID and GID and are stored under `/etc/rout/backups` (0700; files 0600). Helper refresh preserves a deliberately stopped service and disabled boot startup. The subscription helper remains `/opt/rout/bin/rout-subscription-v1`.
 
-Subscription edits take the normal configuration lock, re-read the state under the lock, apply one change, validate, write the usual pre-change backup and replace `state.json` atomically (0600). They never touch node files, services or traffic accounting, and a concurrent monitor or CLI write cannot be overwritten. A node deletion removes the node from every subscription in the same transaction. A downgrade to a Rout older than v0.3.4 ignores the field and drops it on its next write; the backup taken before each change preserves it.
+The **v0.3.4 updater predates automatic subscription refresh**. Its old helper keeps serving the same original URLs after the manager update. Opening subscription management in the newer CLI refreshes that helper; `sudo rout subscription refresh` performs the same operation explicitly. Neither operation touches Caddy, node services, node credentials or subscription records.
 
-## Tokens
+## One-click HTTPS
 
-43 characters (256 bits from `crypto/rand`, base64url). Shown only on creation and rotation. Verification hashes the presented token and compares it with every stored hash in constant time, without early exit. Rotation swaps the hash in one atomic write, so the old URL stops working immediately; ordinary edits never change it. Tokens are not logged. A lost token cannot be recovered; rotate it.
+Menu: **Subscriptions → Subscription server settings**:
 
-## Request handling
+1. Enable / change local port
+2. Configure public HTTPS URL
+3. Deploy / repair HTTPS automatically
+4. HTTPS status and diagnostics
+5. Restart subscription service
+6. Disable subscription service
+7. Remove Rout-managed HTTPS configuration
+0. Back (`b` also returns; `q` quits)
 
-`GET /s/{token}` (and `HEAD`). Everything else is `404`; other methods are `405`.
+The local HTTP service is off until enabled and always binds `127.0.0.1` (default 8787). The actual configured port is used by the proxy. No firewall rule is added, and no proxy node's port is changed.
 
-1. The token must be 43 base64url characters, otherwise `404`.
-2. The state is re-read when `state.json` changed on disk (inode, mtime, size), so CLI changes apply on the next request without restart or locking.
-3. No match, disabled subscription → `404`, identical for all cases.
-4. Selected IDs are resolved in saved order. Deleted and disabled nodes are skipped; every other node uses `Profile.URI()` (the same code as `rout export`; IPv6 hosts are bracketed, Hysteria2 certificate pins and TUIC parameters are preserved). A node whose link cannot be built is skipped and logged by name.
-5. Links are joined with `\n`, Base64-encoded (standard alphabet, padded) and returned as `text/plain; charset=utf-8` with `Cache-Control: no-store`.
-6. If nothing remains: `503` with `Retry-After`, not an empty `200`. If `state.json` is unreadable: `503` without detail (logged once per change).
+Automatic deployment is supported on **Debian and Ubuntu with systemd**, using Caddy from the distribution's signed apt repository. If Caddy is absent, installation requires a separate explicit confirmation. No downloaded shell installer is executed. Other platforms retain the subscription server and may use externally managed HTTPS; automatic installation/management has no untested fallback.
 
-Limits: header read 5 s, request 10 s, write 10 s, idle 30 s, headers 8 KiB, 64 requests in flight (`503` beyond), 256 connections. Shutdown is graceful (5 s). Logs go to stderr/journal and contain only subscription IDs, node names and generic errors.
+Enter a DNS hostname such as `sub.example.com`, without a scheme, port or path. Rout resolves every A/AAAA record and compares it with detected public/interface addresses. Correct stale records, including an AAAA record pointing elsewhere on an IPv4-only server, and wait for DNS propagation. Multiple local public addresses and both IP families are supported.
 
-## Service
+Cloudflare proxy ranges are reported as **origin comparison inconclusive**, not an origin mismatch or proof of correctness. DNS-only mode is preferable for initial certificate issuance; check the origin address and Full (strict) mode before re-enabling the proxy. Rout does not change Cloudflare settings.
 
-`rout subscription serve` is the server process (it exits with an error unless enabled in settings, and refuses non-loopback binds). *Subscription server settings → Enable* checks the port (free, not used by a node), saves settings, installs the unit and waits until the port accepts connections; failure restores the previous settings and removes a unit that was newly added. Disabling removes the unit and keeps subscriptions.
+TCP 80 and 443 must be reachable from the Internet and available to the verified Caddy service. Rout reports listener owners and refuses conflicts with nginx, Apache, unknown processes or Rout nodes. It never stops them. Provider firewalls/NAT mappings remain your responsibility.
 
-* systemd unit `rout-subscription.service` (custom `--home` gets a hashed suffix): `ProtectSystem=strict` (the server cannot write anywhere), empty `CapabilityBoundingSet`, `NoNewPrivileges`, `RestrictAddressFamilies=AF_INET AF_INET6`, kernel/cgroup protections, `Restart=on-failure`, enabled at boot.
-* OpenRC script `rout-subscription` with `supervise-daemon` and a 600-mode log in `/var/log` rotated at start.
-* The unit runs `/opt/rout/bin/rout-subscription-v1`, a copy of the manager binary, so replacing `/usr/local/bin/rout` does not disturb a running server. After `rout update`, run `sudo rout subscription restart` to move it to the new version.
-* Existing node services, the traffic monitor and their units are not modified.
+Caddy handles automatic certificate issuance and renewal. Rout validates the generated fragment and complete Caddyfile, atomically writes an isolated fragment, reloads Caddy and verifies TLS and the authenticated response before saving the public URL. Caddy is enabled at boot. The generated site proxies only `/s/*`; `/` deliberately returns 404. Access logging is discarded for the owned site and proxy errors have a generic response so token paths are not logged.
 
-## HTTPS reverse proxy
+## Existing HTTPS and ownership
 
-The server speaks plain HTTP on loopback only. Terminate TLS with a proxy you manage and forward `/s/` to `127.0.0.1:PORT`:
+A manually configured deployment such as:
 
-```
-# Caddy
-sub.example.com { reverse_proxy 127.0.0.1:8787 }
-
-# nginx (certificate directives omitted)
-location /s/ { proxy_pass http://127.0.0.1:8787; }
+```caddyfile
+sub.example.com {
+    reverse_proxy 127.0.0.1:8787
+}
 ```
 
-Rout does not open ports, install proxies or request certificates. Configure the public URL (`https://` only) so the CLI can print complete URLs. Keep proxy access logs off or redacted for `/s/`: the token is in the path.
+remains external. Detection checks installed/running Caddy, its active configuration where available, the configured domain/upstream and an authenticated synthetic response. A working endpoint can also be used externally when its nonstandard proxy layout cannot safely be inspected. Detection does not install another Caddy, duplicate a domain block, reload a working proxy or transfer ownership.
 
-## Troubleshooting
+The CLI offers **Use existing HTTPS configuration**, **Inspect configuration summary**, and **Attempt safe adoption**. Using the existing endpoint saves its base URL only when needed. It grants no deletion rights. Inspection does not dump shared configurations, keys or token URLs.
+
+Safe adoption requires an explicitly confirmed, separately imported file containing exactly one simple domain-to-loopback `reverse_proxy` block. Root/shared files, multiple sites, snippets, complex handlers, symlinks, manual certificates and uncertain import layouts remain external. Adoption preserves the existing fragment bytes and does not reload Caddy. If adoption is unavailable, continue using external mode.
+
+For management, Rout proves that the normal systemd Caddyfile configuration matches the active Caddy configuration. A disabled/custom admin API, JSON-based configuration, nonstandard unit, stale disk configuration or uncertain ownership prevents automatic edits. Keep using the verified endpoint externally, or reconcile the layout yourself before retrying. Do not overwrite a shared Caddyfile to satisfy this check.
+
+A new deployment appends one marked absolute import and preserves the existing Caddyfile bytes and imported sites. The fragment lives under `/etc/caddy/rout-<home-hash>/`. Ownership, content digest, domain aliases and last error live in the separate private `/etc/rout/subscription-https.json`; this is not subscription storage. External edits to an owned fragment invalidate automatic modification/removal rights until reviewed.
+
+## Verification and diagnostics
+
+```sh
+sudo rout subscription status
+sudo rout subscription https status
+```
+
+Diagnostics distinguish:
+
+- The init-managed subscription service and its loopback response.
+- Installed/running reverse proxy, TCP listener owners and configuration ownership.
+- Origin-local HTTPS negotiation, normal certificate validation and expiration.
+- An authenticated request through public DNS **from the server itself**.
+- Verification from an **independent external network**, which is explicitly unverified unless an independent checker is available.
+
+Local success is not proof of external reachability. `/` returning 404 is normal. Verify the existing subscription over a mobile network in Shadowrocket after upgrading. A configuration write or a process accepting TCP is never labeled a verified public subscription.
+
+The controlled diagnostic route `/s/_rout_probe` requires a fresh 256-bit bearer credential sent in an HTTP header. Only its hash, a two-minute expiry and an inert synthetic Base64 response are temporarily stored (0600). The file is cleaned on completion and expires after a crash. The probe cannot export real nodes. Ordinary `/s/{access_token}` authentication and output are unchanged. Existing user tokens are never read, placed in command arguments or logged for diagnosis.
+
+Caddy's automatic renewal policy and certificate expiry are shown; the last actual renewal event is not independently asserted. External proxy access/error logs remain outside Rout ownership: keep `/s/` token paths redacted or disabled there. Rout's own service log viewer is bounded and redacts token-shaped paths.
+
+## Service controls and port changes
+
+```sh
+sudo rout subscription enable 8787
+sudo rout subscription start
+sudo rout subscription stop              # temporary stop; keeps boot settings
+sudo rout subscription restart
+sudo rout subscription refresh            # update helper only when needed
+sudo rout subscription startup off        # keep running, disable boot startup
+sudo rout subscription startup on
+sudo rout subscription logs               # sanitized, bounded output
+sudo rout subscription disable            # persistent disable; data retained
+```
+
+Disabling the subscription service does not stop Caddy or remove HTTPS configuration. Restarting it does not rewrite HTTPS settings. Changing the local port checks conflicts and, for a verified Rout-owned HTTPS site, updates its upstream and verifies both sides. Failure restores the previous settings, helper/unit and owned proxy configuration. An externally managed public URL prevents an automatic port change: preserve the old port or explicitly update that external proxy first.
+
+A managed domain change retains the previous owned hostname as an alias so old client URLs remain reachable. A manually changed public base URL cannot guarantee the old domain remains reachable; clients may need their URL updated. The token itself remains valid.
+
+## Transactions, recovery and removal
+
+Pre-change snapshots include the affected proxy files and private persistence files with their original ownership/modes. Normal deployment never writes `state.json`. Unrelated concurrent configuration is not restored from an old whole-database snapshot. The public URL is changed only after verification.
+
+Validation, reload, certificate or response failure restores the previous owned resources and public URL. Rout verifies restored file bytes and, when applicable, the active Caddy configuration. Concurrent external edits are preserved rather than overwritten. A rollback failure is reported as **incomplete**, with the failed resource and private recovery snapshot; do not assume the endpoint was restored merely because files were copied. After review, restore only the affected owned files, run `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, then reload Caddy and check diagnostics. Do not blindly restore an old `state.json` over subsequent node/subscription edits.
+
+A newly installed Caddy package is retained after a failed deployment; its prior stopped/disabled state is restored. Shared Caddy is never uninstalled automatically.
+
+Use **Remove Rout-managed HTTPS configuration** (or `sudo rout subscription https remove`) and explicitly confirm the domain list. Only a digest-verified owned/adopted fragment can be removed. A harmless placeholder remains so exact imports stay valid. Caddy, unrelated sites, TLS certificates, subscriptions, tokens, selections and the saved public URL are preserved. External configurations cannot be automatically removed.
+
+## Manual fallback and troubleshooting
+
+For unsupported layouts/platforms, keep the loopback service and configure your existing reverse proxy to forward `/s/` to its actual `127.0.0.1:PORT`. Configure its TLS and token-safe logging, then set the public HTTPS base URL through Rout. This does not transfer ownership.
 
 | Symptom | Check |
 | --- | --- |
-| `404` | Token typo, rotated/deleted/disabled subscription, wrong path (`/s/TOKEN` exactly) |
-| `503 no available nodes` | `rout subscription list` shows which selected nodes are disabled or deleted; the server log names them |
-| `503 temporarily unavailable` | `state.json` unreadable; run `rout doctor` |
-| Connection refused | `rout subscription status`; `journalctl -u rout-subscription` or `/var/log/rout-subscription.log`; port conflict |
-| Works locally, fails remotely | Reverse proxy/DNS/certificate; Rout never exposes the port itself |
-| Client shows stale nodes | Client update interval; the server itself caches nothing |
+| HTTPS protocol/connection error while loopback works | Caddy/proxy listener, DNS, certificate issuance, provider firewall/NAT and TCP 80/443 |
+| DNS mismatch | Every A/AAAA record, all server public addresses, propagation; distinguish Cloudflare proxy addresses |
+| 404 at `/` | Expected; use authenticated diagnostics or the original client subscription |
+| 404 at `/s/TOKEN` | Original saved token, disabled/deleted subscription, wrong prefix or explicit prior token rotation |
+| Probe unavailable after a v0.3.4 update | `sudo rout subscription refresh`; old user tokens remain valid |
+| 503 | Local service stopped, state unreadable, or no selected node currently available; never treated as an empty success |
+| External site cannot be adopted | Keep external mode; only a standalone simple imported fragment is eligible |
+| Owned file changed externally | Preserve it and inspect its ownership/digest; Rout refuses to erase the change |
+| Rollback incomplete | Inspect the exact private snapshot and resource named in the error, validate/reload after review, then test the original URL |
 
-## Security limits
+## Test boundaries
 
-* Whoever holds the URL can read every selected node's credentials. Treat it like the links themselves; use HTTPS only and rotate on suspicion.
-* One token per subscription; there are no per-device tokens or expiry. Rate limiting is only the global in-flight/connection cap (a reverse proxy sees all clients from one address). Token guessing is infeasible by entropy, not by throttling.
-* Hashes are unsalted SHA-256 of a 256-bit random secret, which is sufficient for high-entropy tokens but not for human-chosen ones.
-* The loopback server trusts its reverse proxy; do not publish the port directly.
-* A client that ignores `503`/`404` status codes is outside Rout's control.
-* Base64 share-link output only. Live compatibility with specific clients has not been verified by automated tests.
+Unit/race tests cover v0.3.4 persistence, token validity, ordering/Base64 output, URL preservation, DNS families/Cloudflare, conflicts, ownership/adoption, rollback, port changes, diagnostics, bilingual menus and routing/traffic invariance. Isolated real Caddy tests cover a fresh signed-package installation, automatic private test-CA certificates, real TLS responses, preservation of an unrelated site and saved URL, repair/restart/removal, error-log redaction and failed replacement rollback. A disposable systemd CI test upgrades the checksum-verified published v0.3.4 helper and verifies the original token/body and persisted Reality/AI/traffic/relay state, restart and boot-state preservation.
 
-## Test coverage
-
-`internal/rout/subscription_test.go` covers lifecycle, persistence, manual-selection rules, token storage/rotation, Base64 order and content for all link types and IPv4/IPv6, dynamic node changes, no-node `503`, authentication/method/path handling, read-only behavior, concurrent readers and writers (run under `-race`), real listener start/stop and bind errors, settings validation, unit/script contents, pre-v0.3.4 state compatibility with AI routing, and the English/Chinese menu flows. Real systemd/OpenRC start-up of the subscription service and real-client import are **not** covered by automated tests (see the release notes for the manual acceptance list).
+These tests do not claim public ACME issuance on your domain, real Shadowrocket interaction or production verification. Check public certificate issuance, external reachability, mobile client refresh and existing proxy/AI behavior on the actual VPS before release.

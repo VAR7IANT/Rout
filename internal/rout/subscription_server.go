@@ -186,7 +186,7 @@ func (a *App) serveSubscriptions(ctx context.Context, addr string, logf func(str
 	}
 	cache := &stateCache{a: a}
 	srv := &http.Server{
-		Handler:           newSubscriptionHandler(cache.load, logf),
+		Handler:           a.subscriptionHTTPHandler(cache.load, logf),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -228,4 +228,16 @@ func (a *App) ServeSubscriptions(ctx context.Context) error {
 	logf := func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 	addr := net.JoinHostPort("127.0.0.1", itoa(st.Subscription.listenPort()))
 	return a.serveSubscriptions(ctx, addr, logf, func(n net.Addr) { logf("subscription server listening on %s", n) })
+}
+
+// Diagnostic responses share the subscription transport, but can never export nodes.
+func (a *App) subscriptionHTTPHandler(load func() (State, error), logf func(string, ...any)) http.Handler {
+	normal := newSubscriptionHandler(load, logf)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == subscriptionProbePath {
+			a.serveSubscriptionProbe(w, r)
+			return
+		}
+		normal.ServeHTTP(w, r)
+	})
 }

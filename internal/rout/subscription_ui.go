@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -129,6 +130,7 @@ func (u *UI) subscriptionList(s State) {
 			u.warn(w)
 		}
 	}
+	u.showExistingSubscriptionURL()
 }
 
 func (u *UI) pickSubscription(s State, prompt string) (Subscription, bool) {
@@ -207,6 +209,7 @@ func (u *UI) subscriptionCreate() error {
 }
 
 func (u *UI) subscriptionEdit() error {
+	u.showExistingSubscriptionURL()
 	for {
 		s, e := u.a.Load()
 		if e != nil {
@@ -290,7 +293,7 @@ func (u *UI) subscriptionEditOne(id string) error {
 			err, saved = u.a.SetSubscriptionEnabled(id, !sub.Enabled), true
 		}
 		if err != nil {
-			u.fail(u.a.Error(err))
+			u.fail(u.a.subscriptionText(u.a.Error(err)))
 		} else if saved && u.err == nil {
 			u.good("已保存；令牌保持不变")
 		}
@@ -372,11 +375,9 @@ func (u *UI) subscriptionServer() error {
 		if e != nil {
 			return e
 		}
-		u.hint("服务只监听本机；请用 HTTPS 反向代理转发到该端口，不要直接暴露")
-		items := []menuItem{item("enable", "启用／修改端口"), item("public", "设置 HTTPS 公网地址")}
-		if st.Settings.Enabled {
-			items = append(items, item("restart", "重启服务"), item("disable", "停用服务"))
-		}
+		u.hint("服务只监听回环地址；可自动部署 HTTPS，或继续使用已有反向代理")
+		items := []menuItem{item("enable", "启用／修改端口"), item("public", "设置 HTTPS 公网地址"), item("deploy", "自动部署／修复 HTTPS"), item("diagnostics", "HTTPS 状态与诊断"), item("restart", "重启服务"), item("disable", "停用服务"), item("remove", "移除 Rout 管理的 HTTPS 配置")}
+
 		v := u.menu("", items, "返回")
 		if v == "" || u.err != nil {
 			return u.err
@@ -393,23 +394,34 @@ func (u *UI) subscriptionServer() error {
 		case "public":
 			raw := u.ask("HTTPS 公网地址（如 https://sub.example.com，留空清除）", st.Settings.PublicURL)
 			if u.err == nil {
+				parsed, _ := url.Parse(raw)
+				if parsed != nil && !u.subscriptionDomainWarning(st.Settings.PublicURL, parsed.Hostname()) {
+					break
+				}
 				if err = u.a.SetSubscriptionPublicURL(raw); err == nil {
 					u.good("公网地址已保存")
 				}
 			}
+		case "deploy":
+			err = u.subscriptionHTTPSDeploy("")
+		case "diagnostics":
+			err = u.subscriptionHTTPSDiagnostics()
+		case "remove":
+			err = u.subscriptionHTTPSRemove()
 		case "restart":
 			if err = u.a.RestartSubscriptionServer(); err == nil {
 				u.good("订阅服务已重启")
 			}
 		case "disable":
-			if u.yes("停用订阅服务（订阅配置会保留）", false) {
+			u.warn("停用后客户端暂时无法刷新；订阅和令牌保留，Caddy 与 HTTPS 配置不会停止或删除")
+			if u.yes("停用订阅服务（订阅配置会保留）", true) {
 				if err = u.a.DisableSubscriptionServer(); err == nil {
 					u.good("订阅服务已停用")
 				}
 			}
 		}
 		if err != nil {
-			u.fail(u.a.Error(err))
+			u.fail(u.a.subscriptionText(u.a.Error(err)))
 		}
 		if u.err != nil {
 			return u.err
@@ -454,9 +466,17 @@ func (u *UI) subscriptions() error {
 }
 
 // subscriptionCommand implements `rout subscription [list|status|restart|serve]`.
-func (u *UI) subscriptionCommand(args []string) error {
+func (u *UI) subscriptionCommand(args []string) (err error) {
+	defer func() {
+		if err != nil {
+			err = subscriptionUIError{err, u.a.subscriptionText(err.Error())}
+		}
+	}()
 	if len(args) < 2 {
 		if e := u.initLanguage(false); e != nil {
+			return e
+		}
+		if e := u.a.RefreshSubscriptionServer(); e != nil {
 			return e
 		}
 		return u.subscriptions()
@@ -476,8 +496,55 @@ func (u *UI) subscriptionCommand(args []string) error {
 	case "status":
 		_, e := u.subscriptionServerInfo()
 		return e
+	case "prepare-upgrade":
+		return u.a.PrepareSubscriptionUpgrade()
+	case "refresh":
+		return u.a.RefreshSubscriptionServer()
+	case "enable", "start":
+		cfg, e := u.a.subscriptionSettings()
+		if e != nil {
+			return e
+		}
+		port := cfg.listenPort()
+		if len(args) > 2 {
+			var parsed int
+			if _, e = fmt.Sscan(args[2], &parsed); e != nil {
+				return e
+			}
+			port = parsed
+		}
+		return u.a.EnableSubscriptionServer(port)
+	case "stop":
+		return u.a.StopSubscriptionServer()
+	case "disable":
+		return u.a.DisableSubscriptionServer()
+	case "startup":
+		if len(args) != 3 || (args[2] != "on" && args[2] != "off") {
+			return errors.New("use subscription startup on|off")
+		}
+		return u.a.SubscriptionStartup(args[2] == "on")
+	case "logs":
+		logs, e := u.a.SubscriptionLogs()
+		if e == nil {
+			fmt.Fprintln(u.writer(), logs)
+		}
+		return e
+	case "https":
+		if len(args) < 3 || args[2] == "status" {
+			return u.subscriptionHTTPSDiagnostics()
+		}
+		switch args[2] {
+		case "deploy", "repair":
+			domain := ""
+			if len(args) > 3 {
+				domain = args[3]
+			}
+			return u.subscriptionHTTPSDeploy(domain)
+		case "remove":
+			return u.subscriptionHTTPSRemove()
+		}
 	case "restart":
 		return u.a.RestartSubscriptionServer()
 	}
-	return errors.New("用法：rout subscription [list|status|restart|serve]")
+	return errors.New("用法：rout subscription [list|status|enable|start|stop|restart|refresh|disable|startup|logs|https|serve]")
 }

@@ -428,6 +428,9 @@ func SelfUpdate(language ...string) error {
 	if len(language) > 0 {
 		a.Language = language[0]
 	}
+	return a.selfUpdate()
+}
+func (a *App) selfUpdate() error {
 	r, e := httpClient().Get("https://api.github.com/repos/VAR7IANT/Rout/releases/latest")
 	if e != nil {
 		return errors.New("无法查询更新")
@@ -515,6 +518,11 @@ func SelfUpdate(language ...string) error {
 	if e != nil || strings.TrimSpace(string(out)) != "rout "+strings.TrimPrefix(release.Tag, "v") {
 		return errors.New("新版本无法运行或版本不符，保留旧版本")
 	}
+	// Ask the staged, backward-compatible manager to snapshot subscriptions before
+	// replacement. No migration, token regeneration or service restart occurs here.
+	if _, e = runOutput(30*time.Second, p, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "subscription", "prepare-upgrade"); e != nil {
+		return errors.New("subscription backup failed; previous manager and services preserved")
+	}
 	// Keep the previous manager for a one-command rollback.
 	_ = copyFileAtomic(exe, exe+".previous", 0755)
 	if e = os.Rename(p, exe); e != nil {
@@ -524,12 +532,16 @@ func SelfUpdate(language ...string) error {
 	// The monitor helper must match the manager; reinstalling it restarts only the
 	// monitor (finite nodes resume after their sealed checkpoints are verified).
 	if a.trafficActive() {
-		if out, er := runOutput(2*time.Minute, exe, "--lang", languageOr(a.Language), "traffic", "install"); er != nil {
+		if out, er := runOutput(2*time.Minute, exe, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "traffic", "install"); er != nil {
 			a.printf("流量监控程序未更新，请运行 rout traffic install：%s\n", strings.TrimSpace(string(out)))
 		} else if msg := strings.TrimSpace(string(out)); msg != "" {
 			fmt.Println(msg)
 		}
 	}
+	if _, er := runOutput(45*time.Second, exe, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "subscription", "refresh"); er != nil {
+		return errors.New("manager updated; subscription helper refresh failed and rolled back, run rout subscription refresh; existing tokens and Caddy configuration were preserved")
+	}
+
 	return nil
 }
 func languageOr(lang string) string {

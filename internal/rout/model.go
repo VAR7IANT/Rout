@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.4"
+const Version = "0.3.5"
 
 type State struct {
 	Schema   int       `json:"schema"`

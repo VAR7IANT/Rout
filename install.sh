@@ -3,7 +3,7 @@ set -eu
 umask 077
 
 REPO=VAR7IANT/Rout
-VERSION=${ROUT_VERSION:-v0.3.4}
+VERSION=${ROUT_VERSION:-v0.3.5}
 DEST=${ROUT_INSTALL_DIR:-/usr/local/bin}
 
 fail() { printf '%s\n' "错误 / Error: $*" >&2; exit 1; }
@@ -32,6 +32,11 @@ chmod 755 "$TMP/$ASSET"
 ACTUAL_VERSION=$("$TMP/$ASSET" version)
 [ "$ACTUAL_VERSION" = "rout ${VERSION#v}" ] || fail '文件版本与请求版本不一致，保留原安装 / Binary version mismatch; keeping existing installation'
 printf '%s\n' "$ACTUAL_VERSION"
+# Preserve the existing hash-only subscription database before replacing the manager.
+# A disabled/unconfigured service remains disabled; no schema migration is required.
+if [ "$DEST" = /usr/local/bin ]; then
+    "$TMP/$ASSET" subscription prepare-upgrade || fail '订阅备份失败，保留旧安装 / Subscription backup failed; keeping existing installation'
+fi
 mkdir -p "$DEST"
 # Copy inside the destination filesystem before renaming atomically.
 STAGED=$DEST/.rout-install-$$
@@ -48,5 +53,8 @@ if [ "$DEST" = /usr/local/bin ] && [ "${ROUT_SETUP_TRAFFIC:-1}" = 1 ]; then
     if ! "$DEST/rout" traffic install; then
         printf '%s\n' '流量统计尚未启用；现有无限额节点继续运行。修复 nftables 后运行 rout traffic install / Traffic monitoring unavailable; unlimited nodes keep running. Fix nftables and run rout traffic install' >&2
     fi
+fi
+if [ "$DEST" = /usr/local/bin ]; then
+    "$DEST/rout" subscription refresh || fail '订阅服务更新失败，原订阅和 Caddy 配置保留；运行 rout subscription refresh / Subscription refresh failed; data and Caddy preserved; run rout subscription refresh'
 fi
 printf '%s\n' '安装完成 / Installed. Run rout to select 简体中文 or English' '首次创建时自动校验所需内核 / Required engines are downloaded and verified on first use'

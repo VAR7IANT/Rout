@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.4` (candidate; installation from main will fail safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.5` (candidate; installation from main will fail safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -30,7 +30,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.3.1
+Rout 0.3.5
   Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   1  Quick create node     → the guided node creation, straight from the main menu
   2  Manage nodes          → pick a node: its connection link is shown at once; edit / delete / copy / enable / restart
@@ -39,6 +39,7 @@ Rout 0.3.1
   4  Port forwarding       → relays: view / create / edit / test / delete
   5  Outbound proxies      → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
   6  Service & system      → services · diagnostics · updates · settings (language, server address, backups, uninstall)
+  7  Subscriptions           → selected-node subscriptions · HTTPS deployment · diagnostics
   0  Quit
 ```
 
@@ -164,11 +165,17 @@ A subscription is a private URL that returns a standard Base64 node list (`GET /
 1. **Create** — *Create subscription*: name it, pick nodes from the numbered list (several at once, e.g. `3 1 2`; the order you type is the subscription order), review, confirm. The access token is shown **once**; Rout stores only its SHA-256. Nodes are never added automatically, and "all nodes" is not offered. A node may be in several subscriptions. Relays are listed only if they have a share link.
 2. **Edit** — rename, add, remove, reorder, enable/disable. Edits keep the token. Links are generated per request from the current nodes, so renamed, moved or re-keyed nodes show up on the client's next update; disabled nodes are left out until re-enabled; deleted nodes are removed from every subscription.
 3. **Serve** — *Subscription server settings → Enable*. The server is **off by default**, listens on `127.0.0.1:8787` (port configurable, loopback only), runs as the `rout-subscription` systemd/OpenRC service and starts at boot. It never opens a firewall port.
-4. **Publish over HTTPS** — put a reverse proxy you manage in front and forward to the local port, e.g. Caddy `sub.example.com { reverse_proxy 127.0.0.1:8787 }`, or nginx `location /s/ { proxy_pass http://127.0.0.1:8787; }` with your certificate. Then enter `https://sub.example.com` under *Set public HTTPS address*; only an `https://` address is accepted, and until one is set Rout shows a `https://YOUR-DOMAIN/s/TOKEN` template with a warning instead of a usable URL.
+4. **Publish over HTTPS** — choose *Subscription server settings → Deploy / repair HTTPS automatically*. Enter your domain; Rout checks A/AAAA records and TCP 80/443, asks before installing Caddy from Debian/Ubuntu's signed apt repository, validates an isolated fragment and the shared layout, then verifies TLS and an authenticated subscription response. Caddy handles automatic certificate issuance/renewal. A working existing proxy is detected first: **Use existing HTTPS configuration** preserves it without taking ownership or restarting it. Optional adoption is limited to an explicitly confirmed, standalone simple imported fragment; shared/manual configurations remain external and cannot be deleted by Rout. Other platforms/layouts can keep their existing HTTPS proxy and set its public URL in the CLI.
 5. **Import** — add `https://sub.example.com/s/TOKEN` as a subscription URL in a client that supports Base64 share-link subscriptions. Rout's links are the same ones `rout export` prints (VLESS Reality, AnyTLS, Shadowsocks 2022, Hysteria2, TUIC). Clients choose their own update interval; the response is `text/plain` with `Cache-Control: no-store`.
 6. **Rotate** — *Rotate access token* invalidates the old URL immediately and shows the new one once. *Delete* also revokes the URL at once.
 
-Responses are deliberately uniform: unknown, malformed, disabled, revoked or deleted tokens all get `404`; only `GET`/`HEAD` are accepted; if a valid subscription currently has no usable node it returns `503` (never an empty success that could wipe a client's list) and the reason is logged by node name. Details, troubleshooting and security limits: [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md). Not included: Clash/Mihomo/sing-box/Surge formats, a web UI, external node import, per-device tokens. Only Base64 share-link output exists; compatibility with a particular client has not been tested with a real client yet.
+**Upgrading from v0.3.4 preserves existing subscriptions and URLs.** IDs, names, token hashes, enabled state, selected nodes/order, local port and public domain are retained; no schema migration, token rotation, recreation or client reimport is needed. Hashes cannot recover the original plaintext token: use the complete URL already saved in Shadowrocket. Existing-entry views show a safe URL template. The newer installer/updater snapshots private persistence and refreshes only the subscription helper; the older v0.3.4 updater keeps its old helper serving, and opening the new subscription menu or running `sudo rout subscription refresh` updates it safely.
+
+**DNS and ports:** all A/AAAA records must point to appropriate origin addresses. Cloudflare proxy records are identified as inconclusive origin evidence; DNS-only is preferable for initial issuance. Rout never stops nginx/Apache/other listeners or changes a node's port/firewall. Automatic management supports Debian/Ubuntu with systemd. Diagnostics separate loopback, reverse proxy, origin-local TLS, a request through public DNS from this server, and independent external verification. A root 404 is expected. Always check the original client subscription from an external network; local success does not prove public availability.
+
+**Failure/removal:** deployment is transactional, with private backups, digest-verified ownership, atomic files and verified rollback where possible. Failures report incomplete rollback explicitly. Disabling/restarting the subscription service preserves Caddy; dedicated confirmed HTTPS removal preserves subscriptions, tokens, unrelated sites and certificates and never uninstalls shared Caddy. See [deployment, adoption, rollback and troubleshooting](docs/SUBSCRIPTIONS.md).
+
+Responses are deliberately uniform: unknown, malformed, disabled, revoked or deleted tokens all get `404`; only `GET`/`HEAD` are accepted; if a valid subscription currently has no usable node it returns `503` (never an empty success that could wipe a client's list) and the reason is logged by node name. Details, troubleshooting and security limits: [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md). Not included: Clash/Mihomo/sing-box/Surge formats, a web UI, external node import, per-device tokens. Only Base64 share-link output exists. Automated tests verify its bytes/order and previously issued tokens; this implementation has not been tested against the production VPS or a real Shadowrocket client.
 
 ## Traffic accounting, limits and monthly reset
 
@@ -210,7 +217,7 @@ rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
 rout relays | outbounds | settings   # `exits` still works as an alias
 rout ai [status|test|apply]   # AI Smart Routing menu | status | check configuration | re-apply
-rout subscription [list|status|restart|serve]   # subscriptions menu | list | server status | restart (after `rout update`) | server process
+rout subscription [list|status|restart|https|logs|serve]   # subscriptions menu | list | server status | HTTPS deployment/diagnostics/removal, sanitized logs and restart | server process
 rout traffic                  # usage of all nodes
 rout traffic show|manage|recover ID
 rout traffic install          # install/update accounting (no node restarts)
@@ -230,7 +237,7 @@ Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`
 - One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, outbound label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
 - systemd units restrict engines with a capability bounding set (`CAP_NET_BIND_SERVICE`; HY2/TUIC also keep `CAP_NET_ADMIN` for QUIC socket buffers), `ProtectSystem=strict`, kernel/cgroup/clock protections, `RestrictNamespaces` and `RestrictAddressFamilies`. Engines therefore cannot change Rout's quota tables. New units apply on the next change or `rout apply`.
 - OpenRC services use `supervise-daemon` with bounded respawns and private logs in `/var/log/rout-<ID>.log`, rotated at 5 MB.
-- The optional `rout-subscription` service (systemd or OpenRC) is independent of node services: loopback-only, read-only filesystem and no capabilities under systemd, never writes the configuration. It runs a copy of the binary at `/opt/rout/bin/rout-subscription-v1`; run `sudo rout subscription restart` after `rout update` to refresh it.
+- The optional `rout-subscription` service (systemd or OpenRC) is independent of node services: loopback-only, read-only filesystem and no capabilities under systemd, never writes the configuration. It runs a copy of the binary at `/opt/rout/bin/rout-subscription-v1`; the installer/newer updater refreshes it automatically when needed. The v0.3.4 updater predates that hook: open the new subscription menu or run `sudo rout subscription refresh`; existing URLs keep working meanwhile.
 - Changes are serialized by file locks with bounded waits, validated in private staging directories and rolled back on failure.
 
 ## Low-memory installation
@@ -283,6 +290,6 @@ CI runs everything above plus `govulncheck` and cross-compilation on every push.
 
 ```sh
 # Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
-git tag -a v0.3.4 -m 'Rout v0.3.4'
-git push origin v0.3.4
+git tag -a v0.3.5 -m 'Rout v0.3.5'
+git push origin v0.3.5
 ```
