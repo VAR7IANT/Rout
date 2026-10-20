@@ -68,6 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,6 +83,46 @@ jobs:
         with:
           name: release-repair
           path: dist
+      - name: Validate artifacts and record the original source dependency
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_COMMIT: ${{ inputs.commit }}
+        run: |
+          python3 scripts/release_assets.py "$RELEASE_TAG" "$SOURCE_COMMIT" dist --repo "$GITHUB_REPOSITORY" --validate-only
+          python3 - <<'PY'
+          import json, os
+          repo = os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY']
+          source = os.environ['SOURCE_COMMIT']
+          tag = os.environ['RELEASE_TAG']
+          predicate = {
+              'buildDefinition': {
+                  'buildType': 'https://actions.github.io/buildtypes/workflow/v1',
+                  'externalParameters': {
+                      'workflow': {'repository': repo, 'path': '.github/workflows/repair-release.yml', 'ref': os.environ['GITHUB_REF']},
+                      'source': {'tag': tag, 'commit': source},
+                  },
+                  'resolvedDependencies': [{'uri': 'git+' + repo + '@refs/tags/' + tag, 'digest': {'gitCommit': source}}],
+              },
+              'runDetails': {
+                  'builder': {'id': 'https://github.com/actions/runner/github-hosted'},
+                  'metadata': {'invocationId': repo + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '/attempts/' + os.environ['GITHUB_RUN_ATTEMPT']},
+              },
+          }
+          with open(os.environ['RUNNER_TEMP'] + '/repair-provenance.json', 'w') as output:
+              json.dump(predicate, output)
+          PY
+      - name: Attest the repaired binaries and their exact original source
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/rout-linux-*
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/repair-provenance.json
+      - name: Verify both build-provenance signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify dist/rout-linux-amd64 --repo "$GITHUB_REPOSITORY"
+          gh attestation verify dist/rout-linux-arm64 --repo "$GITHUB_REPOSITORY"
       - name: Fill missing assets and verify API and public downloads
         env:
           GH_TOKEN: ${{ github.token }}

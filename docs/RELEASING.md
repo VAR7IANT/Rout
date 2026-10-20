@@ -8,7 +8,7 @@ New releases start as drafts. All four files must upload and pass API, size/dige
 
 ## Repair an existing release
 
-Use **Actions → Repair existing release → Run workflow**, on `main`. Supply the existing tag and its exact original 40-character commit. The build job verifies the tag, checks the source version, runs Go tests/race/vet and builds only that source. The upload job uses the reviewed automation from the workflow commit, validates embedded provenance and rechecks the remote tag. It requires the release to exist and never creates or moves tags, creates a release, deletes assets or clobbers files. Existing drafts remain drafts during repair.
+Use **Actions → Repair existing release → Run workflow**, on `main`. Supply the existing tag and its exact original 40-character commit. The build job verifies the tag, checks the source version, runs Go tests/race/vet and builds only that source. The upload job uses the reviewed automation from the workflow commit, validates embedded provenance and rechecks the remote tag. Signed provenance explicitly records the original tag/source commit as a resolved dependency, separate from the newer repair workflow's commit; both binary signatures are verified before upload. Only that job receives the required release/OIDC/attestation permissions. It requires the release to exist and never creates or moves tags, creates a release, deletes assets or clobbers files. Existing drafts remain drafts during repair.
 
 For the v0.3.6 repair:
 
