@@ -33,23 +33,7 @@ func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
 	}
 	a := &App{Home: filepath.Join(root, "config"), BinDir: filepath.Join(root, "bin"), ServiceMode: "auto", Language: "en"}
 	port, _ := freePort()
-	node := fixture(t, "vless")
-	node.Name = "Existing Reality"
-	node.Traffic = &TrafficPolicy{LimitBytes: 12345678, BillingDay: 7, Timezone: "UTC"}
-	other := fixture(t, "ss")
-	other.Name = "Existing SS"
-	relayPort, _ := freePort()
-	relay := Profile{ID: RandomHex(6), Name: "Existing relay", Kind: "relay", Enabled: true, Protocol: "tcp", Listen: "127.0.0.1", Port: relayPort, PublicHost: "198.51.100.1", PublicPort: relayPort, Target: "198.51.100.2:443", RelayMode: relayRemote}
-	ex := Exit{ID: RandomHex(6), Name: "Existing AI exit", Proxy: Proxy{Protocol: "socks5", Host: "198.51.100.3", Port: 1080}}
-	token, hash, e := newSubscriptionToken()
-	if e != nil {
-		t.Fatal(e)
-	}
-	sub := Subscription{ID: RandomHex(6), Name: "Existing Shadowrocket", NodeIDs: []string{other.ID, node.ID}, TokenHash: hash, Enabled: true, CreatedAt: time.Now().UTC()}
-	state := State{Schema: 2, Profiles: []Profile{node, other, relay}, Exits: []Exit{ex}, AI: &AIRouting{Enabled: true, AIOutboundID: ex.ID, BoundInboundIDs: []string{node.ID}, RuleSetVersion: AIRuleSetCurrent}, Subscriptions: []Subscription{sub}}
-	if e = state.Validate(); e != nil {
-		t.Fatal(e)
-	}
+	state, token := subscriptionV034SystemdFixture(t)
 	data, _ := JSON(state)
 	if e = AtomicWrite(filepath.Join(a.Home, "state.json"), data, 0600); e != nil {
 		t.Fatal(e)
@@ -155,5 +139,36 @@ func TestIntegrationSubscriptionV034SystemdUpgrade(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(manual); !bytes.Equal(caddy, after) {
 		t.Fatal("upgrade changed the manual Caddy configuration")
+	}
+}
+
+// Validate the populated upgrade fixture even on hosts without systemd.
+func subscriptionV034SystemdFixture(t *testing.T) (State, string) {
+	t.Helper()
+	node := fixture(t, "vless")
+	node.Name = "Existing Reality"
+	node.Traffic = &TrafficPolicy{LimitBytes: 12345678, BillingDay: 7, Timezone: "UTC"}
+	other := fixture(t, "ss")
+	other.Name = "Existing SS"
+	other.Port, other.PublicPort = 24682, 34682
+	relayPort := 24683
+	relay := Profile{ID: RandomHex(6), Name: "Existing relay", Kind: "relay", Enabled: true, Protocol: "tcp", Listen: "127.0.0.1", Port: relayPort, PublicHost: "198.51.100.1", PublicPort: relayPort, Target: "198.51.100.2:443", RelayMode: relayRemote}
+	ex := Exit{ID: RandomHex(6), Name: "Existing AI exit", Proxy: Proxy{Protocol: "socks5", Host: "198.51.100.3", Port: 1080, Username: "fixture-user", Password: "fixture-password"}}
+	token, hash, e := newSubscriptionToken()
+	if e != nil {
+		t.Fatal(e)
+	}
+	sub := Subscription{ID: RandomHex(6), Name: "Existing Shadowrocket", NodeIDs: []string{other.ID, node.ID}, TokenHash: hash, Enabled: true, CreatedAt: time.Now().UTC()}
+	state := State{Schema: 2, Profiles: []Profile{node, other, relay}, Exits: []Exit{ex}, AI: &AIRouting{Enabled: true, AIOutboundID: ex.ID, BoundInboundIDs: []string{node.ID}, RuleSetVersion: AIRuleSetCurrent}, Subscriptions: []Subscription{sub}}
+	if e = state.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	return state, token
+}
+func TestSubscriptionV034SystemdFixture(t *testing.T) {
+	state, token := subscriptionV034SystemdFixture(t)
+	sub, ok := state.matchSubscription(token)
+	if !ok || len(sub.NodeIDs) != 2 || len(state.exportSubscription(sub).URIs) != 2 {
+		t.Fatal("invalid upgrade baseline")
 	}
 }
