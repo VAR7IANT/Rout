@@ -1,0 +1,89 @@
+name: Repair existing release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag (never created or moved)
+        required: true
+        type: string
+      commit:
+        description: Exact original 40-character tag commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate repair request
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_COMMIT: ${{ inputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          test "$WORKFLOW_REF" = refs/heads/main
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - name: Verify original tag and source version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_COMMIT: ${{ inputs.commit }}
+        run: |
+          git fetch --depth=1 origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Test and build the original source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$(go run ./cmd/rout version)" = "rout ${RELEASE_TAG#v}"
+          go test ./...
+          go test -race ./...
+          go vet ./...
+          sh scripts/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-repair
+          if-no-files-found: error
+          path: |
+            dist/rout-linux-amd64
+            dist/rout-linux-arm64
+            dist/checksums.txt
+            dist/version.txt
+  upload:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-repair
+          path: dist
+      - name: Fill missing assets and verify API and public downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_COMMIT: ${{ inputs.commit }}
+        run: python3 scripts/release_assets.py "$RELEASE_TAG" "$SOURCE_COMMIT" dist --repo "$GITHUB_REPOSITORY" --existing-only

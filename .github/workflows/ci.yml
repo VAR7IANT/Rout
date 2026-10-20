@@ -34,6 +34,7 @@ jobs:
           go vet ./...
           go test ./...
           go test -race ./...
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_release_assets.py' -v
           sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh scripts/measure-engine-memory.sh scripts/test-nft-container.sh scripts/test-subscription-https.sh scripts/test-mihomo.sh
           test -z "$(gofmt -l cmd internal)"
       - name: Vulnerability check (Go standard library and modules)
@@ -129,25 +130,43 @@ jobs:
           docker rm -f alpine-openrc
       - name: Build both Linux architectures
         run: sh scripts/release.sh
+      - name: Verify updater artifact contract and source provenance
+        env:
+          ROUT_VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release_assets.py "v$ROUT_VERSION" "$GITHUB_SHA" dist --repo "$GITHUB_REPOSITORY" --validate-only
       - uses: actions/upload-artifact@v4
         with:
           name: rout-linux
+          if-no-files-found: error
           path: dist/*
   # Production releases are published only from an explicit, matching version tag.
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
       - uses: actions/download-artifact@v4
         with:
           name: rout-linux
           path: dist
+      - name: Validate downloaded release artifacts
+        env:
+          ROUT_VERSION: ${{ needs.verify.outputs.version }}
+        run: python3 scripts/release_assets.py "v$ROUT_VERSION" "$GITHUB_SHA" dist --repo "$GITHUB_REPOSITORY" --validate-only
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
@@ -158,11 +177,7 @@ jobs:
           ROUT_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           tag="v$ROUT_VERSION"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $tag already exists; keeping its verified assets"
-          else
-            awk -v heading="## v$ROUT_VERSION" '$0 == heading { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md > release-notes.md
-            printf '\nVerify a downloaded binary with: gh attestation verify rout-linux-amd64 --repo %s\n' "$GITHUB_REPOSITORY" >> release-notes.md
-            printf 'Accounting scope, fault policy and real-host acceptance boundaries: https://github.com/%s/blob/%s/docs/TRAFFIC.md\n' "$GITHUB_REPOSITORY" "$tag" >> release-notes.md
-            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --title "Rout $tag" --notes-file release-notes.md
-          fi
+          awk -v heading="## v$ROUT_VERSION" '$0 == heading { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md > release-notes.md
+          printf '\nVerify a downloaded binary with: gh attestation verify rout-linux-amd64 --repo %s\n' "$GITHUB_REPOSITORY" >> release-notes.md
+          printf 'Accounting scope, fault policy and real-host acceptance boundaries: https://github.com/%s/blob/%s/docs/TRAFFIC.md\n' "$GITHUB_REPOSITORY" "$tag" >> release-notes.md
+          python3 scripts/release_assets.py "$tag" "$GITHUB_SHA" dist --repo "$GITHUB_REPOSITORY" --notes release-notes.md
