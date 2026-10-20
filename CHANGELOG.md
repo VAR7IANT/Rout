@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Accept `rout --version` and `rout -v` without node IDs, root or configuration reads; keep `rout version`. This application fix is for a future release, not the repaired v0.3.6 binaries.
+- Verify every release artifact, source commit, checksum, API asset and public download. Complete existing releases safely, publish new releases only after draft verification, and provide an exact-tag repair workflow. See [release integrity and repair](docs/RELEASING.md).
+
 ## v0.3.6
 
 - Native Mihomo YAML at `/s/TOKEN?format=mihomo` (`clash` alias), reusing existing tokens and ordered selections. Base64 remains the byte-identical default; no state migration, token rotation, YAML snapshot, converter service or runtime dependency.

@@ -35,7 +35,7 @@ func splitFlags(args []string) (flags, rest []string) {
 				}
 				continue
 			}
-			if key == "h" || key == "help" {
+			if key == "h" || key == "help" || key == "v" || key == "version" {
 				flags = append(flags, arg)
 				continue
 			}
@@ -71,7 +71,7 @@ var helpLines = [][2]string{
 	{"rout engines", "下载并校验固定版本内核"},
 	{"rout update", "更新 Rout（拒绝降级）"},
 	{"rout uninstall", "卸载 Rout"},
-	{"rout version", "版本"},
+	{"rout version | --version | -v", "版本"},
 }
 
 func (a *App) help() {
@@ -92,6 +92,7 @@ func Run(args []string) (result error) {
 		result = FormatError(a.Language, result)
 	}()
 	var language string
+	var showVersion bool
 	flagArgs, args := splitFlags(args)
 	flags := flag.NewFlagSet("rout", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -99,6 +100,8 @@ func Run(args []string) (result error) {
 	flags.StringVar(&a.BinDir, "bin-dir", a.BinDir, "engine directory")
 	flags.StringVar(&a.ServiceMode, "service", "auto", "auto or none (test-only)")
 	flags.StringVar(&language, "lang", "", "en or zh-CN (override saved language)")
+	flags.BoolVar(&showVersion, "version", false, "print installed version")
+	flags.BoolVar(&showVersion, "v", false, "print installed version")
 	if e := flags.Parse(flagArgs); e != nil {
 		if errors.Is(e, flag.ErrHelp) {
 			args = []string{"help"}
@@ -116,7 +119,7 @@ func Run(args []string) (result error) {
 	if len(args) > 0 {
 		cmd = args[0]
 	}
-	if cmd == "version" {
+	if showVersion || cmd == "version" {
 		fmt.Println("rout " + Version)
 		return nil
 	}
