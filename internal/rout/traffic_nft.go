@@ -81,6 +81,7 @@ func decodeNFT(b []byte) ([]map[string]any, error) {
 	}
 	return root.NFT, nil
 }
+
 // parseNFT accepts attested JSON. Raw kernel output must pass parseTable first
 // so a missing JSON comment is verified from the exact target table as text.
 func parseNFT(b []byte) (MeterSnapshot, error) {
