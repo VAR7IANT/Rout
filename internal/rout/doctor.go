@@ -237,6 +237,19 @@ func (d *doctorRun) traffic(s State, manager string) {
 		return
 	}
 	d.ok("nftables 可用")
+	meter := nftMeter{home: a.Home}
+	reads, orphans := meter.ReadAll(s.Profiles)
+	for _, name := range orphans {
+		profile := Profile{ID: strings.TrimPrefix(name, meter.prefix())}
+		if _, e := meter.Read(profile); e != nil {
+			d.warn("%s：归属或结构无法验证，保持原状：%s", name, a.Error(e))
+		} else if meter.isProbe(name) {
+			d.warn("%s：已验证的安装探针残留，可在确认后清理", name)
+			d.orphans = append(d.orphans, name)
+		} else {
+			d.warn("%s：Rout 表无对应配置，历史探针与正式节点无法区分，保持原状", name)
+		}
+	}
 	if !a.trafficActive() {
 		d.warn("流量监控未启用，运行 rout traffic install")
 		return
@@ -266,8 +279,6 @@ func (d *doctorRun) traffic(s State, manager string) {
 	} else {
 		d.ok("流量检查点 %d 秒前更新", int(age.Seconds()))
 	}
-	meter := nftMeter{home: a.Home}
-	reads, orphans := meter.ReadAll(s.Profiles)
 	for _, p := range s.Profiles {
 		label := fmt.Sprintf("%s [%s]", p.Name, p.ID)
 		r, ok := db.Records[p.ID]
@@ -276,7 +287,7 @@ func (d *doctorRun) traffic(s State, manager string) {
 			continue
 		}
 		if read := reads[p.ID]; read.err != nil {
-			d.bad("%s：计量规则不可用", label)
+			d.bad("%s：计量规则不可用：%s", label, a.Error(read.err))
 		} else if read.snap.Hash != r.Rules && !r.Pending {
 			d.warn("%s：计量规则与检查点不一致，下一次同步将重建", label)
 		}
@@ -291,10 +302,6 @@ func (d *doctorRun) traffic(s State, manager string) {
 		if r.Incomplete {
 			d.warn("%s：本周期存在计量缺口，已知用量为下限", label)
 		}
-	}
-	if len(orphans) > 0 {
-		d.warn("发现 %d 个残留的 Rout 计量表", len(orphans))
-		d.orphans = orphans
 	}
 }
 
@@ -317,7 +324,7 @@ func (d *doctorRun) finish(fix bool) error {
 			}
 			u.good("权限已修复")
 		}
-		if len(d.orphans) > 0 && u.yes("删除残留的 Rout 计量表（不影响其他防火墙规则）", false) {
+		if len(d.orphans) > 0 && u.yes("删除已验证的 Rout 安装探针残留表", false) {
 			if e := (nftMeter{home: u.a.Home}).DeleteTables(d.orphans); e != nil {
 				u.fail(u.a.Error(e))
 			} else {

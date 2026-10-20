@@ -1,0 +1,49 @@
+table inet rout_compat_fixture {
+	comment "Rout traffic v1"
+	counter up {
+		packets 0 bytes 123
+	}
+
+	counter down {
+		packets 0 bytes 456
+	}
+
+	quota budget {
+		over 1000000 bytes used 579 bytes
+	}
+
+	set alive {
+		type inet_service
+		timeout 15s
+	}
+
+	chain up_gate {
+		udp dport @alive goto up_allow
+		drop
+	}
+
+	chain up_allow {
+		quota name "budget" drop
+		counter name "up" return
+	}
+
+	chain down_gate {
+		udp sport @alive goto down_allow
+		drop
+	}
+
+	chain down_allow {
+		quota name "budget" drop
+		counter name "down" return
+	}
+
+	chain input {
+		type filter hook input priority 300; policy accept;
+		ip daddr 127.0.0.1 udp dport 49123 jump up_gate
+	}
+
+	chain output {
+		type filter hook output priority 300; policy accept;
+		ip saddr 127.0.0.1 udp sport 49123 jump down_gate
+	}
+}

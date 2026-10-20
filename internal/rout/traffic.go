@@ -467,7 +467,7 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) (traff
 		return acts, e
 	}
 	before, previousUpdate := trafficFingerprint(db), db.Updated
-	reads, orphans := readMeters(m, state.Profiles)
+	reads, _ := readMeters(m, state.Profiles)
 	var errs []error
 	for _, p := range state.Profiles {
 		r, exists := db.Records[p.ID]
@@ -547,7 +547,13 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) (traff
 			} else {
 				froze = true
 				sealed, er := m.Read(p)
-				if er == nil && healthy {
+				if er == nil && (healthy || !exists) {
+					// A first installation may find a surviving owned counter generation.
+					// Preserve those bytes rather than replacing it with a zero record. The
+					// missing journal cannot prove cycle boundaries, so keep the gap/fault.
+					if !exists {
+						r.Incomplete = true
+					}
 					er = mergeTraffic(&r, sealed)
 				}
 				if er != nil {
@@ -599,14 +605,9 @@ func (a *App) syncTrafficInner(state State, now time.Time, shutdown bool) (traff
 		}
 		db.Records[p.ID] = r
 	}
-	// Only the monitor (holding the configuration lock) removes stale Rout tables.
-	if a.monitorMode && !shutdown && len(orphans) > 0 {
-		if b, ok := m.(batchMeter); ok {
-			if e = b.DeleteTables(orphans); e != nil {
-				errs = append(errs, e)
-			}
-		}
-	}
+	// Historical probes and missing configurations used indistinguishable names.
+	// Ownership is not proof that an orphan no longer enforces a live limit.
+	// Leave every orphan in place; doctor reports them for administrator review.
 	db.Updated = now
 	if shutdown || needsTrafficSave(db, before, previousUpdate, now) {
 		if e = a.saveTraffic(db); e != nil {

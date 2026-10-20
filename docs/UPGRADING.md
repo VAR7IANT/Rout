@@ -1,6 +1,16 @@
 # Upgrading and rollback safety
 
-## To v0.3.2 (candidate: menu refactoring and AI routing hardening)
+## To v0.3.3
+
+This candidate fixes traffic monitoring on Debian 12 with nftables 1.0.6. The installer on main targets unpublished v0.3.3 and fails safely until release assets exist; use a locally built binary or the CI artifact for pre-release verification. Do not tag during preparation.
+
+After installing the matching manager binary, run `sudo rout traffic install`, then `sudo rout doctor` and `sudo rout traffic show NODE_ID`. Repeating installation is safe: the private probe is removed even when verification fails; errors name any table that could not be removed. The helper changes only after the probe succeeds, service failures roll back installation files, and a new success marker is written only after successful activation.
+
+`state.json`, `traffic.json`, node IDs, credentials, cycles and limits are unchanged. Existing counted bytes are retained. No reset, `rout apply`, engine reinstall or recreation of nodes is needed. Only a changed monitor helper is restarted; finite nodes resume after their sealed checkpoints verify.
+
+Historical tables left by failed v0.3.2 installations use the same naming scheme as formal nodes, so their purpose cannot be inferred safely. They are now preserved and reported by read-only `rout doctor`, including before monitoring is installed. Follow [the diagnostic procedure](TRAFFIC.md#ownership-compatibility-and-historical-tables); never flush or bulk-delete `rout_*` tables. New `probe_` tables have distinct names and can be cleaned by `rout doctor --fix` only after ownership/structure verification and confirmation.
+
+## To v0.3.2 (menu refactoring and AI routing hardening)
 
 - **Data formats:** `state.json` gains an optional `ai_routing` object (`enabled`, `bound_inbound_ids`, `ai_outbound_id`, `rule_set_version`). Hosts that never use AI Smart Routing keep a byte-identical file and byte-identical node configurations, so nothing restarts on upgrade.
 - **Rolling back:** back up before upgrading. v0.3.1 and earlier do not understand `https` outbound entries and will refuse to load them. Before downgrade, explicitly move HTTPS users to tested compatible exits and remove HTTPS entries, or restore a pre-upgrade compatible backup. This can remove transport protection: never auto-convert HTTPS to plaintext. Older versions also drop `ai_routing` on their next save; disable AI routing first and keep a separate backup if its settings are needed. Do not describe downgrade as preserving AI protection.
@@ -9,7 +19,7 @@
 
 - Existing HTTP/SOCKS5 connections remain unchanged and unencrypted unless separately tunneled. HTTPS CONNECT is opt-in and verifies the proxy host against the system CA store. Follow [AI transport security and acceptance](AI_ROUTING.md); do not change a working proxy to HTTPS until the remote endpoint supports it.
 - Updating the manager does not apply new AI rules or restart nodes. Use **AI Smart Routing → Apply changes** after reviewing the new behavior; only bound nodes are reapplied. No DNS policy is changed.
-- The installer on main targets the unpublished candidate v0.3.2 and safely fails until publication; build locally for testing or explicitly request the published stable version. Do not create a tag or release during preparation.
+- v0.3.2 is the previous published release; current preparation and installer instructions are in the v0.3.3 section above.
 
 ## To v0.3.1
 

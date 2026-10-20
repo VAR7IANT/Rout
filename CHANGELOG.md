@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.3
+
+- Fix traffic installation and accounting on Debian 12 / nftables 1.0.6, whose JSON omits the table comment. Verify the exact target table's top-level text comment when absent, normalize it before hashing, and retain counter, chain, hook, rule and quota integrity checks. Single and batched reads use the same attestation.
+- Refuse to overwrite or delete an existing table without verified Rout ownership. Preserve all historical orphan tables whose purpose cannot be proved; read-only `rout doctor` reports them even before monitoring is enabled. Only distinctly named, verified new installation probes can be offered for confirmed cleanup.
+- Create installation probes exclusively and always attempt deferred cleanup after successful creation, including read/parse/permission failures; report cleanup errors with the exact table name. Failed probes never replace the helper or create a success marker. Failed service activation restores the previous helper, service definition and marker, with rollback errors reported.
+- Preserve surviving kernel counters/quota consumption if the first sync has no journal, marking the history incomplete and finite nodes fail-closed. Keep recorded usage, billing cycles, quotas, dual-direction accounting and fail-closed leases unchanged. No state migration, usage reset, node recreation or engine changes.
+- Add real Debian 12 nftables 1.0.6 tests and retain the newer Ubuntu nftables, systemd and Alpine/OpenRC regressions. Real nft JSON/text fixtures are checked in; unavailable kernel capabilities are explicitly skipped, never counted as coverage.
+
 ## v0.3.2
 
 Release candidate preparation; not tagged or published.

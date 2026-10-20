@@ -535,7 +535,7 @@ func TestKernelCrashRebootFailsClosedAndRecoversKnownUsage(t *testing.T) {
 }
 
 // Batched listing must produce byte-identical verdicts to single-table reads, and only
-// Rout-owned orphan tables of THIS installation may be removed.
+// ownership alone must never authorize deletion of tables with unknown purpose.
 func TestKernelBatchReadsAndOrphanCleanup(t *testing.T) {
 	a := kernelApp(t)
 	a.monitorMode = true
@@ -565,9 +565,10 @@ func TestKernelBatchReadsAndOrphanCleanup(t *testing.T) {
 	if e := a.TrafficSync(time.Now(), false); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := m.Read(orphan); !errors.Is(e, errMeterMissing) {
-		t.Fatal("orphan Rout table not removed", e)
+	if _, e := m.Read(orphan); e != nil {
+		t.Fatal("unknown-purpose Rout table was removed", e)
 	}
+	t.Cleanup(func() { _ = m.Delete(orphan) })
 	out, e := nftRun("", "list", "tables")
 	if e != nil || !strings.Contains(string(out), "hostfw") || !strings.Contains(string(out), "rout_00000000_") {
 		t.Fatal("cleanup touched a table it does not own", string(out), e)

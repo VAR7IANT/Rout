@@ -320,3 +320,39 @@ func TestTrafficNewLimitOnIncompleteCycleNeedsConsent(t *testing.T) {
 		t.Fatal("editing a limit re-blocked an accepted cycle")
 	}
 }
+
+func TestTrafficMissingJournalPreservesSurvivingCounters(t *testing.T) {
+	for _, limited := range []bool{false, true} {
+		label := "unlimited"
+		if limited {
+			label = "limited"
+		}
+		t.Run(label, func(t *testing.T) {
+			a, m, p := trafficTestApp(t)
+			if limited {
+				if e := a.ConfigureTraffic(p.ID, TrafficPolicy{LimitBytes: 10000, BillingDay: 1}, false, time.Now()); e != nil {
+					t.Fatal(e)
+				}
+			}
+			snap := m.values[p.ID]
+			snap.Up, snap.Down, snap.Consumed = 300, 100, 0
+			if limited {
+				snap.Consumed = 400
+			}
+			m.values[p.ID] = snap
+			if e := os.Remove(filepath.Join(a.Home, "traffic.json")); e != nil {
+				t.Fatal(e)
+			}
+			if e := a.TrafficSync(time.Now(), false); e != nil {
+				t.Fatal(e)
+			}
+			r := record(t, a, p.ID)
+			if r.RawUp != 300 || r.RawDown != 100 || r.Consumed != snap.Consumed || !r.Incomplete {
+				t.Fatal("surviving counters replaced with zero", r)
+			}
+			if limited && r.Blocked != blockFault {
+				t.Fatal("missing journal reopened a finite allowance", r)
+			}
+		})
+	}
+}

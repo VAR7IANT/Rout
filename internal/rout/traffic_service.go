@@ -53,7 +53,7 @@ func (a *App) stopServiceOnly(p Profile, queue bool) error {
 	}
 	return command("rc-service", serviceName(p), "stop")
 }
-func (a *App) InstallTraffic() error {
+func (a *App) InstallTraffic() (err error) {
 	if _, e := exec.LookPath("nft"); e != nil {
 		return errors.New("请安装 nftables（Debian/Ubuntu：apt install nftables；Alpine：apk add nftables）")
 	}
@@ -64,6 +64,12 @@ func (a *App) InstallTraffic() error {
 	if m == "none" {
 		return errors.New("测试模式请显式使用 traffic run，不安装系统监控服务")
 	}
+	// Serialize installers even while the configuration lock is released for init.
+	installUnlock, e := lockFile(filepath.Join(a.Home, ".traffic-install.lock"), trafficLockWait)
+	if e != nil {
+		return e
+	}
+	defer installUnlock()
 	unlock, e := a.lock()
 	if e != nil {
 		return e
@@ -77,17 +83,8 @@ func (a *App) InstallTraffic() error {
 	if e != nil {
 		return e
 	}
-	// The helper is the running monitor and every finite node's start guard. Replace it
-	// only when it differs, so reinstalling never restarts a current monitor.
-	previous, _ := os.ReadFile(a.trafficHelper())
-	changed := !bytes.Equal(previous, b)
-	if changed {
-		if e = AtomicWrite(a.trafficHelper(), b, 0755); e != nil {
-			return e
-		}
-	}
 	// Probe only a private disposable table; never touch the host firewall.
-	p := Profile{ID: RandomHex(6), Listen: "127.0.0.1", Port: 9, Kind: "node", Protocol: "ss", Traffic: &TrafficPolicy{LimitBytes: 1_000_000, BillingDay: 1}}
+	p := Profile{ID: "probe_" + RandomHex(6), Listen: "127.0.0.1", Port: 9, Kind: "node", Protocol: "ss", Traffic: &TrafficPolicy{LimitBytes: 1_000_000, BillingDay: 1}}
 	p.Port, e = freePort()
 	if e != nil {
 		return e
@@ -96,20 +93,99 @@ func (a *App) InstallTraffic() error {
 		return e
 	}
 	backend := nftMeter{home: a.Home}
-	if _, e = backend.Replace(p, TrafficRecord{}); e != nil {
-		return e
-	}
-	if e = backend.Delete(p); e != nil {
-		return e
-	}
-	if e = AtomicWrite(filepath.Join(a.Home, "traffic.enabled"), []byte("1\n"), 0600); e != nil {
+	if e = backend.probe(p); e != nil {
 		return e
 	}
 	name := a.trafficService()
 	running := serviceActive(m, name)
+	unitPath := filepath.Join("/etc/init.d", name)
+	if m == "systemd" {
+		unitPath = filepath.Join("/etc/systemd/system", name+".service")
+	}
+	// Nothing persistent changes before the probe has been read and removed. Keep
+	// the previous helper and service definition until service activation succeeds.
+	previous, e := os.ReadFile(a.trafficHelper())
+	if e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	changed := !bytes.Equal(previous, b)
+	paths := []string{a.trafficHelper(), unitPath, filepath.Join(a.Home, "traffic.enabled")}
+	type savedFile struct {
+		path   string
+		data   []byte
+		mode   os.FileMode
+		exists bool
+	}
+	var saved []savedFile
+	for _, path := range paths {
+		f := savedFile{path: path}
+		st, er := os.Stat(path)
+		if er == nil {
+			f.exists, f.mode = true, st.Mode().Perm()
+			f.data, er = os.ReadFile(path)
+		}
+		if er != nil && !os.IsNotExist(er) {
+			return er
+		}
+		saved = append(saved, f)
+	}
+	activated := false
+	defer func() {
+		if err == nil {
+			return
+		}
+		// A monitor shutdown checkpoints under the config lock. Release it before
+		// restoring service state, as on the successful activation path.
+		unlock()
+		unlock = func() {}
+		if activated && !running {
+			if m == "systemd" {
+				err = errors.Join(err, command("systemctl", "stop", name+".service"))
+			} else {
+				err = errors.Join(err, command("rc-service", name, "stop"))
+			}
+		}
+		if activated && !saved[1].exists {
+			if m == "systemd" {
+				err = errors.Join(err, command("systemctl", "disable", name+".service"))
+			} else {
+				err = errors.Join(err, command("rc-update", "del", name, "default"))
+			}
+		}
+		for _, f := range saved {
+			var er error
+			if f.exists {
+				er = AtomicWrite(f.path, f.data, f.mode)
+			} else {
+				er = os.Remove(f.path)
+				if os.IsNotExist(er) {
+					er = nil
+				}
+			}
+			if er != nil {
+				err = errors.Join(err, fmt.Errorf("恢复流量安装文件 %s 失败: %w", f.path, er))
+			}
+		}
+		if m == "systemd" {
+			err = errors.Join(err, command("systemctl", "daemon-reload"))
+		}
+		if activated && running {
+			if m == "systemd" {
+				err = errors.Join(err, command("systemctl", "restart", name+".service"))
+			} else {
+				err = errors.Join(err, command("rc-service", name, "restart"))
+			}
+		}
+	}()
+	if changed {
+		if e = AtomicWrite(a.trafficHelper(), b, 0755); e != nil {
+			return e
+		}
+	}
+	finish := func() error { return AtomicWrite(filepath.Join(a.Home, "traffic.enabled"), []byte("1\n"), 0600) }
 	if m == "systemd" {
 		unit := "[Unit]\nDescription=Rout traffic accounting and quota guard\nAfter=network-pre.target\nBefore=multi-user.target\n\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=" + quoteArgs(append([]string{a.trafficHelper()}, a.trafficArgs("run")...), unitQuote) + "\nRestart=always\nRestartSec=2\nTimeoutStopSec=30\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
-		if e = AtomicWrite(filepath.Join("/etc/systemd/system", name+".service"), []byte(unit), 0644); e != nil {
+		if e = AtomicWrite(unitPath, []byte(unit), 0644); e != nil {
 			return e
 		}
 		if e = command("systemctl", "daemon-reload"); e != nil {
@@ -118,16 +194,24 @@ func (a *App) InstallTraffic() error {
 		// The monitor needs the configuration lock for its own shutdown checkpoint.
 		unlock()
 		unlock = func() {}
-		if e = command("systemctl", "enable", "--now", name+".service"); e != nil || !changed || !running {
+		activated = true
+		if e = command("systemctl", "enable", "--now", name+".service"); e != nil {
 			return e
 		}
+		if !changed || !running {
+			return finish()
+		}
 		a.say("流量监控已更新并重启；有限额节点会在校验完整检查点后自动恢复")
-		return command("systemctl", "restart", name+".service")
+		if e = command("systemctl", "restart", name+".service"); e != nil {
+			return e
+		}
+		return finish()
 	}
 	script := "#!/sbin/openrc-run\nname=" + shellQuote(name) + "\nsupervisor=supervise-daemon\ncommand=" + shellQuote(a.trafficHelper()) + "\ncommand_args=" + shellQuote(quoteArgs(a.trafficArgs("run"), shellQuote)) + "\nrespawn_delay=2\npidfile=" + shellQuote("/run/"+name+".pid") + "\noutput_log=" + shellQuote("/var/log/"+name+".log") + "\nerror_log=" + shellQuote("/var/log/"+name+".log") + "\ndepend() { need localmount; before net; }\nstart_pre() { umask 077; touch \"$output_log\"; chmod 600 \"$output_log\"; }\n"
-	if e = AtomicWrite(filepath.Join("/etc/init.d", name), []byte(script), 0755); e != nil {
+	if e = AtomicWrite(unitPath, []byte(script), 0755); e != nil {
 		return e
 	}
+	activated = true
 	if e = command("rc-update", "add", name, "default"); e != nil {
 		return e
 	}
@@ -135,12 +219,17 @@ func (a *App) InstallTraffic() error {
 	unlock = func() {}
 	if running && changed {
 		a.say("流量监控已更新并重启；有限额节点会在校验完整检查点后自动恢复")
-		return command("rc-service", name, "restart")
+		if e = command("rc-service", name, "restart"); e != nil {
+			return e
+		}
+		return finish()
 	}
-	if running {
-		return nil
+	if !running {
+		if e = command("rc-service", name, "start"); e != nil {
+			return e
+		}
 	}
-	return command("rc-service", name, "start")
+	return finish()
 }
 func notifyTrafficReady() {
 	path := os.Getenv("NOTIFY_SOCKET")

@@ -18,6 +18,27 @@ sudo rout traffic recover NODE_ID  # Resume a fault-paused node, keeping known u
 
 The normal installer installs this small dependency and enables the monitor for the default installation directory. The first interactive menu also attempts setup after language selection. `ROUT_SETUP_TRAFFIC=0` skips installer setup. Custom installation paths require explicit setup with matching `--home` / `--bin-dir`. `--service none` is test-only and cannot install production services.
 
+## Ownership compatibility and historical tables
+
+Debian 12 nftables 1.0.6 omits table comments from JSON even though `nft list table` prints them. v0.3.3 first checks the JSON comment; when it is absent, it reads **only that exact inet table** as text and verifies its table header and unique top-level `comment "Rout traffic v1"`. Quoted strings and nested comments cannot impersonate table ownership. An incorrect JSON comment is rejected without fallback. Verified comments are normalized before structural hashing so missing JSON metadata cannot change an existing generation hash. Counter values and quota consumption always come from JSON; chains, hooks, rules, quota sizes and set types remain in the hash. A table name/prefix alone is never trusted.
+
+Read-only diagnostics (also work when `traffic.enabled` is absent):
+
+```sh
+sudo rout version
+nft --version
+sudo rout list
+sudo rout doctor                  # Do not add --fix for diagnosis
+sudo nft list tables
+# Substitute one exact table name printed above:
+sudo nft list table inet rout_b1708859_b315ba5f6880
+sudo nft -j list table inet rout_b1708859_b315ba5f6880
+```
+
+The 12-hex-digit suffix of historical tables was used for both formal nodes and disposable installation tests. Neither zero counters nor the Rout comment proves a historical table is disposable. Compare the suffix against `state.json` node/relay IDs and `traffic.json` records, and inspect both hooks/listeners, counters and quota state. A missing record is not enough: configuration could be missing or restored later. Preserve any table whose ownership or purpose cannot be established; retain a private snapshot and obtain administrator confirmation before individually deleting a proven obsolete test table with `sudo nft delete table inet EXACT_VERIFIED_TABLE`. Never delete all `rout_*` tables or clear the ruleset. The existing 11 tables on an affected VPS require this per-table review; upgrading does not remove them automatically.
+
+New installation probes use `rout_<home-hash>_probe_<random-id>`, cannot collide with a formal node ID, and are created exclusively. Every successful creation registers deferred deletion **before reading**, and cleanup failure is returned with the exact table name. A process kill/power loss can still leave a probe; read-only `rout doctor` identifies it and `rout doctor --fix` offers confirmed deletion only after fresh ownership and structure verification. Unknown or damaged tables stay in place.
+
 ## Exact accounting definition
 
 | Field | Measurement point |
@@ -63,9 +84,9 @@ Only successfully checkpointed, structurally verified meters get a renewed lease
 
 **Explicit recovery.** For a fault-paused node, `rout traffic recover ID` (or Traffic management → Resume with known usage) reopens the node **without** resetting anything: known usage stays, the cycle remains marked incomplete and its total is a lower bound, and the quota continues from it. The bytes during the gap (at most the last uncheckpointed seconds) are not counted; this is shown before confirmation. A confirmed reset (type `reset`) or the next billing cycle are the alternatives. Enabling a **new** cap on a cycle that already has a gap asks whether to keep known usage, reset, or cancel.
 
-If counters/rules disappear, decrease or change shape unexpectedly, finite nodes are protectively paused and the gap is shown explicitly; unknown history is never reported as measured zero. A same-boot monitor crash can recover still-valid kernel counters without losing or adding the last snapshot twice.
+If a journal is missing but an owned, structurally valid counter generation survives, first sync freezes and preserves its counters/quota rather than overwriting them with zero. Missing cycle history remains incomplete and finite nodes stay fault-paused. If counters/rules disappear, decrease or change shape unexpectedly, finite nodes are protectively paused and the gap is shown explicitly; unknown history is never reported as measured zero. A same-boot monitor crash can recover still-valid kernel counters without losing or adding the last snapshot twice.
 
-The monitor removes only orphaned tables of its own installation (Rout comment, this home's prefix, no matching node). `rout doctor` lists them and `rout doctor --fix` removes them after confirmation.
+The monitor preserves orphaned tables: ownership alone cannot prove that a table no longer protects a live node. See the diagnostic procedure below. `rout doctor --fix` offers only verified, distinctly named installation probes, after confirmation.
 
 An administrator deleting all firewall rules, changing engine configuration outside Rout, bypassing the local input/output hooks through another namespace/TUN/offload, replacing the guard, or killing all protection mechanisms is outside the enforcement boundary. Unexpected rule deletion has a detection/stop window; no universal byte maximum can be promised without a known link-rate bound. Do not run `nft flush ruleset` or a firewall reload that removes Rout's tables. Host/container firewall persistence and boot ordering must be checked on the actual VPS.
 
@@ -88,3 +109,9 @@ Automated coverage includes real nftables rules in disposable Linux network name
 Kernel tests also cover sealed restart/reboot recovery with exact remaining budgets, crash fail-closed plus known-usage recovery, quota persistence across reboot, batched-read equivalence with single-table reads, orphan cleanup that never touches foreign tables, three simultaneous limited nodes beyond one lease period, and a real upgrade from and rollback to the published v0.2.1 monitor. Simulated (fake-meter) tests cover lock contention, slow service commands running outside the traffic lock, renewal failures, unlimited fail-open and redundant-write avoidance. CI performs kernel, systemd and OpenRC tests.
 
 **Performance.** Measured in a network namespace with nft 1.0.9: per-node lease renewal took 0.9 s for 50 and 3.5 s for 100 limited nodes per poll; the single batched transaction takes 31 ms and 51 ms. Each node still owns its own table with input/output base chains, which keeps per-node isolation and atomic replacement; small-packet loopback throughput is unaffected at 10 nodes and drops noticeably beyond about 30. A single-table design is a candidate for a future release once live-counter migration can be proven safe. Synthetic clock/kernel-generation loss exercises recovery logic but is **not** a physical VPS power-cycle test. Alpine/OpenRC boot/lifecycle, provider-side NAT/IPv6 firewall behavior, physical reboot/power loss, NIC offload and sustained high-rate/many-node performance remain real-host acceptance items.
+
+## Real compatibility regression tests
+
+CI retains the Ubuntu runner's newer nftables kernel/systemd tests and adds a Debian 12 container with nftables **1.0.6**, its own network namespace and `CAP_NET_ADMIN`. The test logs include real JSON and text output, covering ownership fallback, exact counters/quota use, batch parity, damaged structures, foreign tables, probe failures/collisions/cleanup errors, repeated installation and installation-file rollback. Existing kernel tests cover IPv4/IPv6, TCP/UDP, hard limits, leases, monitor crash/restart/reboot recovery, billing resets and shared exits. The Debian job runs the same available kernel tests; real systemd and published v0.2.1 monitor upgrade/rollback tests remain on Ubuntu. The historical monitor itself has the JSON-comment incompatibility and is not treated as a supported Debian 12 test driver.
+
+Tests opt in with `ROUT_TEST_NFT=1` only in a disposable namespace/container. Without opt-in they explicitly skip. `scripts/test-nft-container.sh /path/to/static.test /path/to/static-manager [engine-dir]` runs the Debian 12 suite in isolation; exit 2 means nft/kernel permissions are unavailable (reported as a skip). Dependency or test failures return a nonzero failure, not a skip. Fixtures under `internal/rout/testdata/nft-1.0.6.*` are captured real nft output and supplement, rather than replace, live kernel tests.

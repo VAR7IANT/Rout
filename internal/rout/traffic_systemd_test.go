@@ -62,6 +62,10 @@ func TestIntegrationTrafficServiceGuard(t *testing.T) {
 	if out, e := runOutput(30*time.Second, manager, args...); e != nil {
 		t.Fatalf("monitor installation failed: %v %s", e, out)
 	}
+	// The same helper must survive repeat installation without restarting nodes.
+	if out, e := runOutput(30*time.Second, manager, args...); e != nil {
+		t.Fatalf("repeat monitor install: %v %s", e, out)
+	}
 	if pid(nodes[0]) != first || pid(nodes[1]) != other {
 		t.Fatal("monitor installation restarted existing nodes")
 	}
