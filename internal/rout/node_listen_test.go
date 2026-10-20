@@ -379,3 +379,19 @@ func TestIPv6WildcardDoesNotImplyDualStackLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeListeningSummaryUsesSocketCapabilities(t *testing.T) {
+	for _, mapped := range []bool{false, true} {
+		setup := ServerSetup{Listen: "::", IPv6: v6Addr, ipv4Mapped: &mapped}
+		if !mapped {
+			setup.IPv4 = v4Addr
+		}
+		want := ":: (IPv6)"
+		if mapped {
+			want = ":: (IPv4 + IPv6)"
+		}
+		if got := listenLabel(setup); got != want {
+			t.Fatalf("mapped=%v: summary %q, want %q", mapped, got, want)
+		}
+	}
+}

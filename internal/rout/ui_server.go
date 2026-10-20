@@ -42,6 +42,11 @@ func listenLabel(s ServerSetup) string {
 	switch {
 	case s.Listen == "0.0.0.0":
 		return "0.0.0.0 (IPv4)"
+	case s.Listen == "::" && s.ipv4Mapped != nil:
+		if *s.ipv4Mapped {
+			return ":: (IPv4 + IPv6)"
+		}
+		return ":: (IPv6)"
 	case s.Listen == "::" && s.IPv4 == "" && s.IPv6 != "":
 		return ":: (IPv6)"
 	case s.Listen == "::":
