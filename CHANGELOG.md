@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.4
+
+Release candidate preparation; not tagged or published.
+
+- **Subscriptions.** Independent, token-protected Base64 share-link subscriptions for manually selected nodes (`GET /s/{token}`), managed from the new **Subscriptions** menu (seventh entry; existing menu numbers are unchanged) or `rout subscription [list|status|restart|serve]`. Create, list, rename, add/remove/reorder nodes, enable/disable, delete and rotate tokens. Nodes are never added automatically; a node may belong to several subscriptions; selection is stored as node IDs.
+- **Data and tokens.** Optional `subscriptions` array in `state.json` (schema unchanged; v0.3.3 state loads as-is). Tokens are 256-bit `crypto/rand` values, shown once; only their SHA-256 is stored and compared in constant time. Rotation invalidates the old token atomically. Changes use the configuration lock, a fresh read, a backup and an atomic write, and never touch nodes, services or traffic accounting. Deleting a node removes it from all subscriptions.
+- **Generation.** Links come from `Profile.URI()` per request, so renames, address/port and credential changes apply on the next fetch. Disabled and deleted nodes are skipped; failures are logged by node name. A valid subscription with no usable node returns `503`, never an empty `200`. Unknown, malformed, revoked and disabled tokens all return an identical `404`; only `GET`/`HEAD`; `text/plain` with `Cache-Control: no-store`.
+- **Server.** Standard-library HTTP server, loopback only (`127.0.0.1:8787` by default), disabled until enabled, with timeouts, connection and in-flight limits and graceful shutdown. Runs as the separate `rout-subscription` systemd/OpenRC service from a copied helper binary (run `rout subscription restart` after `rout update`); the systemd unit has a read-only filesystem and no capabilities. Never opens ports, installs a proxy or requests certificates; only an `https://` public URL is accepted and otherwise a template with a warning is shown.
+- **Docs and tests.** [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md); English/Chinese translations; automated tests for lifecycle, tokens, output, HTTP behavior, concurrency, compatibility and menus. Real systemd/OpenRC start-up and real-client import still need manual acceptance. Out of scope: Clash/Mihomo/sing-box/Surge formats, web UI, external imports, per-device tokens.
+- Installer default and version bumped to 0.3.4.
+
 ## v0.3.3
 
 - Fix traffic installation and accounting on Debian 12 / nftables 1.0.6, whose JSON omits the table comment. Verify the exact target table's top-level text comment when absent, normalize it before hashing, and retain counter, chain, hook, rule and quota integrity checks. Single and batched reads use the same attestation.

@@ -1,5 +1,9 @@
 # Upgrading and rollback safety
 
+## To v0.3.4
+
+Adds subscriptions. Nothing is required on upgrade: `state.json`, nodes, outbounds, AI routing, relays, traffic data and node services are unchanged, and the subscription server stays disabled until you enable it. The optional `subscriptions` array and `subscription` settings key appear only after you use the feature. To use a newer binary in an already running subscription server, run `sudo rout subscription restart` after `rout update` (the service runs a copy under `/opt/rout/bin`). To go back to v0.3.3, disable the server first (`Subscriptions → Subscription server settings → Disable`); v0.3.3 ignores the new fields and drops them on its next state write, and the pre-change backups keep them. See [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md).
+
 ## To v0.3.3
 
 This candidate fixes traffic monitoring on Debian 12 with nftables 1.0.6. The installer on main targets unpublished v0.3.3 and fails safely until release assets exist; use a locally built binary or the CI artifact for pre-release verification. Do not tag during preparation.

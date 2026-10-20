@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.3` (candidate; installation from main will fail safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.4` (candidate; installation from main will fail safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -157,6 +157,19 @@ Main menu → **AI Smart Routing**: *Enable / Disable*, *Select inbound nodes*, 
 
 Limits (also shown in the menu): matching is by domain. DNS is not hijacked or forced through Canada; client DNS/DoH/DoT keeps its behavior. Sniffing is limited to one second and supported protocols. Connections that expose no domain (IP-only without sniffable TLS/HTTP/QUIC data, ECH-encrypted handshakes) take the original route. The AI exit is TCP-only, so identified AI QUIC is rejected; TCP fallback depends on the client. Unrecognized QUIC may take the original route. This does not guarantee zero leakage. The Copilot token endpoint `api.github.com` is not routed, to avoid sending ordinary GitHub traffic to the AI exit. A domain list cannot guarantee complete coverage; new AI products need a rule-set update followed by *Apply changes*. *Test configuration* validates the configuration and probes the exit; its routing simulation evaluates rules and makes no real request.
 
+## Subscriptions
+
+A subscription is a private URL that returns a standard Base64 node list (`GET /s/TOKEN`) for clients that import share-link subscriptions. It is a link-management feature, not a proxy client, and covers only nodes you select by hand. Menu: **Subscriptions** (the seventh entry).
+
+1. **Create** — *Create subscription*: name it, pick nodes from the numbered list (several at once, e.g. `3 1 2`; the order you type is the subscription order), review, confirm. The access token is shown **once**; Rout stores only its SHA-256. Nodes are never added automatically, and "all nodes" is not offered. A node may be in several subscriptions. Relays are listed only if they have a share link.
+2. **Edit** — rename, add, remove, reorder, enable/disable. Edits keep the token. Links are generated per request from the current nodes, so renamed, moved or re-keyed nodes show up on the client's next update; disabled nodes are left out until re-enabled; deleted nodes are removed from every subscription.
+3. **Serve** — *Subscription server settings → Enable*. The server is **off by default**, listens on `127.0.0.1:8787` (port configurable, loopback only), runs as the `rout-subscription` systemd/OpenRC service and starts at boot. It never opens a firewall port.
+4. **Publish over HTTPS** — put a reverse proxy you manage in front and forward to the local port, e.g. Caddy `sub.example.com { reverse_proxy 127.0.0.1:8787 }`, or nginx `location /s/ { proxy_pass http://127.0.0.1:8787; }` with your certificate. Then enter `https://sub.example.com` under *Set public HTTPS address*; only an `https://` address is accepted, and until one is set Rout shows a `https://YOUR-DOMAIN/s/TOKEN` template with a warning instead of a usable URL.
+5. **Import** — add `https://sub.example.com/s/TOKEN` as a subscription URL in a client that supports Base64 share-link subscriptions. Rout's links are the same ones `rout export` prints (VLESS Reality, AnyTLS, Shadowsocks 2022, Hysteria2, TUIC). Clients choose their own update interval; the response is `text/plain` with `Cache-Control: no-store`.
+6. **Rotate** — *Rotate access token* invalidates the old URL immediately and shows the new one once. *Delete* also revokes the URL at once.
+
+Responses are deliberately uniform: unknown, malformed, disabled, revoked or deleted tokens all get `404`; only `GET`/`HEAD` are accepted; if a valid subscription currently has no usable node it returns `503` (never an empty success that could wipe a client's list) and the reason is logged by node name. Details, troubleshooting and security limits: [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md). Not included: Clash/Mihomo/sing-box/Surge formats, a web UI, external node import, per-device tokens. Only Base64 share-link output exists; compatibility with a particular client has not been tested with a real client yet.
+
 ## Traffic accounting, limits and monthly reset
 
 All nodes are **unlimited by default**. With accounting installed, every listener is metered in the kernel: upload + download at the node's entry, bytes in decimal MB/GB/TB, including NAT, and counted once even when nodes share an outbound proxy. Limits are optional and per node. A finite limit is enforced by a kernel quota that drops the packet that would exceed it, including on existing connections; the monitor then stops only that node. Each node has a billing day (1–31, clamped to short months) and an IANA timezone; a new cycle restores quota-paused nodes but never manually paused ones. Unlimited nodes are never blocked by accounting faults.
@@ -197,6 +210,7 @@ rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
 rout relays | outbounds | settings   # `exits` still works as an alias
 rout ai [status|test|apply]   # AI Smart Routing menu | status | check configuration | re-apply
+rout subscription [list|status|restart|serve]   # subscriptions menu | list | server status | restart (after `rout update`) | server process
 rout traffic                  # usage of all nodes
 rout traffic show|manage|recover ID
 rout traffic install          # install/update accounting (no node restarts)
@@ -210,12 +224,13 @@ Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`
 
 ## Files, services and security
 
-- Configuration `/etc/rout` (0700; files 0600): `state.json` (nodes, relays, outbound proxies and the optional `ai_routing` block), `traffic.json`, `settings.json` (language, server address and family, `backup_keep`).
+- Configuration `/etc/rout` (0700; files 0600): `state.json` (nodes, relays, outbound proxies and the optional `ai_routing` block), `traffic.json`, `settings.json` (language, server address and family, `backup_keep`, subscription server port and public URL). Subscriptions live in the optional `subscriptions` array of `state.json` (token hashes only).
 - Automatic pre-change backups in `/etc/rout/backups`, keeping the newest **20** by default (configurable 1–1000 in Settings). The newest backup is never removed, and explicit `rout backup` files are never pruned. Backups contain credentials and private keys.
 - Pinned engines in `/opt/rout/bin`: sing-box v1.14.3 and GOST v3.3.0, each verified by SHA256, streamed and installed atomically (see below) (`internal/rout/engines.lock.json`). Hosts without glibc (Alpine) get sing-box's static musl build; an installed engine that cannot execute is replaced automatically.
 - One service per node, `rout-<ID>`. Metadata edits (name, advertised address/port, outbound label) do not restart nodes; runtime edits restart only the changed node. A start counts as successful only if the process stays up and its ports are listening.
 - systemd units restrict engines with a capability bounding set (`CAP_NET_BIND_SERVICE`; HY2/TUIC also keep `CAP_NET_ADMIN` for QUIC socket buffers), `ProtectSystem=strict`, kernel/cgroup/clock protections, `RestrictNamespaces` and `RestrictAddressFamilies`. Engines therefore cannot change Rout's quota tables. New units apply on the next change or `rout apply`.
 - OpenRC services use `supervise-daemon` with bounded respawns and private logs in `/var/log/rout-<ID>.log`, rotated at 5 MB.
+- The optional `rout-subscription` service (systemd or OpenRC) is independent of node services: loopback-only, read-only filesystem and no capabilities under systemd, never writes the configuration. It runs a copy of the binary at `/opt/rout/bin/rout-subscription-v1`; run `sudo rout subscription restart` after `rout update` to refresh it.
 - Changes are serialized by file locks with bounded waits, validated in private staging directories and rolled back on failure.
 
 ## Low-memory installation
@@ -268,6 +283,6 @@ CI runs everything above plus `govulncheck` and cross-compilation on every push.
 
 ```sh
 # Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
-git tag -a v0.3.3 -m 'Rout v0.3.3'
-git push origin v0.3.3
+git tag -a v0.3.4 -m 'Rout v0.3.4'
+git push origin v0.3.4
 ```

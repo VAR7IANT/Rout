@@ -20,6 +20,12 @@ func (s State) Clone() State {
 	out := s
 	out.Profiles = append([]Profile{}, s.Profiles...)
 	out.Exits = append([]Exit(nil), s.Exits...)
+	if s.Subscriptions != nil {
+		out.Subscriptions = make([]Subscription, len(s.Subscriptions))
+		for i, sub := range s.Subscriptions {
+			out.Subscriptions[i] = sub.clone()
+		}
+	}
 	if s.AI != nil {
 		cp := s.AI.clone()
 		out.AI = &cp

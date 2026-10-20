@@ -204,7 +204,7 @@ func replace(s State, p Profile) State {
 	return out
 }
 func removeProfile(s State, id string) State {
-	out := pruneAIBinding(s.Clone(), id)
+	out := pruneSubscriptionNode(pruneAIBinding(s.Clone(), id), id)
 	out.Profiles = []Profile{}
 	for _, p := range s.Profiles {
 		if p.ID != id {

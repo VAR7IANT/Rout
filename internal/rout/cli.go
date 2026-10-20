@@ -56,6 +56,7 @@ var helpLines = [][2]string{
 	{"rout copy ID", "输出链接并请求终端复制"},
 	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
 	{"rout relays", "端口转发（中转）管理"},
+	{"rout subscription [list|status|restart|serve]", "订阅管理：菜单、列表、服务状态、重启；serve 为订阅服务进程"},
 	{"rout ai [status|test|apply]", "AI 智能分流：菜单、状态、测试配置或重新应用"},
 	{"rout outbounds", "出站代理管理（旧名称 exits 仍可用）"},
 	{"rout traffic", "全部节点流量"},
@@ -147,7 +148,7 @@ func Run(args []string) (result error) {
 	if language != "" {
 		a.Language = language
 	}
-	readOnly := cmd == "ai" && len(args) == 2 && args[1] == "status" || cmd == "list" || cmd == "status" || cmd == "export" || cmd == "copy" || cmd == "doctor" && !contains(args, "--fix")
+	readOnly := cmd == "ai" && len(args) == 2 && args[1] == "status" || cmd == "subscription" && len(args) == 2 && (args[1] == "list" || args[1] == "status") || cmd == "list" || cmd == "status" || cmd == "export" || cmd == "copy" || cmd == "doctor" && !contains(args, "--fix")
 	if os.Geteuid() != 0 && a.ServiceMode != "none" && !readOnly {
 		return errors.New("请使用 sudo rout 或 root 运行")
 	}
@@ -171,6 +172,8 @@ func Run(args []string) (result error) {
 		return u.relays()
 	case "ai":
 		return u.aiCommand(args)
+	case "subscription", "subscriptions":
+		return u.subscriptionCommand(args)
 	case "settings":
 		if e := u.initLanguage(false); e != nil {
 			return e
@@ -389,6 +392,11 @@ func (a *App) Uninstall() error {
 	}
 	if e = a.removeTrafficMonitor(); e != nil {
 		return e
+	}
+	if m, er := a.serviceManager(); er == nil {
+		if e = a.removeSubscriptionService(m); e != nil {
+			return e
+		}
 	}
 	if e = os.RemoveAll(a.Home); e != nil {
 		return e

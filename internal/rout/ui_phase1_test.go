@@ -30,7 +30,7 @@ func mainMenuItems(t *testing.T, a *App) []string {
 func TestMainMenuIsCompactAndHasNoDuplicates(t *testing.T) {
 	a := testApp(t)
 	items := mainMenuItems(t, a)
-	want := []string{"Quick create node", "Manage nodes", "AI Smart Routing", "Port forwarding", "Outbound proxies", "Service & system"}
+	want := []string{"Quick create node", "Manage nodes", "AI Smart Routing", "Port forwarding", "Outbound proxies", "Service & system", "Subscriptions"}
 	if strings.Join(items, "|") != strings.Join(want, "|") {
 		t.Fatalf("main menu %v, want %v", items, want)
 	}

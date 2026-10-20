@@ -17,6 +17,8 @@ type Settings struct {
 	BackupKeep int `json:"backup_keep,omitempty"`
 	// Last relay destination type chosen ("local"/"remote"), offered as the default.
 	RelayMode string `json:"relay_mode,omitempty"`
+	// Subscription HTTP server (see subscription_service.go); nil means never configured (disabled).
+	Subscription *SubscriptionSettings `json:"subscription,omitempty"`
 }
 
 // ServerSetup holds the saved server defaults. NAT and the port-mapping fields are the
@@ -89,6 +91,11 @@ func (a *App) LoadSettings() (Settings, error) {
 	if s.BackupKeep < 0 || s.BackupKeep > 1000 {
 		return s, errors.New("备份保留数量无效")
 	}
+	if s.Subscription != nil {
+		if e = s.Subscription.Validate(); e != nil {
+			return s, e
+		}
+	}
 	return s, nil
 }
 func (a *App) SaveSettings(s Settings) error {
@@ -102,6 +109,11 @@ func (a *App) SaveSettings(s Settings) error {
 	}
 	if s.BackupKeep < 0 || s.BackupKeep > 1000 {
 		return errors.New("备份保留数量无效")
+	}
+	if s.Subscription != nil {
+		if e := s.Subscription.Validate(); e != nil {
+			return e
+		}
 	}
 	unlock, e := a.lock()
 	if e != nil {

@@ -1413,7 +1413,7 @@ func (u *UI) system() error {
 	}
 }
 func (u *UI) menu0() []menuItem {
-	return []menuItem{item("quick", "快速创建节点"), item("nodes", "节点管理"), item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理"), item("system", "服务与系统")}
+	return []menuItem{item("quick", "快速创建节点"), item("nodes", "节点管理"), item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理"), item("system", "服务与系统"), item("subs", "订阅管理")}
 }
 func (u *UI) mainMenu() error {
 	u.showLogo()
@@ -1463,6 +1463,8 @@ func (u *UI) mainMenu() error {
 			e = u.outbounds()
 		case "system":
 			e = u.system()
+		case "subs":
+			e = u.subscriptions()
 		}
 		if e != nil {
 			if errors.Is(e, io.EOF) || errors.Is(e, errQuit) {

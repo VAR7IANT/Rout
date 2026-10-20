@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.3.3"
+const Version = "0.3.4"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -25,6 +25,8 @@ type State struct {
 	Exits    []Exit    `json:"exits,omitempty"`
 	// AI Smart Routing settings (see ai_routing.go); absent until first configured.
 	AI *AIRouting `json:"ai_routing,omitempty"`
+	// Subscriptions (see subscription.go); absent until the first one is created.
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 }
 
 type Proxy struct {
@@ -398,6 +400,9 @@ func (s State) Validate() error {
 		return e
 	}
 	if e := s.validateAI(); e != nil {
+		return e
+	}
+	if e := s.validateSubscriptions(); e != nil {
 		return e
 	}
 	ids := map[string]bool{}
