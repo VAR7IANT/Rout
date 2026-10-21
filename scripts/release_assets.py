@@ -69,12 +69,23 @@ def validate(directory, tag, commit, run=command):
 
 def release(repo, tag, run):
     # Only a real HTTP 404 means absent; authentication/network errors must fail.
-    try:
-        info = json.loads(run(["gh", "api", f"repos/{repo}/releases/tags/{tag}"]))
-    except ReleaseError as error:
-        if "HTTP 404" in str(error):
-            return None
-        raise
+    # The releases/tags endpoint excludes drafts. List releases to locate
+    # an existing draft before falling back to the published tag endpoint.
+    page = 1
+    while True:
+        items = json.loads(run(["gh", "api", f"repos/{repo}/releases?per_page=100&page={page}"]))
+        if not isinstance(items, list):
+            raise ReleaseError("Invalid releases list API response")
+        for item in items:
+            if item.get("tag_name") == tag:
+                info = item
+                break
+        else:
+            if len(items) < 100:
+                return None
+            page += 1
+            continue
+        break
     if info.get("tag_name") != tag or not isinstance(info.get("id"), int) or not isinstance(info.get("assets"), list):
         raise ReleaseError("Invalid release API response")
     if info.get("prerelease"):
