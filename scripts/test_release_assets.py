@@ -40,12 +40,16 @@ class GitHub:
                 return json.dumps({"object": {"type": "commit", "sha": self.tag_commit}})
             if self.fail_api:
                 raise ReleaseError("HTTP 401")
+            if "/releases?per_page=" in args[2]:
+                if self.info is None:
+                    return "[]"
+                info = copy.deepcopy(self.info)
+                if self.omit_final_asset and len(self.data) == 4:
+                    info["assets"].pop()
+                return json.dumps([info])
             if self.info is None:
                 raise ReleaseError("HTTP 404")
-            info = copy.deepcopy(self.info)
-            if self.omit_final_asset and len(self.data) == 4:
-                info["assets"].pop()
-            return json.dumps(info)
+            return json.dumps(copy.deepcopy(self.info))
         if args[:3] == ["gh", "release", "create"]:
             self.info = {"id": 123, "tag_name": TAG, "assets": [], "draft": True, "prerelease": False}
         elif args[:3] == ["gh", "release", "upload"]:
