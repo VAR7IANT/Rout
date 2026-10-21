@@ -29,7 +29,9 @@ jobs:
           test "$WORKFLOW_REF" = refs/heads/main
           [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | grep -Fx -- "$RELEASE_TAG"
+          # Draft visibility depends on token permissions. The upload job has
+          # contents:write and validates the existing release before mutation.
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.ref' >/dev/null
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
