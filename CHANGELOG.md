@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Subscription responses (GET and HEAD, Base64 and Mihomo/Clash) now carry the stored subscription name as `Profile-Title: base64:...` and an RFC 5987 `Content-Disposition` `filename*`, so clients show the name entered at creation. No new input, URL change or token rotation; payload bytes are unchanged and existing subscriptions gain it once their helper is refreshed. Only HTTP metadata is tested, not desktop clients.
+- The compact narrow-terminal banner keeps “Support by VAR7IANT”.
+
 ## v0.3.7
 
 - Node Management displays every node’s complete protocol links directly below its card, including existing dual-stack alternatives; command/export output and link generation remain unchanged.

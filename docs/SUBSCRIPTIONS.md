@@ -56,6 +56,10 @@ sudo rout subscription mihomo-test-url default
 
 This optional `settings.json` field is written only after explicit configuration. The server does not fetch the URL; clients perform the checks. Credentials/query parameters/fragments and non-HTTPS URLs are refused. Changing it needs no restart and does not touch Caddy, subscriptions or node credentials. Mihomo may run an initial health check; subsequent checks are lazy at the configured 600-second interval.
 
+## Display name
+
+Every successful subscription response includes the subscription's stored name as `Profile-Title: base64:<UTF-8 name>` (read by Hiddify/Happ-style clients) and `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>` (Clash Verge reads `filename*` from its source). Control characters are stripped, so names with Chinese, spaces or quotes are header-safe. Renaming takes effect on the next fetch; tokens and URLs do not change. A helper started before this change must be refreshed (`sudo rout subscription refresh`). Verified: HTTP headers only; no desktop/mobile client was run. Shadowrocket's handling is not verified.
+
 ## Existing v0.3.4 subscriptions survive an upgrade
 
 There is **no subscription schema migration**. The optional `subscriptions` array in `state.json` retains each ID, name, ordered `node_ids`, `token_hash`, `enabled` and `created_at`. `settings.json` retains the subscription enablement, loopback port and public base URL. An unchanged selection produces the same Base64 body, names and order. Existing Shadowrocket URLs continue authenticating; do not delete/recreate subscriptions, rotate tokens, reselect nodes or reimport clients during an upgrade.

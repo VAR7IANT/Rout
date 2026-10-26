@@ -2,6 +2,7 @@ package rout
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -14,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The subscription server is a small read-only HTTP endpoint (GET /s/{token}) meant to sit
@@ -160,10 +163,50 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Referrer-Policy", "no-referrer")
 	hd.Set("Content-Length", strconv.Itoa(len(body)))
+	setSubscriptionTitle(hd, sub.Name)
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodGet {
 		_, _ = w.Write([]byte(body))
 	}
+}
+
+// setSubscriptionTitle exposes the stored subscription name to clients. Profile-Title
+// (base64 form, read by Hiddify/Happ-style clients) and Content-Disposition filename*
+// (RFC 5987/6266, read by Clash Verge and similar) are both UTF-8 safe, so any valid
+// name is carried without raw non-ASCII or control bytes in a header value.
+func setSubscriptionTitle(h http.Header, name string) {
+	name = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name))
+	if name == "" || !utf8.ValidString(name) {
+		return
+	}
+	h.Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte(name)))
+	fallback := strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' || r == '%' || r == ';' {
+			return -1
+		}
+		return r
+	}, name)
+	if strings.TrimSpace(fallback) == "" {
+		fallback = "subscription"
+	}
+	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", strings.TrimSpace(fallback), rfc5987Escape(name)))
+}
+
+func rfc5987Escape(s string) string {
+	var b strings.Builder
+	for _, c := range []byte(s) {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte("!#$&+-.^_`|~", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
 }
 
 // report logs export warnings (subscription ID and node names only) when they change.

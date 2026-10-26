@@ -542,7 +542,7 @@ func TestLogoRendering(t *testing.T) {
 	}
 	for _, w := range []int{20, 38} {
 		narrow := renderLogo(w, false, false)
-		if strings.Count(narrow, "\n") != 1 || narrow != "ROUT v"+Version+"\n" {
+		if narrow != "ROUT v"+Version+"\n"+logoCredit+"\n" {
 			t.Fatalf("narrow %d: %q", w, narrow)
 		}
 	}

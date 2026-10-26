@@ -62,10 +62,18 @@ func renderLogo(width int, color, rich bool) string {
 	var b strings.Builder
 	if width < logoWidth+4 {
 		title := "ROUT " + version
-		if color {
-			title = "\033[1;34mROUT\033[0m " + version
+		credit := logoCredit
+		if displayWidth(credit) > width {
+			credit = "VAR7IANT"
 		}
-		b.WriteString(title + "\n")
+		if displayWidth(title) > width {
+			title = "ROUT"
+		}
+		if color {
+			title = strings.Replace(title, "ROUT", "\033[1;34mROUT\033[0m", 1)
+			credit = "\033[2m" + credit + "\033[0m"
+		}
+		b.WriteString(title + "\n" + credit + "\n")
 		return b.String()
 	}
 	for i, line := range logoLines {
