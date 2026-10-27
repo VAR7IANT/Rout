@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.8
 
 - Interactive menu, visual layer only: the main menu is grouped under *Nodes*, *Network* and *Services* titles with live count/state badges, and a status panel that keeps attention conditions (expiring certificates, quota pauses, traffic monitoring off) visible on every redraw (at most three). Menu numbers, commands and output of scripted commands are unchanged.
 - Pressing Enter at the main menu no longer quits Rout; use `0` or `q`. Sub-menus still go back on Enter.
