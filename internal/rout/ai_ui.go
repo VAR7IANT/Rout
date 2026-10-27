@@ -61,6 +61,7 @@ func (u *UI) aiStatusLines(st AIStatus) {
 }
 
 func (u *UI) aiMenu() error {
+	defer u.enter("AI 智能分流")()
 	for {
 		st, e := u.a.AIStatus()
 		if e != nil {

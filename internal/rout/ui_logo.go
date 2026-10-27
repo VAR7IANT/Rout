@@ -37,6 +37,32 @@ func terminalWidth() int {
 	}
 	return 80
 }
+
+// terminalHeight reads the window rows of stdout, then $LINES; 0 means unknown.
+func terminalHeight() int {
+	var ws struct{ Row, Col, X, Y uint16 }
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws))); e == 0 && ws.Row > 0 {
+		return int(ws.Row)
+	}
+	if n, e := strconv.Atoi(os.Getenv("LINES")); e == nil && n > 0 {
+		return n
+	}
+	return 0
+}
+
+// compactBannerRows is the window height below which the large logo is replaced by the
+// two-line banner, so the first menu fits on one screen.
+const compactBannerRows = 30
+
+func (u *UI) height() int {
+	if u.termHeight > 0 {
+		return u.termHeight
+	}
+	if u.out != nil {
+		return 0 // captured output has no window
+	}
+	return terminalHeight()
+}
 func (u *UI) width() int {
 	if u.termWidth > 0 {
 		return u.termWidth
@@ -110,5 +136,9 @@ func (u *UI) showLogo() {
 		return
 	}
 	u.logoShown = true
-	fmt.Fprint(u.writer(), "\n"+renderLogo(u.width(), u.colorOn(), richColor() || u.forceColor))
+	width := u.width()
+	if h := u.height(); h > 0 && h < compactBannerRows && width > logoWidth+3 {
+		width = logoWidth + 3 // the compact banner is chosen below logoWidth+4 columns
+	}
+	fmt.Fprint(u.writer(), "\n"+renderLogo(width, u.colorOn(), richColor() || u.forceColor))
 }

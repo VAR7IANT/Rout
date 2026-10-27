@@ -392,6 +392,7 @@ func (u *UI) subscriptionServerInfo() (SubscriptionServerStatus, error) {
 }
 
 func (u *UI) subscriptionServer() error {
+	defer u.enter("订阅服务设置")()
 	for {
 		u.heading("订阅服务设置")
 		st, e := u.subscriptionServerInfo()
@@ -466,6 +467,7 @@ func (u *UI) subscriptionServer() error {
 }
 
 func (u *UI) subscriptions() error {
+	defer u.enter("订阅管理")()
 	for {
 		v := u.menu("订阅管理", []menuItem{item("list", "查看订阅"), item("create", "创建订阅"), item("edit", "编辑订阅"), item("delete", "删除订阅"), item("rotate", "更换访问令牌"), item("server", "订阅服务设置")}, "返回")
 		if u.err != nil || v == "" {
