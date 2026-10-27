@@ -1,5 +1,9 @@
 # Upgrading and rollback safety
 
+## To v0.3.8
+
+No migration. State, subscriptions, tokens, nodes, relays and traffic accounting are unchanged. The interactive menu gains section titles, status badges, breadcrumbs and a status panel with the same menu numbers; Enter no longer quits the main menu. Relay loop checks now follow TCP and UDP chains independently, and subscription responses carry the stored name as the client title (existing subscriptions gain it after `sudo rout subscription refresh`). Run `rout update`; the existing updater/installer works as before.
+
 ## To v0.3.7
 
 Existing nodes, subscription IDs/hashes, selections/order, URLs, local port, public domain, Caddy ownership, routing and traffic state need no migration. Node Management now shows complete links immediately, using the original link generator. Existing command/export and HTTP subscription formats stay unchanged.

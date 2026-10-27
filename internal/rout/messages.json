@@ -1040,5 +1040,11 @@
  "无法生成节点链接，请检查节点配置":"Cannot generate the node link; check its configuration",
  "输入节点编号管理节点 · q 退出 Rout":"Enter a node number to manage it · q quits Rout",
  "Clash：%s/s/{access_token}?format=clash\n":"Clash: %s/s/{access_token}?format=clash\n",
- "此处仅显示链接模板；完整链接请在“查看订阅”中查看，旧订阅仍可使用之前保存的 URL":"Only URL templates are shown here. View subscriptions shows saved full URLs; legacy subscriptions can keep using their previously saved URL"
+ "此处仅显示链接模板；完整链接请在“查看订阅”中查看，旧订阅仍可使用之前保存的 URL":"Only URL templates are shown here. View subscriptions shows saved full URLs; legacy subscriptions can keep using their previously saved URL",
+ "服务":"Services",
+ "网络":"Network",
+ "%d 个":"%d",
+ "另有 %d 条提示，请运行 rout doctor 查看":"%d more notices; run rout doctor to see them",
+ "0 返回 · q 退出":"0 Back · q Quit",
+ "0 或 q 退出":"0 or q to quit"
 }

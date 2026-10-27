@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.7` (candidate; main installation fails safely until publication), checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.8`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -30,22 +30,31 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.3.7
-  Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
-  1  Quick create node     → the guided node creation, straight from the main menu
-  2  Manage nodes          → full links below every node; pick one to edit / delete / copy / enable / restart
+Rout 0.3.8
+  ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
+  ! Tokyo-HY2 certificate expires in 12 days
+
+  Nodes
+   1  Quick create node     → the guided node creation, straight from the main menu
+   2  Manage nodes      4   → full links below every node; pick one to edit / delete / copy / enable / restart
                              n new node · l all links · t traffic and limits
-  3  AI Smart Routing      → send AI services to a chosen exit, for selected inbound nodes only
-  4  Port forwarding       → relays: view / create / edit / test / delete
-  5  Outbound proxies      → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
-  6  Service & system      → services · diagnostics · updates · settings (language, server address, backups, uninstall)
-  7  Subscriptions           → selected-node subscriptions · HTTPS deployment · diagnostics
-  0  Quit
+  Network
+   3  AI Smart Routing  Enabled → send AI services to a chosen exit, for selected inbound nodes only
+   4  Port forwarding    1   → relays: view / create / edit / test / delete
+   5  Outbound proxies   2   → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
+  Services
+   6  Service & system       → services · diagnostics · updates · settings (language, server address, backups, uninstall)
+   7  Subscriptions      2   → selected-node subscriptions · HTTPS deployment · diagnostics
+   0  Quit
 ```
+
+The entries are grouped under small section titles, and the dim badge to the right of an entry shows its live count or state (nothing is shown for an empty category). The **numbers never change**. Conditions that need attention (certificates about to expire, nodes paused by a quota, traffic monitoring off) are shown under the status line every time the main menu is drawn, at most three at once. Pressing Enter at the main menu does **not** quit; type `0` or `q`. In sub-menus Enter still goes back.
+
+Menu headings show where you are (`Rout › Manage nodes › Tokyo-VLESS`), shortened from the left on narrow terminals. The full key hint is printed once per session and then shortened to `0 Back · q Quit`. On a colour terminal node status gets a coloured dot (● running, ○ disabled, red when stopped) and limited nodes a usage bar such as `▓▓▓▓▓░░░ 62%`; both are glyph-only additions to the existing text, so plain output, pipes and `NO_COLOR` are unchanged.
 
 Earlier releases had eight top-level entries. *Traffic and limits* moved into Manage nodes (`t`); *Services*, *Diagnostics*, *Updates* and *Settings* moved under **Service & system**; the separate *view*, *edit*, *delete*, *restart* and *connection links* pickers of Manage nodes became one list where you choose a node first. Nothing was removed, and every `rout` command works as before.
 
-The interactive menu opens with a ROUT banner once per session: the logo in a blue gradient on 256-colour terminals, with "Support by VAR7IANT" and the running version centered beneath it, or a one-line title on terminals narrower than 39 columns. It is never printed for commands, pipes or scripts, and `NO_COLOR` or `TERM=dumb` disables all colour.
+The interactive menu opens with a ROUT banner once per session: the logo in a blue gradient on 256-colour terminals, with "Support by VAR7IANT" and the running version centered beneath it, or a two-line title on terminals narrower than 39 columns or shorter than 30 rows. It is never printed for commands, pipes or scripts, and `NO_COLOR` or `TERM=dumb` disables all colour.
 
 **Quick create node** (1) and **New node** inside Manage nodes (`n`) run the same code, so defaults, validation and port checks are identical; `0` at the name or protocol prompt, or *Cancel* at the confirmation, creates nothing. The connection links are printed as soon as the node exists.
 
@@ -290,6 +299,6 @@ CI runs everything above plus `govulncheck` and cross-compilation on every push.
 
 ```sh
 # Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
-git tag -a v0.3.7 -m 'Rout v0.3.7'
-git push origin v0.3.7
+git tag -a v0.3.8 -m 'Rout v0.3.8'
+git push origin v0.3.8
 ```

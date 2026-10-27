@@ -21,7 +21,9 @@ func mainMenuItems(t *testing.T, a *App) []string {
 	for _, line := range strings.Split(out.String(), "\n") {
 		f := strings.Fields(line)
 		if len(f) >= 2 && len(f[0]) == 1 && f[0] >= "1" && f[0] <= "9" {
-			items = append(items, strings.Join(f[1:], " "))
+			// The label ends at the first run of two spaces; what follows is a status badge.
+			label := strings.TrimSpace(line)[len(f[0]):]
+			items = append(items, strings.TrimSpace(strings.SplitN(label, "  ", 3)[1]))
 		}
 	}
 	return items
@@ -219,7 +221,7 @@ func TestNodeSelectionShowsConnectionLinkDirectly(t *testing.T) {
 	u, ssOut := testUI(a, "2\n2\n0\n0\n0\n")
 	_ = u.mainMenu()
 	ssDetail := ssOut.String()[strings.Index(ssOut.String(), "Edge-SS\n"):]
-	ssDetail = strings.SplitN(ssDetail, "\nManage nodes\n", 2)[0]
+	ssDetail = strings.SplitN(ssDetail, "Manage nodes\n", 2)[0]
 	if !strings.Contains(ssDetail, "ss://") || strings.Contains(ssDetail, "pbk=") {
 		t.Fatal("Shadowsocks detail has another protocol's settings")
 	}

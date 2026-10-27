@@ -30,7 +30,11 @@ type UI struct {
 	// Presentation state: the logo appears once per session; tests can force it,
 	// simulate a color terminal or fix the width.
 	logoShown, forceLogo, forceColor bool
-	termWidth                        int
+	termWidth, termHeight            int
+	// path is the breadcrumb of nested menus; hintShown records that the full
+	// navigation hint was already printed in this session.
+	path      []string
+	hintShown bool
 }
 
 func (u *UI) writer() io.Writer {
@@ -102,6 +106,9 @@ func (u *UI) choose(prompt string, allowed []string, def string) string {
 		s := normalizeInput(u.ask(prompt, def))
 		if u.err != nil {
 			return ""
+		}
+		if s == "" && def == "" {
+			continue // no default to take: ask again without complaining
 		}
 		switch menuShortcut(s) {
 		case "quit":
@@ -199,6 +206,9 @@ func (u *UI) usage(db *TrafficState, p Profile) string {
 			left = policy.LimitBytes - total
 		}
 		line = fmt.Sprintf(u.a.T("已用 %s / %s，剩余 %s"), FormatTraffic(total), FormatTraffic(policy.LimitBytes), FormatTraffic(left))
+		if bar := u.usageBar(total, policy.LimitBytes); bar != "" {
+			line = bar + "  " + line
+		}
 	} else {
 		line += " · " + u.a.T("不限流量")
 	}
@@ -231,6 +241,32 @@ func (u *UI) nodeStatus(p Profile) string {
 	return u.a.Running(p)
 }
 
+// nodeStatusStyled is nodeStatus with a colored dot and word on a color terminal;
+// the plain word is unchanged everywhere else.
+func (u *UI) nodeStatusStyled(p Profile) string {
+	word := u.nodeStatus(p)
+	level := levelWarn
+	switch {
+	case !p.Enabled:
+		level = levelOff
+	case word == u.a.T("运行中"):
+		level = levelOK
+	case word == u.a.T("未运行"):
+		level = levelErr
+	}
+	switch level {
+	case levelOK:
+		word = u.paint(colorOK, word)
+	case levelWarn:
+		word = u.paint(colorWarn, word)
+	case levelErr:
+		word = u.paint(colorErr, word)
+	default:
+		word = u.dim(word)
+	}
+	return u.dot(level) + word
+}
+
 // nodeCard is a credential-free summary that fits narrow/mobile terminals.
 func (u *UI) nodeCard(s State, i int, p Profile, db *TrafficState) {
 	if p.Kind == "relay" {
@@ -242,7 +278,7 @@ func (u *UI) nodeCard(s State, i int, p Profile, db *TrafficState) {
 		prefix = u.paint(accent, fmt.Sprintf("%2d.", i))
 	}
 	fmt.Fprintf(u.writer(), "  %s %s %s\n", prefix, u.bold(p.Name), u.dim("["+p.ID+"]"))
-	u.segments("      ", ProtocolLabel(p.Protocol), u.nodeStatus(p), fmt.Sprintf("%s %d", u.a.T("监听端口"), p.Port), u.a.T("公网")+" "+net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
+	u.segments("      ", ProtocolLabel(p.Protocol), u.nodeStatusStyled(p), fmt.Sprintf("%s %d", u.a.T("监听端口"), p.Port), u.a.T("公网")+" "+net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
 	segs := []string{u.a.T("出站：") + u.outboundLabel(s, p)}
 	if use := u.usage(db, p); use != "" {
 		segs = append(segs, use)
@@ -564,6 +600,7 @@ func (u *UI) testExit(p Proxy) (string, error) {
 // outbounds is Outbound Proxy Management. Proxies are chosen by displayed number;
 // their stable IDs remain the persistent references in the configuration.
 func (u *UI) outbounds() error {
+	defer u.enter("出站代理")()
 	for {
 		s, e := u.a.Load()
 		if e != nil {
@@ -819,6 +856,7 @@ func (u *UI) links() error {
 // node's complete links appear below its card, before any selection is needed.
 // "n" creates a node through the same create() that Quick Create uses.
 func (u *UI) manage() error {
+	defer u.enter("节点管理")()
 	for {
 		s, e := u.a.Load()
 		if e != nil {
@@ -881,12 +919,14 @@ func (u *UI) nodeDetail(id string) error {
 		if e != nil {
 			return nil // deleted meanwhile
 		}
+		pop := u.enter(p.Name)
 		u.heading(p.Name)
+		pop()
 		w := u.writer()
 		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("协议"), 8), ProtocolLabel(p.Protocol))
 		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("地址"), 8), p.PublicHost)
 		fmt.Fprintf(w, "  %s  %d\n", pad(u.a.T("端口"), 8), p.PublicPort)
-		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("状态"), 8), u.nodeStatus(p))
+		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("状态"), 8), u.nodeStatusStyled(p))
 		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("出站"), 8), u.outboundLabel(s, p))
 		if s.AI != nil && s.AI.Enabled && p.AIRoute != nil {
 			fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("AI 分流"), 8), u.a.T("已绑定"))
@@ -959,7 +999,10 @@ func (u *UI) nodeMenu(id string) error {
 		if p.Kind == "relay" {
 			return u.relayEdit(p.ID)
 		}
-		u.heading(p.Name)
+		popNode, popEdit := u.enter(p.Name), u.enter("编辑")
+		u.heading("编辑")
+		popEdit()
+		popNode()
 		u.nodeCard(s, 0, p, u.trafficDB())
 		items := []menuItem{item("name", "重命名"), item("address", "修改端口或公网地址"), item("exit", "选择出站代理"), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据")}
 		if _, ok := p.CertificateExpiry(); ok {
@@ -1149,6 +1192,7 @@ func (u *UI) trafficMenu() error {
 
 // services is Service Management for every node and relay plus the traffic monitor.
 func (u *UI) services() error {
+	defer u.enter("服务管理")()
 	for {
 		v := u.menu("服务管理", []menuItem{item("status", "服务状态"), item("restart", "重启节点或中转"), item("toggle", "启动或停止节点或中转"), item("logs", "查看日志"), item("apply", "重新应用全部配置"), item("monitor", "安装或更新流量监控服务")}, "返回")
 		if u.err != nil || v == "" {
@@ -1166,7 +1210,7 @@ func (u *UI) services() error {
 					if p.Kind == "relay" {
 						kind = u.a.T("中转")
 					}
-					fmt.Fprintf(u.writer(), "  %s  %s  %s\n", pad(p.Name, 24), pad(kind, 8), u.nodeStatus(p))
+					fmt.Fprintf(u.writer(), "  %s  %s  %s\n", pad(p.Name, 24), pad(kind, 8), u.nodeStatusStyled(p))
 				}
 				if u.a.trafficActive() {
 					m, _ := u.a.serviceManager()
@@ -1220,6 +1264,7 @@ func (u *UI) services() error {
 	}
 }
 func (u *UI) settings() error {
+	defer u.enter("设置")()
 	for {
 		v := u.menu("设置", []menuItem{item("language", "语言 / Language"), item("server", "服务器地址（IPv4 / IPv6）"), item("backups", "自动备份保留数量"), item("backup", "备份与恢复"), item("uninstall", "卸载 Rout")}, "返回")
 		if u.err != nil || v == "" {
@@ -1355,40 +1400,86 @@ func (u *UI) summary(s State) string {
 	return line
 }
 
-// notices lists conditions that need attention, shown once when the menu opens.
-func (u *UI) notices(s State) {
+// alert is one condition that needs attention, shown in the status panel.
+type alert struct {
+	level int
+	text  string
+}
+
+// alerts lists conditions that need attention. The status panel shows them every time
+// the main menu is drawn, so they are not lost in the scrollback.
+func (u *UI) alerts(s State) []alert {
+	var out []alert
+	add := func(level int, text string, args ...any) {
+		out = append(out, alert{level, fmt.Sprintf(u.a.T(text), args...)})
+	}
 	now := time.Now()
 	limited := false
 	for _, p := range s.Profiles {
 		if days, ok := p.CertificateDays(now); ok && days <= certificateWarnDays {
 			if days < 0 {
-				u.warnf("%s 的证书已过期，请在 节点管理 → 编辑节点 → 证书管理 中更新", p.Name)
+				add(levelErr, "%s 的证书已过期，请在 节点管理 → 编辑节点 → 证书管理 中更新", p.Name)
 			} else {
-				u.warnf("%s 的证书 %d 天后过期", p.Name, days)
+				add(levelWarn, "%s 的证书 %d 天后过期", p.Name, days)
 			}
 		}
 		limited = limited || p.trafficPolicy().LimitBytes > 0
 	}
 	if !u.a.trafficActive() {
 		if limited {
-			u.warn("流量监控未启用：有限额节点保持暂停，请运行 rout traffic install")
+			add(levelWarn, "流量监控未启用：有限额节点保持暂停，请运行 rout traffic install")
 		}
-		return
+		return out
 	}
 	if db, e := u.a.loadTraffic(); e == nil {
 		for _, p := range s.Profiles {
 			switch db.Records[p.ID].Blocked {
 			case blockFault:
-				u.warnf("%s 因计量缺口暂停，可在 流量与限额 中选择保留已知用量并恢复", p.Name)
+				add(levelWarn, "%s 因计量缺口暂停，可在 流量与限额 中选择保留已知用量并恢复", p.Name)
 			case blockQuota:
-				u.warnf("%s 已达流量上限，将在下个账单周期恢复", p.Name)
+				add(levelWarn, "%s 已达流量上限，将在下个账单周期恢复", p.Name)
 			}
 		}
+	}
+	return out
+}
+
+// maxPanelAlerts bounds the status panel so it never pushes the menu off the screen.
+const maxPanelAlerts = 3
+
+// statusPanel prints the one-line summary with an overall health dot, then the alerts.
+func (u *UI) statusPanel(s State) {
+	alerts := u.alerts(s)
+	level := levelOK
+	for _, al := range alerts {
+		if al.level > level && al.level != levelOff {
+			level = al.level
+		}
+	}
+	parts := strings.Split(u.summary(s), " · ")
+	parts[0] = u.dot(level) + parts[0]
+	u.segments("  ", parts...)
+	u.printAlerts(alerts)
+}
+
+// printAlerts lists at most maxPanelAlerts conditions and folds the rest into one line.
+func (u *UI) printAlerts(alerts []alert) {
+	for i, al := range alerts {
+		if i == maxPanelAlerts {
+			u.warnf("另有 %d 条提示，请运行 rout doctor 查看", len(alerts)-maxPanelAlerts)
+			break
+		}
+		mark, code := "! ", colorWarn
+		if al.level == levelErr {
+			mark, code = "✗ ", colorErr
+		}
+		fmt.Fprintln(u.writer(), u.paint(code, mark)+al.text)
 	}
 }
 
 // system groups the operational menus that used to be separate top-level entries.
 func (u *UI) system() error {
+	defer u.enter("服务与系统")()
 	for {
 		v := u.menu("服务与系统", []menuItem{item("services", "服务管理"), item("doctor", "诊断"), item("updates", "更新"), item("settings", "设置")}, "返回")
 		if u.err != nil || v == "" {
@@ -1416,10 +1507,54 @@ func (u *UI) system() error {
 		}
 	}
 }
+
+// menu0 is the main menu. The numbers are fixed (they are documented and muscle memory);
+// only the section titles above the entries are new.
 func (u *UI) menu0() []menuItem {
-	return []menuItem{item("quick", "快速创建节点"), item("nodes", "节点管理"), item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理"), item("system", "服务与系统"), item("subs", "订阅管理")}
+	quick, nodes := item("quick", "快速创建节点"), item("nodes", "节点管理")
+	quick.group = "节点"
+	ai, relays, outbounds := item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理")
+	ai.group = "网络"
+	system, subs := item("system", "服务与系统"), item("subs", "订阅管理")
+	system.group = "服务"
+	return []menuItem{quick, nodes, ai, relays, outbounds, system, subs}
+}
+
+// withBadges adds the live counts and states shown to the right of the entries.
+func (u *UI) withBadges(items []menuItem, s State) []menuItem {
+	nodes, relays := 0, 0
+	for _, p := range s.Profiles {
+		if p.Kind == "relay" {
+			relays++
+		} else {
+			nodes++
+		}
+	}
+	count := func(n int) string {
+		if n == 0 {
+			return ""
+		}
+		return fmt.Sprintf(u.a.T("%d 个"), n)
+	}
+	ai := u.a.T("未启用")
+	if s.AI != nil && s.AI.Enabled {
+		ai = u.a.T("已启用")
+	}
+	badges := map[string]string{
+		"nodes":     count(nodes),
+		"ai":        ai,
+		"relays":    count(relays),
+		"outbounds": count(len(s.Exits)),
+		"subs":      count(len(s.Subscriptions)),
+	}
+	out := append([]menuItem(nil), items...)
+	for i := range out {
+		out[i].badge = badges[out[i].key]
+	}
+	return out
 }
 func (u *UI) mainMenu() error {
+	defer u.enter("Rout")()
 	u.showLogo()
 	if e := u.initLanguage(false); e != nil {
 		if errors.Is(e, io.EOF) {
@@ -1434,17 +1569,16 @@ func (u *UI) mainMenu() error {
 			}
 		}
 	}
-	if s, e := u.a.Load(); e != nil {
-		u.fail(u.a.Error(e))
-	} else {
-		u.notices(s)
-	}
 	for {
 		u.heading("Rout " + Version)
-		if s, e := u.a.Load(); e == nil {
-			u.segments("  ", strings.Split(u.summary(s), " · ")...)
+		items := u.menu0()
+		if s, e := u.a.Load(); e != nil {
+			u.fail(u.a.Error(e))
+		} else {
+			u.statusPanel(s)
+			items = u.withBadges(items, s)
 		}
-		v := u.menu("", u.menu0(), "退出")
+		v := u.menuAsk("", items, "退出", false)
 		if u.err != nil {
 			if errors.Is(u.err, io.EOF) || errors.Is(u.err, errQuit) {
 				return nil

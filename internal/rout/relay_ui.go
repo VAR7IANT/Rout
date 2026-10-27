@@ -499,6 +499,7 @@ func (u *UI) pickRelay(s State) (Profile, bool) {
 
 // relays is Relay Management.
 func (u *UI) relays() error {
+	defer u.enter("端口转发")()
 	for {
 		v := u.menu("端口转发", []menuItem{item("view", "查看中转"), item("create", "创建中转"), item("edit", "编辑中转"), item("test", "测试中转"), item("delete", "删除中转")}, "返回")
 		if u.err != nil || v == "" {
