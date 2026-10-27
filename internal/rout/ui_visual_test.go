@@ -297,3 +297,40 @@ func TestCompactBannerWhenTheTerminalIsShort(t *testing.T) {
 		t.Fatal("unknown height must keep the big logo")
 	}
 }
+
+// The bar must reach the screen through the real node card, not only through unit calls.
+func TestQuotaBarAppearsOnTheNodeCardOnlyWhenMonitoredAndFancy(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	a := testApp(t)
+	u, _ := testUI(a, "Edge\n1\n\n")
+	if e := u.create(); e != nil {
+		t.Fatal(e)
+	}
+	s, _ := a.Load()
+	p := s.Profiles[0]
+	p.Traffic = &TrafficPolicy{LimitBytes: 50 << 30, BillingDay: 1}
+	db := &TrafficState{Records: map[string]TrafficRecord{p.ID: {RawUp: 10 << 30, RawDown: 21 << 30}}}
+	card := func(color bool, width int, db *TrafficState) string {
+		view, out := testUI(a, "")
+		view.forceColor, view.termWidth = color, width
+		view.nodeCard(s, 1, p, db)
+		return out.String()
+	}
+	if got := card(true, 80, db); !strings.Contains(got, "▓▓▓▓▓") || !strings.Contains(got, "62%") || !strings.Contains(got, "Used") {
+		t.Fatalf("no quota bar on the node card:\n%s", got)
+	}
+	for name, got := range map[string]string{
+		"plain terminal":    card(false, 80, db),
+		"very narrow":       card(true, 40, db),
+		"monitoring is off": card(true, 80, nil),
+	} {
+		if strings.Contains(got, "▓") || strings.Contains(got, "░") {
+			t.Fatalf("%s must not show a bar:\n%s", name, got)
+		}
+	}
+	// The text figures stay on the card next to the bar.
+	if got := card(true, 80, db); !strings.Contains(got, FormatTraffic(31<<30)) || !strings.Contains(got, FormatTraffic(19<<30)) {
+		t.Fatalf("used/remaining text lost:\n%s", got)
+	}
+}

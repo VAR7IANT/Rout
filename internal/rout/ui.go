@@ -206,6 +206,9 @@ func (u *UI) usage(db *TrafficState, p Profile) string {
 			left = policy.LimitBytes - total
 		}
 		line = fmt.Sprintf(u.a.T("已用 %s / %s，剩余 %s"), FormatTraffic(total), FormatTraffic(policy.LimitBytes), FormatTraffic(left))
+		if bar := u.usageBar(total, policy.LimitBytes); bar != "" {
+			line = bar + "  " + line
+		}
 	} else {
 		line += " · " + u.a.T("不限流量")
 	}
