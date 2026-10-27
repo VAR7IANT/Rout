@@ -526,6 +526,7 @@
  "目标服务（本机）":"Destination service (this server)",
  "目标端口就是本中转的监听端口，会形成转发循环":"The destination port is this relay's own listening port and would create a forwarding loop",
  "目标经由中转 %s 又回到本中转，会形成转发循环":"The destination leads back to this relay through relay %s and would create a forwarding loop",
+ "目标经由中转 %s 陷入转发循环":"The destination enters a forwarding loop through relay %s",
  "直连":"Direct connection",
  "直连（不使用出站代理）":"Direct connection (no outbound proxy)",
  "确认":"yes",

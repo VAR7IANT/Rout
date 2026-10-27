@@ -57,49 +57,55 @@ func pointsAtThisHost(h string, local map[string]bool) bool {
 	return ip != nil && (ip.IsUnspecified() || local[ip.String()])
 }
 
-// relayLoop rejects relays that would forward into themselves, directly or through a
-// chain of local relays. Forwarding to ANOTHER port on the same host is legitimate.
+// relayLoop rejects relays that would forward into a local cycle. Follow TCP and UDP
+// independently: forwarding preserves its transport, and different relays can share a
+// port when one is TCP-only and the other is UDP-only.
 func relayLoop(s State, p Profile, local map[string]bool) error {
-	h, port, e := ParseEndpoint(p.Target)
-	if e != nil {
+	if _, _, e := ParseEndpoint(p.Target); e != nil {
 		return e
 	}
-	if sameHost(h, p.PublicHost) && port == p.PublicPort {
-		return errors.New("目标就是本中转的公网入口，会形成转发循环")
-	}
-	if !pointsAtThisHost(h, local) {
-		return nil
-	}
-	// Follow local hops: target port -> relay listening there -> its target ...
-	seen := map[string]bool{p.ID: true}
-	current, currentPort := p, port
-	for {
-		if currentPort == p.Port && sharesNetwork(current.Networks(), p.Networks()) {
-			return errors.New("目标端口就是本中转的监听端口，会形成转发循环")
-		}
-		var next *Profile
-		for i, other := range s.Profiles {
-			if other.Kind == "relay" && other.Enabled && other.ID != p.ID && other.Port == currentPort && sharesNetwork(other.Networks(), current.Networks()) {
-				next = &s.Profiles[i]
+	for _, network := range p.Networks() {
+		seen := map[string]bool{p.ID: true}
+		current := p
+		for {
+			host, port, e := ParseEndpoint(current.Target)
+			if e != nil {
+				break // An existing invalid destination cannot be followed.
+			}
+			if sameHost(host, p.PublicHost) && port == p.PublicPort {
+				if current.ID == p.ID {
+					return errors.New("目标就是本中转的公网入口，会形成转发循环")
+				}
+				return fmt.Errorf("目标经由中转 %s 又回到本中转，会形成转发循环", current.Name)
+			}
+			if !pointsAtThisHost(host, local) {
 				break
 			}
+			if port == p.Port {
+				if current.ID == p.ID {
+					return errors.New("目标端口就是本中转的监听端口，会形成转发循环")
+				}
+				return fmt.Errorf("目标经由中转 %s 又回到本中转，会形成转发循环", current.Name)
+			}
+			var next *Profile
+			for i, other := range s.Profiles {
+				// During UI edits s may still contain this relay's previous listener.
+				if other.Kind == "relay" && other.Enabled && other.ID != p.ID && other.Port == port && contains(other.Networks(), network) {
+					next = &s.Profiles[i]
+					break
+				}
+			}
+			if next == nil {
+				break
+			}
+			if seen[next.ID] {
+				return fmt.Errorf("目标经由中转 %s 陷入转发循环", next.Name)
+			}
+			seen[next.ID] = true
+			current = *next
 		}
-		if next == nil {
-			return nil
-		}
-		if seen[next.ID] {
-			return nil
-		}
-		seen[next.ID] = true
-		nh, np, e := ParseEndpoint(next.Target)
-		if e != nil || !pointsAtThisHost(nh, local) {
-			return nil
-		}
-		if np == p.Port {
-			return fmt.Errorf("目标经由中转 %s 又回到本中转，会形成转发循环", next.Name)
-		}
-		current, currentPort = *next, np
 	}
+	return nil
 }
 
 // localNodeForPublicPort finds a managed entry on this server published at a port,
