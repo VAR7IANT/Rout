@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/url"
 	"os"
@@ -492,5 +493,25 @@ func TestSubscriptionPlanMenu(t *testing.T) {
 	p := sc.state(t).Subscriptions[0].Plan
 	if p == nil || p.LimitBytes != 250_000_000_000 || p.Expires != "2099-12-31" {
 		t.Fatalf("%+v\n%s", p, out.String())
+	}
+}
+
+func TestShadowrocketImportLinkCarriesSubscriptionName(t *testing.T) {
+	link := shadowrocketImportURL("https://sub.example.com/s/TOKEN", "我的 订阅 &x")
+	rest, ok := strings.CutPrefix(link, "shadowrocket://add/sub://")
+	if !ok {
+		t.Fatal(link)
+	}
+	enc, query, _ := strings.Cut(rest, "?")
+	raw, e := base64.StdEncoding.DecodeString(enc)
+	if e != nil || string(raw) != "https://sub.example.com/s/TOKEN" {
+		t.Fatalf("%q %v", raw, e)
+	}
+	q, e := url.ParseQuery(query)
+	if e != nil || q.Get("remark") != "我的 订阅 &x" || strings.Contains(link, "+") && !strings.Contains(enc, "+") {
+		t.Fatalf("%q %v", query, e)
+	}
+	if strings.ContainsAny(query, " +&") && strings.Count(query, "&") > 0 {
+		t.Fatal("name not escaped:", query)
 	}
 }

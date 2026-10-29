@@ -2,6 +2,7 @@ package rout
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -161,12 +162,12 @@ func (u *UI) subscriptionList(s State) {
 			}
 		}
 		if token := tokens[sub.TokenHash]; token != "" {
-			u.subscriptionURLs(cfg, token)
+			u.subscriptionURLs(cfg, token, sub.Name)
 		} else {
 			if tokenError == nil {
 				u.hint("此订阅仅保存了令牌校验值，无法还原原令牌；请使用之前保存的 URL，或在“更换访问令牌”中确认生成新链接（旧链接会失效）")
 			}
-			u.subscriptionURLs(cfg, "{access_token}")
+			u.subscriptionURLs(cfg, "{access_token}", sub.Name)
 		}
 		for _, w := range s.exportSubscription(sub).Warnings {
 			u.warn(w)
@@ -194,13 +195,13 @@ func (u *UI) pickSubscription(s State, prompt string) (Subscription, bool) {
 }
 
 // Tokens are shown only in explicit subscription creation/rotation/list views.
-func (u *UI) showToken(token, heading string) {
+func (u *UI) showToken(token, heading, name string) {
 	cfg, _ := u.a.subscriptionSettings()
 	u.good(heading)
 	u.hint("令牌已私密保存；以后可在“查看订阅”中查看完整链接，请勿公开分享")
 	fmt.Fprintf(u.writer(), "  %s  %s\n", pad(u.a.T("访问令牌"), 10), token)
 	u.heading("订阅链接")
-	u.subscriptionURLs(cfg, token)
+	u.subscriptionURLs(cfg, token, name)
 	if cfg.PublicURL == "" {
 		u.warn("尚未配置 HTTPS 公网地址：订阅服务只监听本机，请先用反向代理提供 HTTPS，再在“订阅服务设置”中填写公网地址")
 	}
@@ -209,12 +210,23 @@ func (u *UI) showToken(token, heading string) {
 	}
 }
 
-func (u *UI) subscriptionURLs(cfg SubscriptionSettings, token string) {
+// shadowrocketImportURL is Shadowrocket's one-tap import link. Only this form carries the
+// title (remark), so the subscription is listed under its Rout name instead of its host.
+func shadowrocketImportURL(subscriptionURL, name string) string {
+	remark := strings.ReplaceAll(url.QueryEscape(name), "+", "%20")
+	return "shadowrocket://add/sub://" + base64.StdEncoding.EncodeToString([]byte(subscriptionURL)) + "?remark=" + remark
+}
+
+func (u *UI) subscriptionURLs(cfg SubscriptionSettings, token, name string) {
 	base := cfg.SubscriptionURL(token)
 	if base == "" {
 		base = "https://YOUR-DOMAIN/s/" + token
 	}
 	fmt.Fprintf(u.writer(), "      Base64:\n%s\n      Mihomo:\n%s?format=mihomo\n      Clash:\n%s?format=clash\n", base, base, base)
+	if token != "{access_token}" {
+		fmt.Fprintf(u.writer(), "      Shadowrocket:\n%s\n", shadowrocketImportURL(base, name))
+		u.hint("在 iPhone 上打开 Shadowrocket 链接即可导入，标题为订阅名称；直接粘贴 Base64 链接时需自行填写备注")
+	}
 }
 
 func (u *UI) subscriptionCreate() error {
@@ -256,7 +268,7 @@ func (u *UI) subscriptionCreate() error {
 		return e
 	}
 	fmt.Fprintf(u.writer(), "  %s  %s [%s]\n", pad(u.a.T("订阅"), 10), sub.Name, sub.ID)
-	u.showToken(token, "订阅已创建")
+	u.showToken(token, "订阅已创建", sub.Name)
 	return nil
 }
 
@@ -484,7 +496,7 @@ func (u *UI) subscriptionRotate() error {
 	if e != nil {
 		return e
 	}
-	u.showToken(token, "令牌已更换，旧链接已失效")
+	u.showToken(token, "令牌已更换，旧链接已失效", sub.Name)
 	return nil
 }
 

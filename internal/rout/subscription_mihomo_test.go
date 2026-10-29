@@ -283,7 +283,7 @@ func TestSubscriptionMihomoURLsSettingsAndCLI(t *testing.T) {
 	for _, lang := range []string{"en", "zh-CN"} {
 		sc.a.Language = lang
 		u, out := testUI(sc.a, "")
-		u.showToken(token, "订阅已创建")
+		u.showToken(token, "订阅已创建", "测试订阅")
 		if !strings.Contains(out.String(), cfg.SubscriptionURL(token)) || !strings.Contains(out.String(), cfg.MihomoURL(token)) || (lang == "en" && hasHan(out.String())) {
 			t.Fatal("new token URLs or translation missing")
 		}
