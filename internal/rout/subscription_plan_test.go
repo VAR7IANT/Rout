@@ -332,30 +332,116 @@ func TestPoolSharesAllowanceAcrossNodesAndStopsThem(t *testing.T) {
 	}
 }
 
-func TestPoolDoesNotResumeNodesItDidNotStop(t *testing.T) {
+// A member that is down for its own quota when the pool empties is remembered too: its
+// resume is swallowed while the pool blocks it, and must happen once the pool clears.
+func TestPoolResumesEnabledMembersButNeverDisabledOnes(t *testing.T) {
 	h := newPoolHarness(t, 10_000_000_000)
 	a, b := h.sub.NodeIDs[0], h.sub.NodeIDs[1]
-	h.running[a] = false // the administrator keeps this one stopped
-	out := h.poll(0, map[string][2]uint64{a: {0, 0}, b: {0, 0}})
-	out = h.poll(5*time.Second, map[string][2]uint64{a: {0, 11_000_000_000}, b: {0, 0}})
+	c := h.sc.nodes[2].ID
+	s := h.sc.state(t)
+	pc, _ := Find(s, c)
+	pc.Enabled = false
+	if e := h.sc.a.Commit(s, replace(s, pc), false); e != nil {
+		t.Fatal(e)
+	}
+	if e := h.sc.a.SetSubscriptionNodes(h.sub.ID, []string{a, b, c}); e != nil {
+		t.Fatal(e)
+	}
+	h.running[a] = false // down for its own quota
+	h.running[c] = false
+	h.poll(0, map[string][2]uint64{a: {0, 0}, b: {0, 0}, c: {0, 0}})
+	out := h.poll(5*time.Second, map[string][2]uint64{a: {0, 0}, b: {0, 11_000_000_000}, c: {0, 0}})
 	if got := stopped(out.acts); len(got) != 1 || got[0] != b {
 		t.Fatalf("%v", got)
+	}
+	if r := h.record(); !contains(r.Paused, a) || !contains(r.Paused, b) || contains(r.Paused, c) {
+		t.Fatalf("enabled members only: %v", r.Paused)
+	}
+	// The node's own resume is filtered while blocked; the pool remembers it.
+	if acts := out.apply(trafficActions{start: []Profile{{ID: a}}}); len(acts.start) != 0 {
+		t.Fatal("blocked resume must be filtered")
 	}
 	if e := h.sc.a.UpdateSubscriptionPlan(h.sub.ID, func(p *SubscriptionPlan) { p.LimitBytes = 0 }); e != nil {
 		t.Fatal(e)
 	}
 	h.running[b] = false
-	out = h.poll(5*time.Second, map[string][2]uint64{a: {0, 11_000_000_000}, b: {0, 0}})
-	if len(out.acts.start) != 1 || out.acts.start[0].ID != b {
-		t.Fatalf("only the node the pool stopped is resumed after the limit is removed: %+v", out.acts.start)
+	out = h.poll(5*time.Second, map[string][2]uint64{a: {0, 0}, b: {0, 11_000_000_000}, c: {0, 0}})
+	var started []string
+	for _, p := range out.acts.start {
+		started = append(started, p.ID)
 	}
-	h.running[b] = true
-	h.poll(5*time.Second, map[string][2]uint64{a: {0, 11_000_000_000}, b: {0, 0}})
-	if _, e := os.Stat(h.sc.a.poolPath()); e != nil {
-		t.Fatal(e)
+	if len(started) != 2 || !contains(started, a) || !contains(started, b) {
+		t.Fatalf("both enabled members resume and the disabled one stays down: %v", started)
 	}
+	h.running[a], h.running[b] = true, true
+	h.poll(5*time.Second, map[string][2]uint64{a: {0, 0}, b: {0, 11_000_000_000}, c: {0, 0}})
 	if pools, _ := h.sc.a.loadPools(); len(pools.Records) != 0 {
 		t.Fatal("an unused record is removed")
+	}
+}
+
+func TestPoolGivesUpOnNodesThatNeverStart(t *testing.T) {
+	h := newPoolHarness(t, 10_000_000_000)
+	a, b := h.sub.NodeIDs[0], h.sub.NodeIDs[1]
+	h.poll(0, map[string][2]uint64{a: {0, 0}, b: {0, 0}})
+	h.poll(5*time.Second, map[string][2]uint64{a: {0, 11_000_000_000}, b: {0, 0}})
+	if e := h.sc.a.UpdateSubscriptionPlan(h.sub.ID, func(p *SubscriptionPlan) { p.LimitBytes = 0 }); e != nil {
+		t.Fatal(e)
+	}
+	h.running[a], h.running[b] = false, false
+	attempts := 0
+	for i := 0; i < 40; i++ {
+		out := h.poll(poolStartRetry, map[string][2]uint64{a: {0, 11_000_000_000}, b: {0, 0}})
+		for _, p := range out.acts.start {
+			if p.ID == a {
+				attempts++
+			}
+		}
+	}
+	if attempts != poolStartAttempts {
+		t.Fatalf("a node that cannot start is attempted %d times, want %d", attempts, poolStartAttempts)
+	}
+	if pools, _ := h.sc.a.loadPools(); len(pools.Records) != 0 {
+		t.Fatal("given-up nodes must not keep the record alive")
+	}
+}
+
+func TestRestoreCannotCancelSubscriptionAllowance(t *testing.T) {
+	sc := newSubScene(t)
+	enableTrafficMarker(t, sc.a)
+	sub, _ := sc.create(t, "limited", 0)
+	older := filepath.Join(t.TempDir(), "older.json")
+	b, e := JSON(sc.state(t))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(older, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = sc.a.SetSubscriptionPlan(sub.ID, SubscriptionPlan{LimitBytes: 5_000_000_000, Expires: "2099-01-01"}); e != nil {
+		t.Fatal(e)
+	}
+	// A backup made before the allowance existed keeps the current plan.
+	if e = sc.a.Restore(older); e != nil {
+		t.Fatal(e)
+	}
+	s := sc.state(t)
+	if s.Schema != 2 || len(s.Subscriptions) != 1 || s.Subscriptions[0].Plan == nil || s.Subscriptions[0].Plan.LimitBytes != 5_000_000_000 {
+		t.Fatalf("allowance cancelled by restore: %+v", s.Subscriptions)
+	}
+	// A backup without the limited subscription is refused, leaving the state untouched.
+	without := sc.state(t)
+	without.Subscriptions = nil
+	b, _ = JSON(without)
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if e = os.WriteFile(missing, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = sc.a.Restore(missing); e == nil {
+		t.Fatal("restore silently dropped a subscription with an allowance")
+	}
+	if got := sc.state(t).Subscriptions; len(got) != 1 || got[0].Plan == nil {
+		t.Fatal("state changed by a refused restore")
 	}
 }
 

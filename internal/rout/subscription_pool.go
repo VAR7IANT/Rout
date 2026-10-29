@@ -214,24 +214,46 @@ func (a *App) poolNodeRunning(p Profile) bool {
 	return e == nil && m != "none" && serviceActive(m, serviceName(p))
 }
 
-// A start that keeps failing is retried at most twice a minute: service commands run
-// while the monitor holds the configuration lock, so they must not be attempted every poll.
-const poolStartRetry = 30 * time.Second
+// A start that keeps failing is retried at most twice a minute, and given up after
+// poolStartAttempts tries: service commands run while the monitor holds the configuration
+// lock, so a node that cannot start (broken certificate, port taken) must not be attempted
+// every poll forever.
+const (
+	poolStartRetry    = 30 * time.Second
+	poolStartAttempts = 10
+)
+
+type poolTry struct {
+	last  time.Time
+	count int
+}
 
 var (
 	poolTriedMu sync.Mutex
-	poolTried   = map[string]time.Time{}
+	poolTried   = map[string]poolTry{}
 )
 
-func (a *App) poolMayStart(id string, now time.Time) bool {
+// poolStartAttempt reports whether a start may be tried now, and whether to give up.
+func (a *App) poolStartAttempt(id string, now time.Time) (try, giveUp bool) {
 	key := a.Home + "\x00" + id
 	poolTriedMu.Lock()
 	defer poolTriedMu.Unlock()
-	if last, ok := poolTried[key]; ok && now.Sub(last) < poolStartRetry && !now.Before(last) {
-		return false
+	t := poolTried[key]
+	if t.count >= poolStartAttempts {
+		delete(poolTried, key)
+		return false, true
 	}
-	poolTried[key] = now
-	return true
+	if t.count > 0 && now.Sub(t.last) < poolStartRetry && !now.Before(t.last) {
+		return false, false
+	}
+	poolTried[key] = poolTry{last: now, count: t.count + 1}
+	return true, false
+}
+
+func (a *App) poolStartDone(id string) {
+	poolTriedMu.Lock()
+	delete(poolTried, a.Home+"\x00"+id)
+	poolTriedMu.Unlock()
 }
 
 // syncPools runs after the per-node sync, with that sync's journal already written, so
@@ -304,11 +326,17 @@ func (a *App) syncPools(state State, now time.Time) (poolOutcome, error) {
 		if exhausted[id] {
 			for _, n := range sub.NodeIDs {
 				p, er := Find(state, n)
-				if er == nil && p.Enabled && a.poolNodeRunning(p) {
+				if er != nil || !p.Enabled {
+					continue
+				}
+				if a.poolNodeRunning(p) {
 					out.acts.stopNode(p)
-					if !contains(rec.Paused, n) {
-						rec.Paused = append(rec.Paused, n)
-					}
+				}
+				// Every enabled member is remembered, running or not: one that is down
+				// for its own quota may have its resume swallowed (see poolOutcome.apply)
+				// while this allowance blocks it, and must be started when it clears.
+				if !contains(rec.Paused, n) {
+					rec.Paused = append(rec.Paused, n)
 				}
 			}
 		}
@@ -322,14 +350,22 @@ func (a *App) syncPools(state State, now time.Time) (poolOutcome, error) {
 			}
 			p, er := Find(state, n)
 			if er != nil || !p.Enabled || a.poolNodeRunning(p) {
+				a.poolStartDone(n)
+				continue
+			}
+			// Another exhausted allowance, or the node's own quota, still holds it down.
+			if out.blocked[n] || db.Records[n].Blocked != "" {
+				still = append(still, n)
+				continue
+			}
+			try, giveUp := a.poolStartAttempt(n, now)
+			if giveUp {
 				continue
 			}
 			still = append(still, n) // kept until the node is observed running
-			// Another exhausted allowance, or the node's own quota, still holds it down.
-			if out.blocked[n] || db.Records[n].Blocked != "" || !a.poolMayStart(n, now) {
-				continue
+			if try {
+				out.acts.startNode(p)
 			}
-			out.acts.startNode(p)
 		}
 		rec.Paused = still
 		if !active && len(rec.Paused) == 0 {

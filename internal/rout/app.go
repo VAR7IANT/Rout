@@ -281,6 +281,12 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 			next.Profiles[i].Traffic = prev.Traffic
 		}
 	}
+	// Likewise a subscription's data allowance: the current plan always wins.
+	for i, sub := range next.Subscriptions {
+		if j, er := findSubscription(old, sub.ID); er == nil {
+			next.Subscriptions[i].Plan = old.Subscriptions[j].clone().Plan
+		}
+	}
 	if old.Schema == 2 {
 		next.Schema = 2
 	}
@@ -597,6 +603,13 @@ func (a *App) Restore(path string) error {
 		if p.trafficPolicy().LimitBytes > 0 {
 			if _, er := Find(next, p.ID); er != nil {
 				return errors.New("备份缺少有限额节点，请先显式取消限额或删除节点")
+			}
+		}
+	}
+	for _, sub := range old.Subscriptions {
+		if sub.Plan != nil && sub.Plan.LimitBytes > 0 {
+			if _, er := findSubscription(next, sub.ID); er != nil {
+				return errors.New("备份缺少有流量额度的订阅，请先清除其额度或删除订阅")
 			}
 		}
 	}
