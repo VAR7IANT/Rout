@@ -35,6 +35,9 @@ type Subscription struct {
 	TokenHash string    `json:"token_hash"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
+	// Optional shared traffic allowance, reset day and expiry shown to clients.
+	// Absent for subscriptions that never configured one, so their output is unchanged.
+	Plan *SubscriptionPlan `json:"plan,omitempty"`
 }
 
 var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
@@ -42,6 +45,10 @@ var tokenHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func (s Subscription) clone() Subscription {
 	s.NodeIDs = append([]string(nil), s.NodeIDs...)
+	if s.Plan != nil {
+		plan := *s.Plan
+		s.Plan = &plan
+	}
 	return s
 }
 
@@ -90,6 +97,14 @@ func (s State) validateSubscriptions() error {
 		}
 		if len(sub.NodeIDs) > maxSubscriptionNodes {
 			return errors.New("订阅包含的节点过多")
+		}
+		if sub.Plan != nil {
+			if e := sub.Plan.Validate(); e != nil {
+				return e
+			}
+			if sub.Plan.LimitBytes > 0 && s.Schema != 2 {
+				return errors.New("有限额配置必须使用保护版本，不能降级绕过限额")
+			}
 		}
 		seen := map[string]bool{}
 		for _, id := range sub.NodeIDs {

@@ -667,6 +667,12 @@ func (a *App) trafficSync(now time.Time, shutdown bool, ready func()) error {
 		return e
 	}
 	acts, e := a.syncTraffic(state, now, shutdown)
+	if e == nil && !shutdown {
+		// Subscription allowances build on the journal this poll just wrote.
+		var pool poolOutcome
+		pool, e = a.syncPools(state, now)
+		acts = pool.apply(acts)
+	}
 	if ready != nil {
 		ready()
 	}
