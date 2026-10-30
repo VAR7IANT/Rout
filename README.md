@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.8`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.3.9`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -30,7 +30,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.3.8
+Rout 0.3.9
   ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   ! Tokyo-HY2 certificate expires in 12 days
 
@@ -300,6 +300,6 @@ CI runs everything above plus `govulncheck` and cross-compilation on every push.
 
 ```sh
 # Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
-git tag -a v0.3.8 -m 'Rout v0.3.8'
-git push origin v0.3.8
+git tag -a v0.3.9 -m 'Rout v0.3.9'
+git push origin v0.3.9
 ```

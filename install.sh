@@ -3,7 +3,7 @@ set -eu
 umask 077
 
 REPO=VAR7IANT/Rout
-VERSION=${ROUT_VERSION:-v0.3.8}
+VERSION=${ROUT_VERSION:-v0.3.9}
 DEST=${ROUT_INSTALL_DIR:-/usr/local/bin}
 
 fail() { printf '%s\n' "错误 / Error: $*" >&2; exit 1; }
