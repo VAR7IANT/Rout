@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Planned as the next patch release, v0.3.10 (no version bump in this change).
+
+- Fix: **Deploy / repair HTTPS** no longer refuses when the saved HTTPS public URL has no site behind it. After Caddy was uninstalled, stopped or purged, the saved URL made Rout probe the domain as if an existing Caddy site had been found, and the failed probe aborted with "existing Caddy site found but its authenticated endpoint is not verified". Rout now tells apart: nothing set up, a stale saved URL (redeploys, saying why), an existing site that fails verification (preserved, with the failing layer named), a port owned by another service (refused before asking for consent) and a working external endpoint (reused). No manual `settings.json` edit is needed; subscriptions, tokens, nodes, AI routing, relays and traffic are untouched.
+- Fix: a Rout-managed deployment whose fragment file vanished (Caddy uninstalled or purged) is rebuilt with its recorded domains instead of being refused as "changed externally", and the `import` line is restored if a reinstalled Caddy reset the Caddyfile. An edited fragment stays protected.
+- An installed but stopped Caddy can be repaired after a separate explicit confirmation (default no); a failed repair stops it again and restores its boot setting. Without that confirmation nothing changes.
+- Failed HTTPS verification now says which layer failed (local subscription service, certificate, answer not forwarded to Rout, public DNS path) instead of one generic message. Chinese and English.
+- Tests: reproducer of the incident, the five situations, rollback of installed/stopped Caddy, idempotent repeats, and a real-Caddy integration test (private test CA) of the stale-URL repair. See [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md#repairing-https-when-the-saved-url-has-no-site-behind-it). Real VPS issuance is not verified.
+
 ## v0.3.9
 
 - Subscription URL screens add a Shadowrocket one-tap import link (`shadowrocket://add/sub://…?remark=NAME`) so the client lists the subscription under its Rout name. The link is generated locally from the existing URL; no token or state change.

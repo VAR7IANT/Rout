@@ -23,9 +23,19 @@ func (a *App) requireHTTPSManagement() error {
 	return nil
 }
 
+// HTTPSDeployOptions carries the consents the CLI collected. Each is a separate,
+// explicit confirmation; neither ever permits stopping a listener already present.
+type HTTPSDeployOptions struct {
+	AllowInstall bool // install Caddy from the distribution's signed repository
+	AllowStart   bool // start an installed but stopped Caddy, which activates its whole Caddyfile
+}
+
 // Install permission is supplied only after a separate explicit CLI confirmation.
 // Installing a package never permits stopping a listener that was already present.
 func (a *App) DeploySubscriptionHTTPS(domain string, allowInstall bool) (err error) {
+	return a.DeploySubscriptionHTTPSWith(domain, HTTPSDeployOptions{AllowInstall: allowInstall})
+}
+func (a *App) DeploySubscriptionHTTPSWith(domain string, opts HTTPSDeployOptions) (err error) {
 	domain, err = subscriptionDomain(domain)
 	if err != nil {
 		return err
@@ -35,9 +45,9 @@ func (a *App) DeploySubscriptionHTTPS(domain string, allowInstall bool) (err err
 		return e
 	}
 	defer unlock()
-	return a.deploySubscriptionHTTPSLocked(domain, allowInstall)
+	return a.deploySubscriptionHTTPSLocked(domain, opts)
 }
-func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (err error) {
+func (a *App) deploySubscriptionHTTPSLocked(domain string, opts HTTPSDeployOptions) (err error) {
 	var e error
 	if e = a.requireHTTPSManagement(); e != nil {
 		return e
@@ -68,20 +78,27 @@ func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (e
 		wasEnabled = e == nil
 	}
 	installedNow := false
-	// Package installation can start the vendor service. On any subsequent failure,
-	// restore its prior stopped/disabled state; the package itself is retained.
+	startStopped := wasInstalled && !wasRunning && opts.AllowStart
+	// Package installation can start the vendor service, and a confirmed start of a
+	// stopped Caddy does too. On any subsequent failure, restore its prior
+	// stopped state (and boot setting); an installed package is retained.
 	defer func() {
-		if err != nil && installedNow && !wasRunning && r.installed() {
-			_, stop := r.run("", "systemctl", "stop", "caddy")
-			_, disable := r.run("", "systemctl", "disable", "caddy")
+		if err != nil && (installedNow || startStopped) && !wasRunning && r.installed() {
+			var stop, disable error
+			if installedNow || r.running() {
+				_, stop = r.run("", "systemctl", "stop", "caddy")
+			}
+			if installedNow || !wasEnabled {
+				_, disable = r.run("", "systemctl", "disable", "caddy")
+			}
 			err = errors.Join(err, stop, disable)
 			if stop != nil || disable != nil || r.running() {
-				err = errors.Join(err, errors.New("rollback incomplete: newly installed Caddy package retained; inspect systemctl status caddy and restore its prior stopped/disabled state"))
+				err = errors.Join(err, errors.New("rollback incomplete: Caddy was started or installed by this deployment; inspect systemctl status caddy and restore its prior stopped state"))
 			}
 		}
 	}()
 	if !wasInstalled {
-		if !allowInstall {
+		if !opts.AllowInstall {
 			return errors.New("Caddy installation requires explicit confirmation")
 		}
 		if _, e = r.run("", "apt-get", "update"); e != nil {
@@ -97,8 +114,8 @@ func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (e
 		if _, e = r.run("", "caddy", "version"); e != nil {
 			return e
 		}
-	} else if !wasRunning {
-		return errors.New("existing Caddy is stopped; review and start its configuration before integrating it, or use an external endpoint; no files changed")
+	} else if !wasRunning && !opts.AllowStart {
+		return errors.New(msgConfirmStartCaddy)
 	}
 	if e = a.checkHTTPSPorts(); e != nil {
 		return e
@@ -113,13 +130,23 @@ func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (e
 	route := inspectCaddyDomain(active, domain, cfg.listenPort())
 	owned := (previous.Ownership == "managed" || previous.Ownership == "adopted")
 	file := a.httpsFile()
+	// recovered: Rout's recorded fragment no longer exists (Caddy was uninstalled or
+	// its configuration purged). Nothing remains to preserve, so it is rebuilt like a
+	// new deployment, keeping the recorded domains so old client URLs stay reachable.
+	// A fragment that still exists but was edited is never treated this way.
+	recovered := false
 	if owned {
 		f, er := a.ownedHTTPSFile(previous)
-		if er != nil {
+		switch {
+		case er == nil:
+			file = f.Path
+		case a.ownedFragmentMissing(previous):
+			owned, recovered = false, true
+		default:
 			return er
 		}
-		file = f.Path
-	} else if route.Found || route.Correct || route.Conflict {
+	}
+	if !owned && (route.Found || route.Correct || route.Conflict) {
 		if route.Found && route.Correct && !route.Conflict {
 			return errSubscriptionExternalHTTPS
 		}
@@ -241,13 +268,12 @@ func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (e
 		}
 	}()
 	domains := []string{domain}
-	if owned && !previous.Removed {
-		domains = append([]string(nil), previous.Domains...)
-		if len(domains) == 0 {
-			domains = []string{previous.Domain}
-		}
-		if !contains(domains, domain) {
-			domains = append(domains, domain)
+	if (owned || recovered) && !previous.Removed {
+		domains = nil
+		for _, d := range append(append([]string(nil), previous.Domains...), previous.Domain, domain) {
+			if d != "" && !contains(domains, d) {
+				domains = append(domains, d)
+			}
 		}
 	}
 	data := []byte(renderSubscriptionCaddySites(domains, cfg.listenPort()))
@@ -275,9 +301,13 @@ func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (e
 	if e = atomicSubscriptionFile(fragment, data, 0644); e != nil {
 		return e
 	}
-	// For a newly managed fragment, add one stable, absolute import. Preserve all
-	// pre-existing bytes, comments and imported sites, and validate the full layout.
-	if !owned {
+	// For a fragment in Rout's own directory, make sure one stable, absolute import
+	// pulls it in: new deployments add it, and a repair restores it when the Caddyfile
+	// was reset (Caddy reinstalled) while the fragment survived. A fragment the
+	// administrator adopted elsewhere is left to the administrator's own imports.
+	// Preserve all pre-existing bytes, comments and imported sites, and validate the
+	// full layout.
+	if file == a.httpsFile() {
 		next := append(append([]byte(nil), main.Data...), []byte(a.httpsImport())...)
 		if strings.Contains(string(main.Data), a.httpsImport()) {
 			next = main.Data
@@ -337,7 +367,7 @@ func (a *App) deploySubscriptionHTTPSLocked(domain string, allowInstall bool) (e
 		return fmt.Errorf("remove diagnostic hash file %s: %w", a.subscriptionProbeFile(), e)
 	}
 	if !verified.LocalService || !verified.LocalTLS || !verified.PublicFromHost {
-		return errors.New("HTTPS certificate/response verification failed; check every DNS record, inbound TCP 80/443, Cloudflare DNS-only mode and ACME reachability")
+		return errors.New(deployFailure(verified))
 	}
 	next := cfg
 	next.PublicURL = "https://" + domain

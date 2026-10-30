@@ -446,7 +446,7 @@ func (a *App) subscriptionServiceChange(next SubscriptionSettings, force, preser
 		}
 	}
 	if changePort && owned {
-		if e = a.deploySubscriptionHTTPSLocked(oldHTTPS.Domain, false); e != nil {
+		if e = a.deploySubscriptionHTTPSLocked(oldHTTPS.Domain, HTTPSDeployOptions{}); e != nil {
 			return e
 		}
 	}

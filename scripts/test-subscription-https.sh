@@ -8,5 +8,5 @@ docker run --rm \
     -e ROUT_TEST_CADDY=1 -e ROUT_TEST_CADDY_INSTALL=1 \
     debian:12 sh -ec '
         test ! -x /usr/bin/caddy
-        exec /rout.test -test.run "^TestIntegrationSubscription(CaddyFreshDeployment|ExistingCaddyZeroLoss)$" -test.v
+        exec /rout.test -test.run "^TestIntegrationSubscription(CaddyFreshDeployment|ExistingCaddyZeroLoss|CaddyStaleURLRedeploy)$" -test.v
     '

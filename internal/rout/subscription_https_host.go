@@ -46,8 +46,12 @@ type httpsListener struct {
 }
 type httpsVerification struct {
 	LocalService, LocalTLS, PublicFromHost, External bool
-	Expires                                          time.Time
-	Error                                            string
+	// Answered: a TLS/HTTP exchange completed but the reply was not Rout's probe response
+	// (wrong upstream, rewritten path, outdated helper). CertificateError: the TLS
+	// handshake reached the server but its certificate was refused.
+	Answered, CertificateError bool
+	Expires                    time.Time
+	Error                      string
 }
 type httpsDNS struct {
 	A, AAAA                        []string
@@ -274,15 +278,18 @@ func probeHTTP(client *http.Client, base, token, body string) (time.Time, error)
 	resp, e := client.Do(req)
 	if e != nil {
 		var verification *tls.CertificateVerificationError
-		if errors.As(e, &verification) && len(verification.UnverifiedCertificates) > 0 {
-			return verification.UnverifiedCertificates[0].NotAfter, errSubscriptionProbe
+		if errors.As(e, &verification) {
+			if len(verification.UnverifiedCertificates) > 0 {
+				return verification.UnverifiedCertificates[0].NotAfter, errSubscriptionProbeCertificate
+			}
+			return time.Time{}, errSubscriptionProbeCertificate
 		}
 		return time.Time{}, errSubscriptionProbe
 	}
 	defer resp.Body.Close()
 	b, e := io.ReadAll(io.LimitReader(resp.Body, 4097))
 	if e != nil || resp.StatusCode != 200 || len(b) > 4096 || strings.TrimSpace(string(b)) != body || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
-		return time.Time{}, errSubscriptionProbe
+		return time.Time{}, errSubscriptionProbeResponse
 	}
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		return resp.TLS.PeerCertificates[0].NotAfter, nil
@@ -317,12 +324,15 @@ func verifySubscriptionHTTPS(base string, port int, token, body string) httpsVer
 	if localErr == nil {
 		out.LocalTLS = true
 	}
-	if expires, e := probeHTTP(client(t), base, token, body); e == nil {
+	expires, publicErr := probeHTTP(client(t), base, token, body)
+	if publicErr == nil {
 		out.PublicFromHost = true
 		if out.Expires.IsZero() {
 			out.Expires = expires
 		}
 	}
+	out.Answered = errors.Is(localErr, errSubscriptionProbeResponse) || errors.Is(publicErr, errSubscriptionProbeResponse)
+	out.CertificateError = errors.Is(localErr, errSubscriptionProbeCertificate) || errors.Is(publicErr, errSubscriptionProbeCertificate)
 	if !out.LocalTLS && !out.PublicFromHost {
 		out.Error = "TLS or authenticated subscription response unavailable; check DNS, port reachability, certificate issuance and Caddy logs (redact /s/ tokens)"
 	}
