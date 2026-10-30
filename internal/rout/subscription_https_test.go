@@ -27,7 +27,11 @@ type fakeSubscriptionHTTPS struct {
 	calls                       []string
 	fail                        string
 	verifyOK                    bool
-	ports                       map[int][]httpsListener
+	// verifyByCaddy makes verification behave like a real host: the local
+	// subscription service always answers, HTTPS answers only while Caddy runs
+	// and has a site for the requested domain.
+	verifyByCaddy bool
+	ports         map[int][]httpsListener
 }
 
 func newFakeSubscriptionHTTPS(t *testing.T) (*subScene, *fakeSubscriptionHTTPS) {
@@ -91,7 +95,12 @@ func newFakeSubscriptionHTTPS(t *testing.T) (*subScene, *fakeSubscriptionHTTPS) 
 	r.lookup = func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("198.51.100.9")}, nil }
 	r.addresses = func() Addresses { return Addresses{IPv4: "198.51.100.9"} }
 	r.listeners = func(port int) ([]httpsListener, error) { return f.ports[port], nil }
-	r.active = func() ([]byte, error) { return append([]byte(nil), f.activeJSON...), nil }
+	r.active = func() ([]byte, error) {
+		if f.verifyByCaddy && !f.running {
+			return nil, errors.New("Caddy's loopback admin configuration is unavailable")
+		}
+		return append([]byte(nil), f.activeJSON...), nil
+	}
 	r.verify = func(base string, port int, token, body string) httpsVerification {
 		if !tokenPattern.MatchString(token) || body == "" {
 			t.Fatal("verification weakened token requirements")
@@ -100,6 +109,11 @@ func newFakeSubscriptionHTTPS(t *testing.T) (*subScene, *fakeSubscriptionHTTPS) 
 		raw, _ := os.ReadFile(f.a.subscriptionProbeFile())
 		if bytes.Contains(raw, []byte(token)) {
 			t.Fatal("probe persisted plaintext")
+		}
+		if f.verifyByCaddy {
+			host := strings.TrimPrefix(base, "https://")
+			serving := f.running && inspectCaddyDomain(f.activeJSON, host, port).Found
+			return httpsVerification{LocalService: true, LocalTLS: serving, PublicFromHost: serving, Expires: time.Now().Add(30 * 24 * time.Hour)}
 		}
 		return httpsVerification{LocalService: f.verifyOK, LocalTLS: f.verifyOK, PublicFromHost: f.verifyOK, Expires: time.Now().Add(30 * 24 * time.Hour)}
 	}

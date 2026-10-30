@@ -92,44 +92,29 @@ func (u *UI) subscriptionDomainWarning(oldURL, domain string) bool {
 	return true
 }
 
+// existingSubscriptionHTTPS reports whether the domain is already served, and so must not
+// be deployed over. A saved public URL alone never counts as a site: when nothing serves
+// the domain it explains why and lets the deployment continue (see precheckSubscriptionHTTPS).
 func (u *UI) existingSubscriptionHTTPS(domain string) (bool, error) {
 	r := u.a.httpsRuntime()
 	cfg, e := u.a.subscriptionSettings()
 	if e != nil {
 		return false, e
 	}
-	saved, e := u.a.loadHTTPSState()
+	check, e := u.a.precheckSubscriptionHTTPS(domain)
 	if e != nil {
 		return false, e
 	}
-	if (saved.Ownership == "managed" || saved.Ownership == "adopted") && !saved.Removed {
+	switch check.State {
+	case httpsSiteBroken:
+		// A real Caddy site exists: preserve it, name the failing layer, stop here.
+		return true, errors.New(check.Failure)
+	case httpsSiteNone:
+		if check.Stale {
+			u.warn("检测到历史 HTTPS 域名设置，但目前没有可用的反向代理，将尝试重新部署")
+			u.printf("原因：%s\n", u.a.subscriptionText(check.Absence))
+		}
 		return false, nil
-	}
-	active, activeErr := r.active()
-	route := httpsRoute{}
-	if activeErr == nil {
-		route = inspectCaddyDomain(active, domain, cfg.listenPort())
-	}
-	configured, _ := url.Parse(cfg.PublicURL)
-	if !route.Found && (configured == nil || configured.Hostname() != domain) {
-		return false, nil
-	}
-
-	// Do not claim that recognizing a domain block proves public availability.
-	token, body, cleanup, e := u.a.beginSubscriptionProbe()
-	if e != nil {
-		return true, e
-	}
-	base := "https://" + domain
-	if old, _ := url.Parse(cfg.PublicURL); old != nil && old.Hostname() == domain {
-		base = cfg.PublicURL
-	}
-	result := r.verify(base, cfg.listenPort(), token, body)
-	if e = cleanup(); e != nil {
-		return true, e
-	}
-	if !result.LocalService || !result.PublicFromHost {
-		return route.Found, errors.New("existing Caddy site found but its authenticated endpoint is not verified; preserve it and inspect HTTPS diagnostics")
 	}
 	for u.err == nil {
 		u.good("检测到已有 HTTPS 订阅")
@@ -239,16 +224,26 @@ func (u *UI) subscriptionHTTPSDeploy(domain string) (err error) {
 	if dns.Cloudflare {
 		u.hint("检测到 Cloudflare 代理地址，不能据此认定源站不匹配；首次签发建议 DNS-only，并检查源站与 Full (strict) 设置")
 	}
-	allowInstall := false
-	if !u.a.httpsRuntime().installed() {
+	// Port conflicts are refused before any consent is asked for: no point approving an
+	// installation that cannot proceed, and the other service is never stopped.
+	if e = u.a.checkHTTPSPorts(); e != nil {
+		return e
+	}
+	opts := HTTPSDeployOptions{}
+	switch r := u.a.httpsRuntime(); {
+	case !r.installed():
 		u.say("将通过 Debian／Ubuntu 官方软件源安装 Caddy，并启用开机自启；不运行远程安装脚本")
-		allowInstall = u.yes("确认安装 Caddy", true)
-		if !allowInstall {
+		if opts.AllowInstall = u.yes("确认安装 Caddy", true); !opts.AllowInstall {
+			return u.err
+		}
+	case !r.running():
+		u.say("现有 Caddy 已安装但未运行；启动它会同时启用其 Caddyfile 中的所有现有站点，Rout 只追加一个独立的订阅站点，不修改其他配置")
+		if opts.AllowStart = u.yes("确认启动现有 Caddy", false); !opts.AllowStart {
 			return u.err
 		}
 	}
 	u.say("正在验证配置、自动证书与订阅响应；签发可能需要一些时间")
-	if e = u.a.DeploySubscriptionHTTPS(domain, allowInstall); e != nil {
+	if e = u.a.DeploySubscriptionHTTPSWith(domain, opts); e != nil {
 		return e
 	}
 	u.good("HTTPS 订阅部署已验证；订阅、令牌和节点选择保持不变")

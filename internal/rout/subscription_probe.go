@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -99,3 +100,10 @@ func (a *App) serveSubscriptionProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 var errSubscriptionProbe = errors.New("subscription response verification failed; no existing token was used or changed")
+
+// Refinements of errSubscriptionProbe (errors.Is still matches it) that let a failed
+// HTTPS check say which layer failed: the certificate, or the answer behind it.
+var (
+	errSubscriptionProbeCertificate = fmt.Errorf("%w: certificate refused", errSubscriptionProbe)
+	errSubscriptionProbeResponse    = fmt.Errorf("%w: unexpected response", errSubscriptionProbe)
+)

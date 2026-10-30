@@ -410,3 +410,72 @@ func TestIntegrationSubscriptionExistingCaddyZeroLoss(t *testing.T) {
 	}
 	assertSubscriptionStorage(t, a, raw, token)
 }
+
+// The production incident on real Caddy and real TLS: the saved HTTPS URL outlives Caddy,
+// then "Deploy / repair HTTPS" must rebuild the service, keeping the subscription token.
+// Removing the package is simulated through the fixture's state (the executable stays on
+// PATH); the repair therefore starts from "no Caddy installed, nothing on 80/443, our
+// fragment gone", as after `apt purge caddy`.
+func TestIntegrationSubscriptionCaddyStaleURLRedeploy(t *testing.T) {
+	f := newSubscriptionCaddyFixture(t, true)
+	a := f.sc.a
+	_, token := f.sc.create(t, "Existing Shadowrocket", 2, 0, 1)
+	if e := a.SetSubscriptionPublicURL("https://sub.rout.test"); e != nil {
+		t.Fatal(e)
+	}
+	initialMain, _ := os.ReadFile(a.httpsMain())
+	before, _ := os.ReadFile(filepath.Join(a.Home, "state.json"))
+	deploy := func(round string) {
+		t.Helper()
+		u, out := testUI(a, "y\n")
+		if e := u.subscriptionHTTPSDeploy("sub.rout.test"); e != nil {
+			t.Fatalf("%s: a saved URL without Caddy blocked the deployment: %v\n%s", round, e, out.String())
+		}
+		if strings.Contains(out.String(), "authenticated endpoint is not verified") {
+			t.Fatalf("%s: misleading existing-site message:\n%s", round, out.String())
+		}
+	}
+	serves := func() []byte {
+		t.Helper()
+		code, body := f.request(t, "sub.rout.test", "/s/"+token)
+		if code != 200 {
+			t.Fatal("subscription not served over real HTTPS", code)
+		}
+		if code, _ = f.request(t, "unrelated.rout.test", "/"); code != 200 {
+			t.Fatal("unrelated site changed")
+		}
+		return body
+	}
+
+	deploy("first")
+	body := serves()
+
+	// Caddy is uninstalled and its configuration purged.
+	if e := f.stop(); e != nil {
+		t.Fatal(e)
+	}
+	f.installed, f.enabled = false, false
+	if e := os.Remove(a.httpsFile()); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(a.httpsMain(), initialMain, 0644); e != nil {
+		t.Fatal(e)
+	}
+	saved, _ := a.loadHTTPSState()
+	if saved.Ownership != "managed" || !a.ownedFragmentMissing(saved) {
+		t.Fatalf("setup: expected a managed deployment whose fragment vanished: %+v", saved)
+	}
+
+	deploy("repair")
+	if after := serves(); string(after) != string(body) {
+		t.Fatal("repair changed the subscription response")
+	}
+	main, _ := os.ReadFile(a.httpsMain())
+	if strings.Count(string(main), a.httpsImport()) != 1 {
+		t.Fatal("import line missing or duplicated")
+	}
+	if e := a.DeploySubscriptionHTTPS("sub.rout.test", false); e != nil {
+		t.Fatal("repeat repair", e)
+	}
+	assertSubscriptionStorage(t, a, before, token)
+}

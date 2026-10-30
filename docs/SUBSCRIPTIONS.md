@@ -143,6 +143,24 @@ TCP 80 and 443 must be reachable from the Internet and available to the verified
 
 Caddy handles automatic certificate issuance and renewal. Rout validates the generated fragment and complete Caddyfile, atomically writes an isolated fragment, reloads Caddy and verifies TLS and the authenticated response before saving the public URL. Caddy is enabled at boot. The generated site proxies only `/s/*`; `/` deliberately returns 404. Access logging is discarded for the owned site and proxy errors have a generic response so token paths are not logged.
 
+## Repairing HTTPS when the saved URL has no site behind it
+
+The saved public URL is only a record. If Caddy was uninstalled, stopped or purged, **Deploy / repair HTTPS** rebuilds the service without you clearing `public_url` or recreating subscriptions: tokens, selections, nodes, AI routing, relays and traffic accounting are never touched, and the saved URL stays as it is when you repair the same domain. Before it does anything, Rout tells five situations apart:
+
+| Situation | What Rout does |
+| --- | --- |
+| Nothing was set up for the domain | Deploys (asks before installing Caddy) |
+| A saved URL names the domain but nothing serves it: Caddy not installed, installed but stopped, running without a site for it, or Rout's own fragment file gone | Says so (`A previously saved HTTPS domain was found, but there is no usable reverse proxy now…` and the reason) and deploys again |
+| A Caddy site for the domain exists but does not authenticate, or exists only in the Caddyfile of a stopped Caddy | **Preserves it** and stops with the failing layer named (certificate, wrong upstream/not forwarded to Rout, works locally but not through public DNS, no answer, Caddy not running). It is never overwritten |
+| Nothing serves the domain but TCP 80/443 belong to another service | Refuses **before** asking for any consent, naming the owner. Nothing is stopped or installed |
+| An HTTPS endpoint answers the authenticated probe but is not managed by Rout (another proxy, or a Caddy site you wrote) | Offers *use the existing configuration*, *inspect* or *adopt*; nothing is redeployed or restarted |
+
+Consents are separate and explicit. Installing Caddy (default *yes*) and **starting an installed but stopped Caddy** (default *no*; it also activates every site in its Caddyfile) are each asked once, only after the port check. A failed repair restores what it started: the previous stopped state and boot setting of Caddy, the Caddyfile, the fragment and the saved URL (the failure is recorded in the diagnostics); a package that was installed stays installed. If the rollback itself cannot be completed it says so and names the recovery snapshot.
+
+If Rout deployed HTTPS earlier and its fragment (`/etc/caddy/rout-*/subscription.caddy`) has since vanished, the repair rebuilds it with the same recorded domains, so old client URLs stay reachable, and restores the `import` line if a reinstalled Caddy reset the Caddyfile. A fragment that still exists but was edited is never treated as vanished: it stays protected until you review it.
+
+If the repair stops with *the local subscription service did not answer*, fix that first (`sudo rout subscription restart`); reinstalling Caddy cannot help. Not verified here: the behaviour on a real VPS with real ACME issuance. The automated tests use a deterministic fixture and, in CI, real Caddy with a private test CA.
+
 ## Existing HTTPS and ownership
 
 A manually configured deployment such as:
@@ -226,6 +244,12 @@ For unsupported layouts/platforms, keep the loopback service and configure your 
 | 503 | Local service stopped, state unreadable, or no selected node currently available; never treated as an empty success |
 | External site cannot be adopted | Keep external mode; only a standalone simple imported fragment is eligible |
 | Owned file changed externally | Preserve it and inspect its ownership/digest; Rout refuses to erase the change |
+| "Previously saved HTTPS domain found, but no usable reverse proxy" | Informational: the saved URL has no site behind it (Caddy removed/stopped, or no site for the domain); the repair continues. The reason is shown |
+| "Existing Caddy site found … certificate is not valid" / "… does not forward the authenticated subscription probe" / "… not through public DNS" | A real site exists and is preserved. Fix the named layer: certificate issuance (DNS, TCP 80/443, DNS-only while issuing), the site's upstream port and path rules, or A/AAAA records, CDN proxy and firewall |
+| "a Caddy site for this domain exists in the Caddyfile but Caddy is not running" | Review it, start Caddy yourself (or use the endpoint externally); Rout will not overwrite the site |
+| "existing Caddy is installed but stopped; … needs explicit confirmation" | Confirm *Start the existing Caddy* in the menu, or start it yourself first |
+| "TCP port 443 is occupied by …" | Another service owns the port. Rout never stops it; free the port or keep the external proxy |
+| "the local subscription service did not answer the verification probe" | `sudo rout subscription restart`, then repeat the repair |
 | Rollback incomplete | Inspect the exact private snapshot and resource named in the error, validate/reload after review, then test the original URL |
 
 ## Test boundaries
