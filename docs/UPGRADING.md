@@ -1,5 +1,9 @@
 # Upgrading and rollback safety
 
+## To v0.3.9
+
+No migration; existing subscriptions, tokens, nodes, relays and traffic state are unchanged, and a subscription without a data plan returns the same bytes as before. New optional per-subscription data allowance, reset day and expiry (see [Data allowance and expiry](SUBSCRIPTIONS.md#data-allowance-and-expiry)). Run `rout update`: the updater refreshes the traffic monitor and the subscription helper, which are the two processes that need the new version. Setting a finite allowance moves `state.json` to the protected schema (schema 2, as node limits already do) and adds `subscription-traffic.json`; an older manager ignores the plan, so after a downgrade the allowance is not enforced and not shown, and the journal is left unused. Rollback: restore the previous manager and refresh its helper and monitor; remove the allowance first if you do not want it silently lost on the next restore.
+
 ## To v0.3.8
 
 No migration. State, subscriptions, tokens, nodes, relays and traffic accounting are unchanged. The interactive menu gains section titles, status badges, breadcrumbs and a status panel with the same menu numbers; Enter no longer quits the main menu. Relay loop checks now follow TCP and UDP chains independently, and subscription responses carry the stored name as the client title (existing subscriptions gain it after `sudo rout subscription refresh`). Run `rout update`; the existing updater/installer works as before.

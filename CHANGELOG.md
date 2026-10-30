@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.9
 
 - Subscription URL screens add a Shadowrocket one-tap import link (`shadowrocket://add/sub://…?remark=NAME`) so the client lists the subscription under its Rout name. The link is generated locally from the existing URL; no token or state change.
 - Subscription data and expiry: each subscription can have a **shared data allowance** (one pool for all its nodes), a monthly reset day and an expiry date. Clients show *Remaining data*, *Days until reset* and *Plan expires* as informational entries (first in the Base64 list; a separate `📊 Info` group in Mihomo, outside Auto/Fallback) and the standard `Subscription-Userinfo` header. Set it under Edit subscription → *Data and expiry* or with `rout subscription plan`. Subscriptions without a plan are unchanged byte for byte.
