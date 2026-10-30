@@ -1,5 +1,9 @@
 # Upgrading and rollback safety
 
+## To v0.3.10
+
+No migration. Subscriptions, tokens, nodes, relays, AI routing, traffic state and existing HTTPS ownership records are unchanged. **Deploy / repair HTTPS** now works when the saved public URL has no site behind it (for example after Caddy was uninstalled), rebuilds a Rout-managed fragment that vanished, and can repair an installed but stopped Caddy after a separate explicit confirmation; see [Repairing HTTPS when the saved URL has no site behind it](SUBSCRIPTIONS.md#repairing-https-when-the-saved-url-has-no-site-behind-it). Run `rout update`; the existing updater/installer works as before. Rollback: restore the previous manager; it only returns to the earlier, stricter refusal and leaves any deployed HTTPS configuration in place.
+
 ## To v0.3.9
 
 No migration; existing subscriptions, tokens, nodes, relays and traffic state are unchanged, and a subscription without a data plan returns the same bytes as before. New optional per-subscription data allowance, reset day and expiry (see [Data allowance and expiry](SUBSCRIPTIONS.md#data-allowance-and-expiry)). Run `rout update`: the updater refreshes the traffic monitor and the subscription helper, which are the two processes that need the new version. Setting a finite allowance moves `state.json` to the protected schema (schema 2, as node limits already do) and adds `subscription-traffic.json`; an older manager ignores the plan, so after a downgrade the allowance is not enforced and not shown, and the journal is left unused. Rollback: restore the previous manager and refresh its helper and monitor; remove the allowance first if you do not want it silently lost on the next restore.

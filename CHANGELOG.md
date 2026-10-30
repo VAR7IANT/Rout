@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-Planned as the next patch release, v0.3.10 (no version bump in this change).
+## v0.3.10
 
 - Fix: **Deploy / repair HTTPS** no longer refuses when the saved HTTPS public URL has no site behind it. After Caddy was uninstalled, stopped or purged, the saved URL made Rout probe the domain as if an existing Caddy site had been found, and the failed probe aborted with "existing Caddy site found but its authenticated endpoint is not verified". Rout now tells apart: nothing set up, a stale saved URL (redeploys, saying why), an existing site that fails verification (preserved, with the failing layer named), a port owned by another service (refused before asking for consent) and a working external endpoint (reused). No manual `settings.json` edit is needed; subscriptions, tokens, nodes, AI routing, relays and traffic are untouched.
 - Fix: a Rout-managed deployment whose fragment file vanished (Caddy uninstalled or purged) is rebuilt with its recorded domains instead of being refused as "changed externally", and the `import` line is restored if a reinstalled Caddy reset the Caddyfile. An edited fragment stays protected.
