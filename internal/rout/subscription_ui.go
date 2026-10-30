@@ -2,6 +2,7 @@ package rout
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Subscription menus. This file only asks questions and prints; every change goes through
@@ -113,6 +115,31 @@ func (u *UI) subStatus(s State, sub Subscription) string {
 	return fmt.Sprintf("%s · "+u.a.T("%d/%d 个节点可用"), state, len(exp.URIs), len(sub.NodeIDs))
 }
 
+// planLines describes the plan and its current usage; nothing for a subscription without one.
+func (u *UI) planLines(sub Subscription) []string {
+	if sub.Plan == nil {
+		return nil
+	}
+	now := time.Now()
+	v, ok := u.a.SubscriptionUsage(sub, now)
+	if !ok {
+		return nil
+	}
+	var out []string
+	row := func(label, value string) { out = append(out, fmt.Sprintf("  %s  %s", pad(u.a.T(label), 10), value)) }
+	if v.Plan.LimitBytes > 0 {
+		row("共享流量", fmt.Sprintf(u.a.T("剩余 %s / 共 %s（已用 %s）"), FormatTraffic(v.remaining()), FormatTraffic(v.Plan.LimitBytes), FormatTraffic(v.Used)))
+		row("下次重置", u.dateAndDays(v.Next))
+		if v.Incomplete {
+			out = append(out, "  "+u.paint("33", u.a.T("! 本周期曾有计数中断，已用量为下限")))
+		}
+	}
+	if t, ok := v.Plan.nextExpiry(now); ok {
+		row("套餐到期", t.Format(planDateLayout))
+	}
+	return out
+}
+
 // subscriptionList prints every subscription with its nodes and diagnostics.
 func (u *UI) subscriptionList(s State) {
 	if len(s.Subscriptions) == 0 {
@@ -126,18 +153,21 @@ func (u *UI) subscriptionList(s State) {
 	}
 	for i, sub := range s.Subscriptions {
 		fmt.Fprintf(u.writer(), "\n%s  %s  [%s]\n      %s\n", u.paint(accent, fmt.Sprintf("%2d", i+1)), u.bold(sub.Name), sub.ID, u.subStatus(s, sub))
+		for _, line := range u.planLines(sub) {
+			fmt.Fprintln(u.writer(), "    "+line)
+		}
 		for _, id := range sub.NodeIDs {
 			if p, e := Find(s, id); e == nil {
 				fmt.Fprintln(u.writer(), "      "+u.nodeText(p))
 			}
 		}
 		if token := tokens[sub.TokenHash]; token != "" {
-			u.subscriptionURLs(cfg, token)
+			u.subscriptionURLs(cfg, token, sub.Name)
 		} else {
 			if tokenError == nil {
 				u.hint("此订阅仅保存了令牌校验值，无法还原原令牌；请使用之前保存的 URL，或在“更换访问令牌”中确认生成新链接（旧链接会失效）")
 			}
-			u.subscriptionURLs(cfg, "{access_token}")
+			u.subscriptionURLs(cfg, "{access_token}", sub.Name)
 		}
 		for _, w := range s.exportSubscription(sub).Warnings {
 			u.warn(w)
@@ -165,13 +195,13 @@ func (u *UI) pickSubscription(s State, prompt string) (Subscription, bool) {
 }
 
 // Tokens are shown only in explicit subscription creation/rotation/list views.
-func (u *UI) showToken(token, heading string) {
+func (u *UI) showToken(token, heading, name string) {
 	cfg, _ := u.a.subscriptionSettings()
 	u.good(heading)
 	u.hint("令牌已私密保存；以后可在“查看订阅”中查看完整链接，请勿公开分享")
 	fmt.Fprintf(u.writer(), "  %s  %s\n", pad(u.a.T("访问令牌"), 10), token)
 	u.heading("订阅链接")
-	u.subscriptionURLs(cfg, token)
+	u.subscriptionURLs(cfg, token, name)
 	if cfg.PublicURL == "" {
 		u.warn("尚未配置 HTTPS 公网地址：订阅服务只监听本机，请先用反向代理提供 HTTPS，再在“订阅服务设置”中填写公网地址")
 	}
@@ -180,12 +210,23 @@ func (u *UI) showToken(token, heading string) {
 	}
 }
 
-func (u *UI) subscriptionURLs(cfg SubscriptionSettings, token string) {
+// shadowrocketImportURL is Shadowrocket's one-tap import link. Only this form carries the
+// title (remark), so the subscription is listed under its Rout name instead of its host.
+func shadowrocketImportURL(subscriptionURL, name string) string {
+	remark := strings.ReplaceAll(url.QueryEscape(name), "+", "%20")
+	return "shadowrocket://add/sub://" + base64.StdEncoding.EncodeToString([]byte(subscriptionURL)) + "?remark=" + remark
+}
+
+func (u *UI) subscriptionURLs(cfg SubscriptionSettings, token, name string) {
 	base := cfg.SubscriptionURL(token)
 	if base == "" {
 		base = "https://YOUR-DOMAIN/s/" + token
 	}
 	fmt.Fprintf(u.writer(), "      Base64:\n%s\n      Mihomo:\n%s?format=mihomo\n      Clash:\n%s?format=clash\n", base, base, base)
+	if token != "{access_token}" {
+		fmt.Fprintf(u.writer(), "      Shadowrocket:\n%s\n", shadowrocketImportURL(base, name))
+		u.hint("在 iPhone 上打开 Shadowrocket 链接即可导入，标题为订阅名称；直接粘贴 Base64 链接时需自行填写备注")
+	}
 }
 
 func (u *UI) subscriptionCreate() error {
@@ -227,7 +268,7 @@ func (u *UI) subscriptionCreate() error {
 		return e
 	}
 	fmt.Fprintf(u.writer(), "  %s  %s [%s]\n", pad(u.a.T("订阅"), 10), sub.Name, sub.ID)
-	u.showToken(token, "订阅已创建")
+	u.showToken(token, "订阅已创建", sub.Name)
 	return nil
 }
 
@@ -265,7 +306,10 @@ func (u *UI) subscriptionEditOne(id string) error {
 		if !sub.Enabled {
 			toggle = item("toggle", "启用订阅")
 		}
-		v := u.menu("", []menuItem{item("rename", "重命名"), item("add", "添加节点"), item("remove", "移除节点"), item("reorder", "调整顺序"), toggle}, "返回")
+		for _, line := range u.planLines(sub) {
+			fmt.Fprintln(u.writer(), line)
+		}
+		v := u.menu("", []menuItem{item("rename", "重命名"), item("add", "添加节点"), item("remove", "移除节点"), item("reorder", "调整顺序"), toggle, item("plan", "流量与到期设置")}, "返回")
 		if v == "" || u.err != nil {
 			return u.err
 		}
@@ -312,6 +356,8 @@ func (u *UI) subscriptionEditOne(id string) error {
 				}
 				err, saved = u.a.SetSubscriptionNodes(id, order), true
 			}
+		case "plan":
+			err = u.subscriptionPlanMenu(id)
 		case "toggle":
 			err, saved = u.a.SetSubscriptionEnabled(id, !sub.Enabled), true
 		}
@@ -319,6 +365,93 @@ func (u *UI) subscriptionEditOne(id string) error {
 			u.fail(u.a.subscriptionText(u.a.Error(err)))
 		} else if saved && u.err == nil {
 			u.good("已保存；令牌保持不变")
+		}
+		if u.err != nil {
+			return u.err
+		}
+	}
+}
+
+// subscriptionPlanMenu edits the shared allowance, reset day and expiry of one subscription.
+func (u *UI) subscriptionPlanMenu(id string) error {
+	defer u.enter("流量与到期设置")()
+	for {
+		s, e := u.a.Load()
+		if e != nil {
+			return e
+		}
+		i, e := findSubscription(s, id)
+		if e != nil {
+			return e
+		}
+		sub := s.Subscriptions[i]
+		u.heading("流量与到期设置")
+		if lines := u.planLines(sub); len(lines) > 0 {
+			for _, line := range lines {
+				fmt.Fprintln(u.writer(), line)
+			}
+		} else {
+			u.say("尚未设置流量额度或到期日")
+		}
+		u.hint("额度由订阅内所有节点共用，约每 5 秒核对一次，用完后停止这些节点，下个周期自动恢复；到期日只用于显示，到期后顺延到下个月同一天，不会停用订阅")
+		plan := SubscriptionPlan{}
+		if sub.Plan != nil {
+			plan = *sub.Plan
+		}
+		v := u.menu("", []menuItem{item("limit", "流量额度（共享）"), item("day", "每月重置日"), item("expires", "套餐到期日"), item("reset", "立即重置本周期用量"), item("clear", "清除全部设置")}, "返回")
+		if v == "" || u.err != nil {
+			return u.err
+		}
+		var err error
+		saved := false
+		switch v {
+		case "limit":
+			u.hint("数字按 GB 计，也可写 500 MB、2 TB；0 表示不限；需先启用流量监控（rout traffic install）")
+			raw := u.ask("共享流量额度", limitInput(plan.LimitBytes))
+			if u.err != nil {
+				break
+			}
+			var limit uint64
+			if limit, err = parseLimitInput(raw); err == nil {
+				err, saved = u.a.UpdateSubscriptionPlan(id, func(p *SubscriptionPlan) { p.LimitBytes = limit }), true
+			}
+		case "day":
+			raw := u.ask("每月重置日（1–31）", strconv.Itoa(plan.policy().BillingDay))
+			if u.err != nil {
+				break
+			}
+			day, perr := strconv.Atoi(strings.TrimSpace(normalizeInput(raw)))
+			if perr != nil || day < 1 || day > 31 {
+				err = errors.New("订阅流量额度或重置日无效")
+				break
+			}
+			err, saved = u.a.UpdateSubscriptionPlan(id, func(p *SubscriptionPlan) { p.BillingDay = day }), true
+		case "expires":
+			raw := u.ask("套餐到期日（YYYY-MM-DD，留空清除）", plan.Expires)
+			if u.err != nil {
+				break
+			}
+			var date string
+			if date, err = ParsePlanDate(raw); err == nil {
+				err, saved = u.a.UpdateSubscriptionPlan(id, func(p *SubscriptionPlan) { p.Expires = date }), true
+			}
+		case "reset":
+			if plan.LimitBytes == 0 {
+				u.warn("此订阅没有设置流量额度")
+				break
+			}
+			if u.yes("立即开始新的流量周期并清零已用量", false) {
+				err, saved = u.a.ResetSubscriptionUsage(id, time.Now()), true
+			}
+		case "clear":
+			if u.yes("清除此订阅的流量额度、重置日和到期日", false) {
+				err, saved = u.a.SetSubscriptionPlan(id, SubscriptionPlan{}), true
+			}
+		}
+		if err != nil {
+			u.fail(u.a.subscriptionText(u.a.Error(err)))
+		} else if saved && u.err == nil {
+			u.good("已保存；下次客户端刷新订阅时生效")
 		}
 		if u.err != nil {
 			return u.err
@@ -363,7 +496,7 @@ func (u *UI) subscriptionRotate() error {
 	if e != nil {
 		return e
 	}
-	u.showToken(token, "令牌已更换，旧链接已失效")
+	u.showToken(token, "令牌已更换，旧链接已失效", sub.Name)
 	return nil
 }
 
@@ -590,8 +723,92 @@ func (u *UI) subscriptionCommand(args []string) (err error) {
 		case "remove":
 			return u.subscriptionHTTPSRemove()
 		}
+	case "plan":
+		return u.subscriptionPlanCommand(args[2:])
 	case "restart":
 		return u.a.RestartSubscriptionServer()
 	}
-	return errors.New("用法：rout subscription [list|status|enable|start|stop|restart|refresh|disable|startup|logs|https|serve]")
+	return errors.New("用法：rout subscription [list|status|enable|start|stop|restart|refresh|disable|startup|logs|https|plan|serve]")
+}
+
+// subscriptionPlanCommand implements `rout subscription plan [ID [show|limit V|reset-day N|expires DATE|reset|clear]]`.
+func (u *UI) subscriptionPlanCommand(args []string) error {
+	s, e := u.a.Load()
+	if e != nil {
+		return e
+	}
+	usage := errors.New("用法：rout subscription plan [ID [show|limit 大小|reset-day 日|expires 日期|reset|clear]]")
+	if len(args) == 0 {
+		for _, sub := range s.Subscriptions {
+			fmt.Fprintf(u.writer(), "%s  [%s]\n", u.bold(sub.Name), sub.ID)
+			lines := u.planLines(sub)
+			if len(lines) == 0 {
+				lines = []string{"  " + u.a.T("尚未设置流量额度或到期日")}
+			}
+			for _, line := range lines {
+				fmt.Fprintln(u.writer(), line)
+			}
+		}
+		return nil
+	}
+	i, e := findSubscription(s, args[0])
+	if e != nil {
+		return e
+	}
+	id, sub := args[0], s.Subscriptions[i]
+	if len(args) == 1 || args[1] == "show" {
+		fmt.Fprintf(u.writer(), "%s  [%s]\n", u.bold(sub.Name), sub.ID)
+		for _, line := range u.planLines(sub) {
+			fmt.Fprintln(u.writer(), line)
+		}
+		return nil
+	}
+	switch args[1] {
+	case "limit", "reset-day", "expires":
+		if len(args) != 3 {
+			return usage
+		}
+		var change func(*SubscriptionPlan)
+		switch args[1] {
+		case "limit":
+			limit, e := parseLimitInput(args[2])
+			if e != nil {
+				return e
+			}
+			change = func(p *SubscriptionPlan) { p.LimitBytes = limit }
+		case "reset-day":
+			day, e := strconv.Atoi(args[2])
+			if e != nil || day < 1 || day > 31 {
+				return errors.New("订阅流量额度或重置日无效")
+			}
+			change = func(p *SubscriptionPlan) { p.BillingDay = day }
+		default:
+			date, e := ParsePlanDate(args[2])
+			if e != nil {
+				return e
+			}
+			change = func(p *SubscriptionPlan) { p.Expires = date }
+		}
+		if e = u.a.UpdateSubscriptionPlan(id, change); e != nil {
+			return e
+		}
+	case "reset":
+		if len(args) != 2 {
+			return usage
+		}
+		if e = u.a.ResetSubscriptionUsage(id, time.Now()); e != nil {
+			return e
+		}
+	case "clear":
+		if len(args) != 2 {
+			return usage
+		}
+		if e = u.a.SetSubscriptionPlan(id, SubscriptionPlan{}); e != nil {
+			return e
+		}
+	default:
+		return usage
+	}
+	u.good("已保存；下次客户端刷新订阅时生效")
+	return nil
 }

@@ -14,6 +14,7 @@ const (
 	mihomoProxyGroup     = "🚀 Proxy"
 	mihomoAutoGroup      = "⚡ Auto"
 	mihomoFallbackGroup  = "🛡️ Fallback"
+	mihomoInfoGroup      = "📊 Info"
 	mihomoDefaultTestURL = "https://www.gstatic.com/generate_204"
 )
 
@@ -65,6 +66,14 @@ func (a *App) SetMihomoTestURL(raw string) error {
 // keys and list markers are written here. No handwritten string interpolation
 // can turn a node name into a YAML key, alias, tag or additional document.
 func renderMihomo(proxies []M, warnings []string, testURL string) string {
+	return renderMihomoInfo(proxies, warnings, testURL, nil)
+}
+
+// renderMihomoInfo adds the subscription plan's informational entries (remaining data,
+// days to reset, expiry) as inert placeholder proxies in their own selectable group.
+// They are never members of the manual, automatic or fallback groups, so no rule or
+// health check can route traffic to them or pick them by default.
+func renderMihomoInfo(proxies []M, warnings []string, testURL string, info []string) string {
 	var b strings.Builder
 	b.WriteString("# Rout native Mihomo subscription\n")
 	for _, w := range warnings {
@@ -80,6 +89,25 @@ func renderMihomo(proxies []M, warnings []string, testURL string) string {
 		{"name": mihomoProxyGroup, "type": "select", "proxies": manual},
 		{"name": mihomoAutoGroup, "type": "url-test", "proxies": names, "url": testURL, "interval": 600, "lazy": true, "tolerance": 50},
 		{"name": mihomoFallbackGroup, "type": "fallback", "proxies": names, "url": testURL, "interval": 600, "lazy": true},
+	}
+	var infoNames []string
+	if len(info) > 0 {
+		used := map[string]bool{"DIRECT": true, "REJECT": true, mihomoProxyGroup: true, mihomoAutoGroup: true, mihomoFallbackGroup: true, mihomoInfoGroup: true}
+		for _, n := range names {
+			used[n] = true
+		}
+		for _, line := range info {
+			for used[line] {
+				line += " ·"
+			}
+			used[line] = true
+			infoNames = append(infoNames, line)
+		}
+		proxies = append([]M(nil), proxies...)
+		for _, n := range infoNames {
+			proxies = append(proxies, infoProxy(n))
+		}
+		groups = append(groups, M{"name": mihomoInfoGroup, "type": "select", "proxies": infoNames})
 	}
 	write := func(key string, values []M) {
 		b.WriteString(key + ":\n")
@@ -102,7 +130,7 @@ func renderMihomo(proxies []M, warnings []string, testURL string) string {
 func mihomoNames(s State) map[string]string {
 	counts := map[string]int{}
 	originals := map[string]bool{}
-	reserved := map[string]bool{"DIRECT": true, "REJECT": true, "REJECT-DROP": true, "PASS": true, "COMPATIBLE": true, "GLOBAL": true, mihomoProxyGroup: true, mihomoAutoGroup: true, mihomoFallbackGroup: true}
+	reserved := map[string]bool{"DIRECT": true, "REJECT": true, "REJECT-DROP": true, "PASS": true, "COMPATIBLE": true, "GLOBAL": true, mihomoProxyGroup: true, mihomoAutoGroup: true, mihomoFallbackGroup: true, mihomoInfoGroup: true}
 	for _, p := range s.Profiles {
 		counts[p.Name]++
 		originals[p.Name] = true

@@ -56,9 +56,52 @@ sudo rout subscription mihomo-test-url default
 
 This optional `settings.json` field is written only after explicit configuration. The server does not fetch the URL; clients perform the checks. Credentials/query parameters/fragments and non-HTTPS URLs are refused. Changing it needs no restart and does not touch Caddy, subscriptions or node credentials. Mihomo may run an initial health check; subsequent checks are lazy at the configured 600-second interval.
 
+## Data allowance and expiry
+
+Each subscription can carry an optional plan: a **shared data allowance** (one pool for all its nodes), a **monthly reset day** (1–31, short months clamp; optional IANA timezone, default the server's) and a **plan expiry date**. Menu: *Edit subscription → Data and expiry*. Command line:
+
+```sh
+sudo rout subscription plan                       # every subscription's plan and usage
+sudo rout subscription plan ID limit 100          # GB; 500MB / 2TB accepted; 0 = unlimited
+sudo rout subscription plan ID reset-day 1
+sudo rout subscription plan ID expires 2026-11-27 # none clears it
+sudo rout subscription plan ID reset              # start a new cycle now, usage to zero
+sudo rout subscription plan ID clear              # remove allowance, reset day and expiry
+```
+
+A finite allowance needs traffic monitoring (`sudo rout traffic install`), which supplies the per-node counters. Editing only the expiry date does not.
+
+### What clients see
+
+Subscriptions with a plan add informational entries and a header; a subscription without one is unchanged, byte for byte.
+
+| Entry | Shown when |
+| --- | --- |
+| `剩余流量：31.27 GB` / `Remaining data: 31.27 GB` | allowance set (decimal units, truncated like the traffic screens) |
+| `距离下次重置剩余：3 天` / `Days until reset: 3` | allowance set; days are rounded up |
+| `套餐到期：2026-11-27` / `Plan expires: 2026-11-27` | expiry set |
+
+The text follows the language selected in Settings. In the Base64 list the entries come first, as `trojan://rout-info@127.0.0.1:1#NAME` placeholders (no credentials, a closed loopback port). In Mihomo output they are inert `trojan` proxies in a separate `📊 Info` select group; the `🚀 Proxy`, `⚡ Auto` and `🛡️ Fallback` groups and the `MATCH` rule never reference them, so no health check or default selection can pick one. Clients that read the standard `Subscription-Userinfo: upload=…; download=…; total=…; expire=…` header (Clash Verge Rev, Stash, Shadowrocket, Hiddify and others) show a usage bar from the same numbers; only `expire` is sent when no allowance is set. A running subscription helper must be refreshed once after upgrading (`sudo rout subscription refresh`; opening the subscription menu does it too).
+
+### How the allowance is counted and enforced
+
+* Every managed node is already metered in the kernel. The traffic monitor adds each member node's **growth since its previous poll** (upload and download separately) to the subscription's own cycle total in the private journal `subscription-traffic.json` (0600, SHA256 checksum, never read for authentication). Traffic a node used before it joined the subscription, or before the allowance was created, is not charged. A node in several subscriptions is charged to each.
+* When the total reaches the allowance the monitor stops the subscription's nodes and remembers them. Their service state is checked every poll (about 5 seconds), so a node restarted by hand, by `rout restart` or after a reboot is stopped again within one poll. This is **not** a per-packet kernel gate like a node's own limit: a few seconds of traffic can exceed the pool, and a node briefly runs after a reboot until the monitor's first poll. Node-level limits keep working independently on top of it.
+* At the next reset day (or after raising/removing the limit, resetting, or removing the node from the subscription) the subscription's enabled nodes are started again, unless another exhausted allowance or the node's own quota still blocks them (they are started once that clears). A node you have disabled stays disabled. A start that fails is retried every 30 seconds, ten times, then given up.
+* The subscription itself keeps answering while the pool is empty, so clients see `Remaining data: 0 B` and the dates.
+* Reset boundaries follow the same rules as node cycles: civil midnight in the plan's timezone, a clock set back cannot mint a cycle, changing the reset day only reschedules the next boundary and does not clear usage. A counter that goes backwards (monitoring restarted) is charged in full and the cycle is flagged as a lower bound.
+* A damaged or tampered journal stops the pool step with an error (it is never read as an empty, fresh allowance); `sudo rout subscription plan ID reset` keeps a private copy and rebuilds it.
+* Backups contain the plan (in `state.json`) but not the usage journal; after a restore the first poll starts a new baseline. Setting a limit moves `state.json` to the protected schema, like node limits, and `rout restore` keeps the current plan of every subscription (and refuses a backup that lacks a subscription with an allowance), so an old backup cannot silently cancel it.
+
+### Expiry
+
+The expiry date is informational. Passing it **never disables or restricts** a subscription: the shown date simply renews to the same day of the next month (a date of the 31st is clamped in short months). Only pausing the subscription yourself (*Disable subscription*) blocks its link.
+
+Not verified here: the entries and usage bar in real Shadowrocket, Clash Verge Rev, FlClash or Mihomo Party, and enforcement on a physical VPS (tests use a simulated journal, not live nftables counters).
+
 ## Display name
 
-Every successful subscription response includes the subscription's stored name as `Profile-Title: base64:<UTF-8 name>` (read by Hiddify/Happ-style clients) and `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>` (Clash Verge reads `filename*` from its source). Control characters are stripped, so names with Chinese, spaces or quotes are header-safe. Renaming takes effect on the next fetch; tokens and URLs do not change. A helper started before this change must be refreshed (`sudo rout subscription refresh`). Verified: HTTP headers only; no desktop/mobile client was run. Shadowrocket's handling is not verified.
+Every successful subscription response includes the subscription's stored name as `Profile-Title: base64:<UTF-8 name>` (read by Hiddify/Happ-style clients) and `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<percent-encoded name>` (Clash Verge reads `filename*` from its source). Control characters are stripped, so names with Chinese, spaces or quotes are header-safe. Shadowrocket is not known to read these headers, so View subscriptions and the creation/rotation screens also print a `shadowrocket://add/sub://…?remark=NAME` import link: opening it on the iPhone imports the subscription titled with its Rout name (pasting the plain Base64 URL leaves the remark to you). Renaming takes effect on the next fetch; tokens and URLs do not change. A helper started before this change must be refreshed (`sudo rout subscription refresh`). Verified: HTTP headers only; no desktop/mobile client was run. Shadowrocket's handling is not verified.
 
 ## Existing v0.3.4 subscriptions survive an upgrade
 

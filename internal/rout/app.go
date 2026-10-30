@@ -23,6 +23,7 @@ type App struct {
 	trafficStop               func(Profile) error
 	trafficStart              func(Profile) error
 	bootID                    func() (string, error)
+	poolRunning               func(Profile) bool
 	subscriptionHTTPS         *subscriptionHTTPSRuntime
 	// Only the running monitor reopens sealed checkpoints.
 	monitorMode bool
@@ -278,6 +279,12 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 	for i, p := range next.Profiles {
 		if prev, er := Find(old, p.ID); er == nil {
 			next.Profiles[i].Traffic = prev.Traffic
+		}
+	}
+	// Likewise a subscription's data allowance: the current plan always wins.
+	for i, sub := range next.Subscriptions {
+		if j, er := findSubscription(old, sub.ID); er == nil {
+			next.Subscriptions[i].Plan = old.Subscriptions[j].clone().Plan
 		}
 	}
 	if old.Schema == 2 {
@@ -596,6 +603,13 @@ func (a *App) Restore(path string) error {
 		if p.trafficPolicy().LimitBytes > 0 {
 			if _, er := Find(next, p.ID); er != nil {
 				return errors.New("备份缺少有限额节点，请先显式取消限额或删除节点")
+			}
+		}
+	}
+	for _, sub := range old.Subscriptions {
+		if sub.Plan != nil && sub.Plan.LimitBytes > 0 {
+			if _, er := findSubscription(next, sub.ID); er != nil {
+				return errors.New("备份缺少有流量额度的订阅，请先清除其额度或删除订阅")
 			}
 		}
 	}

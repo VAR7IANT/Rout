@@ -63,6 +63,9 @@ func (c *stateCache) load() (State, error) {
 type subscriptionHandler struct {
 	load           func() (State, error)
 	mihomoSettings func() (SubscriptionSettings, error)
+	plan           func(Subscription, time.Time) (planView, bool)
+	lang           func() string
+	now            func() time.Time
 	logf           func(format string, args ...any)
 	sem            chan struct{}
 	mu             sync.Mutex
@@ -124,6 +127,7 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	contentType := "text/plain; charset=utf-8"
 	var body string
+	info, userinfo := h.planInfo(sub)
 	if format == "mihomo" {
 		cfg := SubscriptionSettings{}
 		if h.mihomoSettings != nil {
@@ -143,7 +147,7 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			plain(w, http.StatusServiceUnavailable, "no Mihomo-compatible nodes; use Base64 or check the selected nodes: "+strings.Join(warnings, "; "))
 			return
 		}
-		body = renderMihomo(proxies, warnings, cfg.mihomoTestURL())
+		body = renderMihomoInfo(proxies, warnings, cfg.mihomoTestURL(), info)
 		contentType = "application/yaml; charset=utf-8"
 		w.Header().Set("X-Rout-Skipped-Nodes", strconv.Itoa(len(warnings)))
 	} else {
@@ -154,7 +158,11 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			plain(w, http.StatusServiceUnavailable, "no available nodes")
 			return
 		}
-		body = renderSubscription(exp.URIs)
+		uris := make([]string, 0, len(info)+len(exp.URIs))
+		for _, line := range info {
+			uris = append(uris, infoURI(line))
+		}
+		body = renderSubscription(append(uris, exp.URIs...))
 	}
 	hd := w.Header()
 	hd.Set("Content-Type", contentType)
@@ -164,10 +172,34 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	hd.Set("Referrer-Policy", "no-referrer")
 	hd.Set("Content-Length", strconv.Itoa(len(body)))
 	setSubscriptionTitle(hd, sub.Name)
+	if userinfo != "" {
+		hd.Set("Subscription-Userinfo", userinfo)
+	}
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodGet {
 		_, _ = w.Write([]byte(body))
 	}
+}
+
+// planInfo returns the informational entry texts and the Subscription-Userinfo value of
+// a subscription that has a plan; both are empty otherwise, leaving the response as before.
+func (h *subscriptionHandler) planInfo(sub Subscription) ([]string, string) {
+	if h.plan == nil || sub.Plan == nil {
+		return nil, ""
+	}
+	now := time.Now()
+	if h.now != nil {
+		now = h.now()
+	}
+	view, ok := h.plan(sub, now)
+	if !ok {
+		return nil, ""
+	}
+	lang := ""
+	if h.lang != nil {
+		lang = h.lang()
+	}
+	return view.infoLines(lang, now), view.userinfo(now)
 }
 
 // setSubscriptionTitle exposes the stored subscription name to clients. Profile-Title
@@ -313,6 +345,8 @@ func (a *App) ServeSubscriptions(ctx context.Context) error {
 func (a *App) subscriptionHTTPHandler(load func() (State, error), logf func(string, ...any)) http.Handler {
 	normal := newSubscriptionHandler(load, logf)
 	normal.mihomoSettings = a.subscriptionSettings
+	normal.plan = a.SubscriptionUsage
+	normal.lang = func() string { return a.Language }
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == subscriptionProbePath {
 			a.serveSubscriptionProbe(w, r)
