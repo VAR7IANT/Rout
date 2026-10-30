@@ -959,7 +959,7 @@ func TestSubscriptionCommandsAndHelp(t *testing.T) {
 	if !found {
 		t.Fatal("help lacks the subscription command")
 	}
-	if Version != "0.3.9" {
+	if Version != "0.3.10" {
 		t.Fatalf("version %s", Version)
 	}
 }
