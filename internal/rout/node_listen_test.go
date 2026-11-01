@@ -345,10 +345,9 @@ func TestNodeListeningPublicEndpointIsSeparate(t *testing.T) {
 
 func TestIPv6WildcardDoesNotImplyDualStackLinks(t *testing.T) {
 	for _, mapped := range []bool{false, true} {
+		// Options: IPv4, [dual stack when the wildcard also accepts IPv4], IPv6. The second
+		// option is IPv6 on a host without a dual-stack wildcard and dual stack on one with it.
 		choice := "2\n"
-		if mapped {
-			choice = "3\n"
-		}
 		u, _ := testUI(testApp(t), choice)
 		u.caps = func() listenCaps { return listenCaps{V4: true, V6: true, DualStack: mapped} }
 		setup, e := u.nodeListeningSetup(ServerSetup{Listen: "::", PublicHost: v4Addr, IPv4: v4Addr, IPv6: v6Addr})

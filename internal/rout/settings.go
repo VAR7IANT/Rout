@@ -17,6 +17,9 @@ type Settings struct {
 	BackupKeep int `json:"backup_keep,omitempty"`
 	// Last relay destination type chosen ("local"/"remote"), offered as the default.
 	RelayMode string `json:"relay_mode,omitempty"`
+	// Last inbound mode and outbound policy chosen for a relay (defaults for the next one).
+	RelayInbound  string `json:"relay_inbound,omitempty"`
+	RelayOutbound string `json:"relay_outbound,omitempty"`
 	// Subscription HTTP server (see subscription_service.go); nil means never configured (disabled).
 	Subscription *SubscriptionSettings `json:"subscription,omitempty"`
 }
@@ -39,8 +42,9 @@ type ServerSetup struct {
 	// and a node listens on "::", its link is also offered for the other address.
 	IPv4 string `json:"ipv4,omitempty"`
 	IPv6 string `json:"ipv6,omitempty"`
-	// Creation-only capability; never changes the saved server defaults.
+	// Creation-only capabilities; never change the saved server defaults.
 	ipv4Mapped *bool
+	inbound    string // explicit inbound mode chosen for the entries being created
 }
 
 func (s ServerSetup) Validate() error {
@@ -91,6 +95,9 @@ func (a *App) LoadSettings() (Settings, error) {
 	if s.BackupKeep < 0 || s.BackupKeep > 1000 {
 		return s, errors.New("备份保留数量无效")
 	}
+	if (s.RelayInbound != "" && !validInboundMode(s.RelayInbound)) || (s.RelayOutbound != "" && !validOutboundPolicy(s.RelayOutbound)) {
+		return s, errors.New("中转网络默认设置无效")
+	}
 	if s.Subscription != nil {
 		if e = s.Subscription.Validate(); e != nil {
 			return s, e
@@ -106,6 +113,9 @@ func (a *App) SaveSettings(s Settings) error {
 		if e := s.Server.Validate(); e != nil {
 			return e
 		}
+	}
+	if (s.RelayInbound != "" && !validInboundMode(s.RelayInbound)) || (s.RelayOutbound != "" && !validOutboundPolicy(s.RelayOutbound)) {
+		return errors.New("中转网络默认设置无效")
 	}
 	if s.BackupKeep < 0 || s.BackupKeep > 1000 {
 		return errors.New("备份保留数量无效")
@@ -163,6 +173,7 @@ func PlanPort(p Profile, setup ServerSetup, s State) (Profile, error) {
 	p.Listen = setup.Listen
 	if p.Kind == "node" {
 		p.IPv4Mapped = setup.ipv4Mapped
+		p.InboundMode = setup.inbound
 	}
 	if setup.NAT && p.Protocol == "ss" && setup.Network != "both" {
 		p.Network = setup.Network
@@ -229,7 +240,7 @@ func AllowedPort(p Profile, setup ServerSetup) bool {
 // is reachable over either family. Legacy NAT entries never get one: their public port is
 // a provider mapping that is unknown for the other family.
 func (s ServerSetup) AltAddress(p Profile) (host, label string, ok bool) {
-	if p.NAT || s.NAT || (p.IPv4Mapped != nil && !*p.IPv4Mapped) || p.Listen != "::" || s.IPv4 == "" || s.IPv6 == "" {
+	if p.NAT || s.NAT || p.inboundMode() != inDual || p.Listen != "::" || s.IPv4 == "" || s.IPv6 == "" {
 		return "", "", false
 	}
 	switch {

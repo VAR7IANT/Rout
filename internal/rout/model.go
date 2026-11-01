@@ -35,7 +35,15 @@ type Proxy struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	// Link is set only for Protocol "node": the share link of a node on another server
+	// (VLESS Reality, AnyTLS, Trojan, Shadowsocks, ...). Its credentials live in the link,
+	// so it is as sensitive as a password and is never printed.
+	Link string `json:"link,omitempty"`
 }
+
+// proxyNode is the protocol of an outbound that speaks a node protocol to a remote
+// server instead of a SOCKS5/HTTP proxy.
+const proxyNode = "node"
 
 type Profile struct {
 	ID           string         `json:"id"`
@@ -71,6 +79,17 @@ type Profile struct {
 	// IPv4Mapped records a new :: listener's probed IPv4 support for alternate
 	// links. Nil preserves the historical behavior of existing nodes.
 	IPv4Mapped *bool `json:"ipv4_mapped,omitempty"`
+	// InboundMode ("ipv4", "ipv6", "dual") and OutboundPolicy ("ipv4_first", "ipv6_first",
+	// "ipv4_only", "ipv6_only", "auto") are the explicit address-family settings, see
+	// netpolicy.go. Both are empty on profiles written by earlier versions, which keep
+	// their previous behavior. Engine "native" selects Rout's own forwarder for a relay.
+	InboundMode    string `json:"inbound_mode,omitempty"`
+	OutboundPolicy string `json:"outbound_policy,omitempty"`
+	Engine         string `json:"engine,omitempty"`
+	// TargetNetwork records which transports a relay's remote destination is known to
+	// accept ("tcp", "udp", "both"); empty means unknown. A TCP-only destination (for
+	// example a NAT that maps only TCP) can never carry UDP protocols such as Hysteria2.
+	TargetNetwork string `json:"target_network,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
@@ -215,9 +234,25 @@ func ParseProxy(protocol, input string) (*Proxy, error) {
 			return nil, errors.New("输入包含无效字符")
 		}
 	}
-	return &Proxy{protocol, fields[0], n, fields[2], fields[3]}, nil
+	return &Proxy{Protocol: protocol, Host: fields[0], Port: n, Username: fields[2], Password: fields[3]}, nil
 }
 func (p Proxy) Validate() error {
+	if p.Protocol == proxyNode {
+		if p.Username != "" || p.Password != "" {
+			return errors.New("远程节点出口的认证信息在链接中，不能再填写账号密码")
+		}
+		got, e := ParseRemoteNode(p.Link)
+		if e != nil {
+			return e
+		}
+		if got.Host != p.Host || got.Port != p.Port {
+			return errors.New("远程节点地址与链接不一致")
+		}
+		return nil
+	}
+	if p.Link != "" {
+		return errors.New("只有远程节点出口可以使用节点链接")
+	}
 	if strings.Contains(p.Username, ":") {
 		return errors.New("用户名不能包含冒号")
 	}
@@ -227,12 +262,22 @@ func (p Proxy) Validate() error {
 
 // Formatting a proxy must never disclose credentials, including in diagnostics.
 func (p Proxy) String() string {
-	return p.Protocol + "://" + net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
+	return p.Kind() + "://" + net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
+}
+
+// Kind is the protocol shown to users: the link scheme for a remote node, else Protocol.
+func (p Proxy) Kind() string {
+	if p.Protocol == proxyNode {
+		if s := linkScheme(p.Link); s != "" {
+			return s
+		}
+	}
+	return p.Protocol
 }
 func (p Proxy) GoString() string { return p.String() }
 
 func proxySecurityWarning(p Proxy) string {
-	if p.Protocol == "https" {
+	if p.Protocol == "https" || p.Protocol == proxyNode {
 		return ""
 	}
 	return "SOCKS5/HTTP 出站链路未加密，账号密码可能被窃听；旧配置保持原样。请显式改用验证证书的 HTTPS CONNECT，或将 SOCKS5 放入 SSH 隧道（见 docs/AI_ROUTING.md）"
@@ -261,6 +306,9 @@ func (p Profile) Validate() error {
 		if e := p.Traffic.Validate(); e != nil {
 			return e
 		}
+	}
+	if e := p.validateNetPolicy(); e != nil {
+		return e
 	}
 	if p.Network != "" && (p.Protocol != "ss" || (p.Network != "tcp" && p.Network != "udp")) {
 		return errors.New("节点网络限制无效")
@@ -300,13 +348,16 @@ func (p Profile) Validate() error {
 				return errors.New("目标与节点链接不一致")
 			}
 			if network != "both" && p.Protocol != network {
-				return errors.New("转发网络与节点协议不匹配")
+				return mismatchError(p.TargetURI, p.Protocol)
 			}
 		}
 		if p.Outbound != nil {
 			return errors.New("中转节点不能使用出站代理")
 		}
-		return nil
+		if e := p.checkRelayFamilies(); e != nil {
+			return e
+		}
+		return p.checkTargetNetwork()
 	}
 	if p.Kind != "node" {
 		return errors.New("节点类型无效")

@@ -95,7 +95,7 @@ func TestStatePortsAndCredentials(t *testing.T) {
 }
 func TestNoDirectFallback(t *testing.T) {
 	p := fixture(t, "vless")
-	p.Outbound = &Proxy{"socks5", "192.0.2.99", 1080, "u", "secret"}
+	p.Outbound = &Proxy{Protocol: "socks5", Host: "192.0.2.99", Port: 1080, Username: "u", Password: "secret"}
 	c, e := serverConfig(p, t.TempDir())
 	if e != nil {
 		t.Fatal(e)
@@ -115,7 +115,7 @@ func TestNoDirectFallback(t *testing.T) {
 }
 func TestExportExcludesServerSecrets(t *testing.T) {
 	p := fixture(t, "vless")
-	p.Outbound = &Proxy{"http", "192.0.2.1", 80, "proxy-user", "proxy-password"}
+	p.Outbound = &Proxy{Protocol: "http", Host: "192.0.2.1", Port: 80, Username: "proxy-user", Password: "proxy-password"}
 	c, e := ClientConfig(p, p.PublicHost, p.PublicPort, 2080)
 	if e != nil {
 		t.Fatal(e)
@@ -166,7 +166,7 @@ func TestRollbackAndConflict(t *testing.T) {
 		t.Fatal(e)
 	}
 	before, _ := os.ReadFile(filepath.Join(a.profileDir(p.ID), "config.json"))
-	p.Outbound = &Proxy{"http", "192.0.2.1", 80, "u", "p"}
+	p.Outbound = &Proxy{Protocol: "http", Host: "192.0.2.1", Port: 80, Username: "u", Password: "p"}
 	if e := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0755); e != nil {
 		t.Fatal(e)
 	}

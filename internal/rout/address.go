@@ -106,6 +106,10 @@ type listenCaps struct {
 	V4        bool // required sockets can bind 0.0.0.0
 	V6        bool // a socket can bind [::]
 	DualStack bool // a [::] listener also accepts IPv4 (IPV6_V6ONLY is off for it)
+	// SplitConflict: an IPv4 and an IPv6 socket could NOT be bound to the same port at
+	// once. Native relays serve dual stack as two such sockets, so this disables that
+	// choice. It is false when unknown (including in tests that fake the capabilities).
+	SplitConflict bool
 }
 
 // probeCaps is replaced by tests.
@@ -147,6 +151,7 @@ func probeListenCapsWith(listen func(string, string) (net.Listener, error), pack
 	if !caps.V4 || !caps.V6 {
 		return caps
 	}
+	caps.SplitConflict = !splitBindWorks(listen, packet, networks)
 	if contains(networks, "tcp") {
 		l, e := listen("tcp", "[::]:0")
 		if e != nil {
@@ -221,4 +226,38 @@ func chooseListen(family string, addrs Addresses, caps listenCaps, saved string)
 		return "::"
 	}
 	return "0.0.0.0"
+}
+
+// splitBindWorks verifies what a native dual-stack relay relies on: an IPv4 wildcard socket
+// and an IPv6 wildcard socket (IPV6_V6ONLY) can be bound to the SAME port at the same
+// time, for every required transport. It binds real sockets; it does not assume.
+func splitBindWorks(listen func(string, string) (net.Listener, error), packet func(string, string) (net.PacketConn, error), networks []string) bool {
+	for _, network := range networks {
+		if network == "tcp" {
+			a, e := listen("tcp4", "0.0.0.0:0")
+			if e != nil {
+				return false
+			}
+			port := a.Addr().(*net.TCPAddr).Port
+			b, e := listen("tcp6", net.JoinHostPort("::", itoa(port)))
+			a.Close()
+			if e != nil {
+				return false
+			}
+			b.Close()
+			continue
+		}
+		a, e := packet("udp4", "0.0.0.0:0")
+		if e != nil {
+			return false
+		}
+		port := a.LocalAddr().(*net.UDPAddr).Port
+		b, e := packet("udp6", net.JoinHostPort("::", itoa(port)))
+		a.Close()
+		if e != nil {
+			return false
+		}
+		b.Close()
+	}
+	return true
 }

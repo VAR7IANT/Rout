@@ -204,6 +204,14 @@ func (d *doctorRun) profile(s State, p Profile, manager string, now time.Time) {
 			d.ok("%s：证书剩余 %d 天", label, days)
 		}
 	}
+	if p.nativeRelay() {
+		d.ok("%s：内置转发 · 入站 %s · 出站 %s", label, a.T(inboundLabel(p.inboundMode())), a.T(outboundLabel(p.outboundPolicy())))
+		if manager != "" && manager != "none" {
+			if _, e := os.Stat(a.relayHelper()); e != nil {
+				d.bad("%s：缺少内置转发程序，运行 rout apply 修复", label)
+			}
+		}
+	}
 	if !p.Enabled {
 		d.ok("%s：已手动停用", label)
 		return

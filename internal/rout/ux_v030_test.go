@@ -23,6 +23,7 @@ func relayTestApp(t *testing.T, setup ServerSetup) *App {
 	}
 	return a
 }
+
 func onlyRelay(t *testing.T, a *App) Profile {
 	t.Helper()
 	s, e := a.Load()
@@ -99,8 +100,9 @@ func TestRelayCreateRemoteNATUDP(t *testing.T) {
 		t.Skip("no free port in the test NAT range")
 	}
 	// remote · planned entry accepted (first free internal port, mapped public port) ·
-	// empty host (refused, never filled in) · host · port · UDP · name · confirm (uppercase)
-	u, out := testUI(a, "2\n\n\n198.51.100.7\n8443\n2\n\nYES\n")
+	// empty host (refused, never filled in) · host · port · UDP · target accepts TCP+UDP
+	// (default) · name · confirm (uppercase)
+	u, out := testUI(a, "2\n\n\n198.51.100.7\n8443\n2\n\n\nYES\n")
 	if e := u.relayCreate(); e != nil {
 		t.Fatal(e, out.String())
 	}
@@ -129,21 +131,26 @@ func TestRelayCreateRemoteNATUDP(t *testing.T) {
 }
 
 func TestRelayEntryReusesSavedDefaults(t *testing.T) {
+	// The saved server defaults carry a "::" wildcard. A relay no longer inherits it: the
+	// inbound mode is chosen per relay (IPv4 by default), so a saved dual-stack wildcard
+	// can never force a new relay onto IPv6.
 	a := relayTestApp(t, ServerSetup{PublicHost: "203.0.113.10", Listen: "::", Network: "both"})
-	// remote · planned entry accepted · host · port · TCP · name · confirm
-	u, out := testUI(a, "2\n\n198.51.100.7\n443\n1\n\n\n")
+	// remote · inbound IPv4 (default) · planned entry accepted · host · port · TCP · name · confirm
+	u, out := testUI(a, "2\n\n\n198.51.100.7\n443\n1\n\n\n")
+	u.caps = func() listenCaps { return listenCaps{V4: true, V6: true, DualStack: true} }
+	u.routes = func() familyRoutes { return familyRoutes{V4: true} }
 	if e := u.relayCreate(); e != nil {
 		t.Fatal(e, out.String())
 	}
 	p := onlyRelay(t, a)
-	if p.Listen != "::" || p.Port == 0 || p.PublicPort != p.Port || p.Target != "198.51.100.7:443" || p.RelayMode != relayRemote {
+	if p.Listen != "0.0.0.0" || p.InboundMode != inIPv4 || p.Engine != engineNative || p.Port == 0 || p.PublicPort != p.Port || p.Target != "198.51.100.7:443" || p.RelayMode != relayRemote {
 		t.Fatalf("saved defaults not reused: %+v", p)
 	}
 	text := out.String()
 	if strings.Contains(text, "Listening address on this server") || strings.Contains(text, "Use the saved server settings") {
 		t.Fatalf("redundant entry prompts:\n%s", text)
 	}
-	if !strings.Contains(text, "Use this listening address and port") || !strings.Contains(text, "[::]:"+itoa(p.Port)) {
+	if !strings.Contains(text, "Use this listening address and port") || !strings.Contains(text, "0.0.0.0:"+itoa(p.Port)) {
 		t.Fatalf("planned entry not shown:\n%s", text)
 	}
 	// Editing the entry asks for each value, with the current ones as defaults: keep the
@@ -154,7 +161,7 @@ func TestRelayEntryReusesSavedDefaults(t *testing.T) {
 		t.Fatal(e, out.String())
 	}
 	q := onlyRelay(t, a)
-	if q.Listen != "::" || q.Port != port || q.PublicPort != port || q.Target != p.Target || q.ID != p.ID {
+	if q.Listen != "0.0.0.0" || q.Port != port || q.PublicPort != port || q.Target != p.Target || q.ID != p.ID {
 		t.Fatalf("entry edit: %+v", q)
 	}
 }
@@ -706,7 +713,7 @@ func TestRelayLinkKeepsSIP002Encoding(t *testing.T) {
 }
 
 // TestIntegrationRelayFlowEndToEnd builds relays with the interactive flow and pushes
-// real TCP and UDP traffic through GOST on this machine (loopback and interface
+// real TCP and UDP traffic through the relay engine on this machine (loopback and interface
 // addresses only; this is simulated networking, not a VPS test).
 func TestIntegrationRelayFlowEndToEnd(t *testing.T) {
 	a := integrationApp(t)
@@ -770,6 +777,16 @@ func TestIntegrationRelayFlowEndToEnd(t *testing.T) {
 		after, _ := a.Load()
 		for _, p := range after.Profiles {
 			if _, e := Find(before, p.ID); e != nil {
+				if p.nativeRelay() {
+					// New relays run on Rout's own forwarder: serve the configuration the
+					// flow wrote, exactly as the service would.
+					cfg, e := nativeRelayConfigOf(p)
+					if e != nil {
+						t.Fatal(e)
+					}
+					startRelay(t, cfg, nil)
+					return p
+				}
 				c, e := serverConfig(p, a.profileDir(p.ID))
 				if e != nil {
 					t.Fatal(e)

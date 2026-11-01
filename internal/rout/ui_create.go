@@ -168,7 +168,7 @@ func (u *UI) create() error {
 	if len(old.Exits) > 0 {
 		u.say("这批节点的出站（同一批节点使用相同出站）：")
 		var ok bool
-		if exitID, ok = u.pickOutbound(old, ""); !ok {
+		if old, exitID, ok = u.pickOutbound(old, ""); !ok {
 			return u.err
 		}
 		if exitID != "" {

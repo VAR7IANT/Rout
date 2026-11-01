@@ -43,7 +43,7 @@ func TestProxyTransportSecurityAndLegacyCompatibility(t *testing.T) {
 }
 
 func TestProxyLogRedaction(t *testing.T) {
-	p := Proxy{"https", "proxy.example", 443, "private-user", "secret:@/?%&\""}
+	p := Proxy{Protocol: "https", Host: "proxy.example", Port: 443, Username: "private-user", Password: "secret:@/?%&\""}
 	auth := base64.StdEncoding.EncodeToString([]byte(p.Username + ":" + p.Password))
 	encoded, _ := json.Marshal(p.Password)
 	escaped := string(encoded[1 : len(encoded)-1])

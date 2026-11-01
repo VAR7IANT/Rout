@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ func (u *UI) relayCard(i int, p Profile) {
 	fmt.Fprintf(u.writer(), "  %s %s %s\n", u.paint(accent, fmt.Sprintf("%2d.", i)), u.bold(p.Name), u.dim("["+p.ID+"]"))
 	fmt.Fprintf(u.writer(), "      %s · %s/%s\n", relayTransport(p), state, u.a.Running(p))
 	fmt.Fprintf(u.writer(), "      "+u.a.T("公网入口 %s → 本机监听 %s → 目标 %s（%s）")+"\n", relayEndpoint(p), relayListen(p), p.Target, u.relayModeLabel(p))
+	fmt.Fprintf(u.writer(), "      %s\n", u.dim(u.relayNetworkLine(p)))
 }
 
 // relayDiagram draws the complete path from the client to the destination.
@@ -51,7 +53,11 @@ func (u *UI) relayDiagram(p Profile) {
 	arrow()
 	line("当前服务器（中转入口）", fmt.Sprintf("%s %s", u.a.T("公网 IP:端口"), relayEndpoint(p)))
 	arrow()
-	line("本机监听", fmt.Sprintf("%s %s", u.a.T("监听地址:端口"), relayListen(p)))
+	if p.nativeRelay() {
+		line("本机监听", fmt.Sprintf("%s %s", u.a.T("监听"), relayBindLine(p)))
+	} else {
+		line("本机监听", fmt.Sprintf("%s %s", u.a.T("监听地址:端口"), relayListen(p)))
+	}
 	arrow()
 	dest := u.a.T("目标服务器")
 	if p.relayMode() == relayLocal {
@@ -59,6 +65,7 @@ func (u *UI) relayDiagram(p Profile) {
 	}
 	line(dest, fmt.Sprintf("%s %s", u.a.T("目标 IP:端口"), p.Target))
 	fmt.Fprintf(w, "\n    "+u.a.T("传输协议：%s")+"\n", relayTransport(p))
+	fmt.Fprintf(w, "    %s\n", u.relayNetworkLine(p))
 }
 func (u *UI) relayChecks(checks []relayCheck) {
 	for _, c := range checks {
@@ -103,6 +110,15 @@ func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 	if setup.NAT {
 		u.say("旧版 NAT 映射：公网端口由商家映射，可能与监听端口不同")
 	}
+	if ownPort == 0 && !setup.NAT && p.Engine == "" {
+		// A new relay chooses its inbound mode before anything else: the listening
+		// address, the free-port search and the public address all depend on it.
+		defIn, _ := u.relayPrefs()
+		var e error
+		if setup, e = u.relayInbound(p, setup, defIn); e != nil {
+			return e
+		}
+	}
 	if setup.PublicHost == "" {
 		for u.err == nil {
 			setup.PublicHost = u.ask("本服务器的公网 IP 或域名（客户端连接的地址）", "")
@@ -120,6 +136,13 @@ func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 	}
 	if net.ParseIP(p.Listen) == nil {
 		p.Listen = "0.0.0.0"
+	}
+	if p.Engine == "" && ownPort == 0 {
+		// Legacy NAT host: the address is typed below; the mode follows from it.
+		p.Engine, p.InboundMode = engineNative, modeOfListen(p.Listen)
+		if p.InboundMode == inDual {
+			p.Listen = "::"
+		}
 	}
 	// The public port a NAT provider maps to an internal port, when the saved range says so.
 	mapped := func(port int) int {
@@ -165,6 +188,9 @@ func (u *UI) relayEntry(p *Profile, setup ServerSetup, s State) error {
 			listen := u.ask("本机监听地址（0.0.0.0 / :: 表示所有网卡，不是公网地址）", p.Listen)
 			if net.ParseIP(listen) != nil {
 				p.Listen = listen
+				if p.nativeRelay() {
+					p.InboundMode = modeOfListen(listen)
+				}
 				break
 			}
 			u.say("监听地址或公网地址无效")
@@ -243,6 +269,10 @@ func (u *UI) relayDestination(p *Profile, s State) error {
 		// Reuse a managed node's link so the relay gets a complete share link.
 		for _, n := range nodes {
 			if n.Port == port && isLoopbackHost(host) {
+				// An IPv6-only node refuses IPv4 sources, so it is reached over ::1.
+				if n.InboundMode == inIPv6 {
+					p.Target = net.JoinHostPort("::1", itoa(port))
+				}
 				if uri, e := n.URI(); e == nil {
 					p.TargetURI = uri
 				}
@@ -274,7 +304,11 @@ func (u *UI) relayDestination(p *Profile, s State) error {
 			if network != "both" {
 				p.Protocol = network
 			}
-			u.printf("已识别链接：目标 %s，传输 %s\n", target, strings.ToUpper(network))
+			if label, transport, ok := identifyLink(raw); ok {
+				u.printf("已识别：%s / %s（目标 %s）\n", ProtocolLabel(transport), label, target)
+			} else {
+				u.printf("已识别链接：目标 %s，传输 %s\n", target, strings.ToUpper(network))
+			}
 			return nil
 		}
 		host := strings.Trim(raw, "[]")
@@ -303,6 +337,25 @@ func networkProtocol(networks []string) string {
 		return networks[0]
 	}
 	return "tcp"
+}
+
+// relayProtocolFromLink takes the transport from a pasted share link when the link
+// settles it (VLESS/AnyTLS/Trojan are TCP, Hysteria2/TUIC are UDP), so the user is not
+// asked something the link already answers. Shadowsocks may use both and is still asked.
+func (u *UI) relayProtocolFromLink(p *Profile, setup ServerSetup) bool {
+	if p.TargetURI == "" || p.relayMode() != relayRemote {
+		return false
+	}
+	_, network, e := ParseTarget(p.TargetURI)
+	if e != nil || network == "both" {
+		return false
+	}
+	if setup.NAT && setup.Network != "both" && setup.Network != network {
+		return false // let the normal question explain the NAT restriction
+	}
+	p.Protocol = network
+	u.printf("传输协议：%s（由节点链接确定）\n", ProtocolLabel(network))
+	return true
 }
 
 // relayProtocol picks TCP, UDP or both, within what a NAT mapping allows.
@@ -419,7 +472,20 @@ func (u *UI) relayCreate() error {
 		return e
 	}
 	u.preferLocal(old, &p)
-	u.relayProtocol(&p, setup)
+	if !u.relayProtocolFromLink(&p, setup) {
+		u.relayProtocol(&p, setup)
+	}
+	u.relayTargetNetwork(&p)
+	if e = p.checkTargetNetwork(); e != nil {
+		return e
+	}
+	if p.nativeRelay() {
+		_, defOut := u.relayPrefs()
+		u.relayOutbound(&p, defOut)
+		if u.err != nil {
+			return u.err
+		}
+	}
 	def := "Relay"
 	if h, port, er := ParseEndpoint(p.Target); er == nil {
 		if p.RelayMode == relayRemote {
@@ -455,6 +521,9 @@ func (u *UI) relayConfirm(old, next State, p Profile, setup ServerSetup, questio
 		return e
 	}
 	u.saveRelayMode(p.relayMode())
+	if p.nativeRelay() {
+		u.saveRelayPrefs(p.InboundMode, p.OutboundPolicy)
+	}
 	u.good("中转已保存")
 	u.relayEndpointInfo(p)
 	return u.saveServer(setup)
@@ -466,6 +535,11 @@ func (u *UI) relayEndpointInfo(p Profile) {
 	if uri, e := p.URI(); e == nil {
 		u.say("分享链接（已改为中转入口，保留原 SNI 等参数）：")
 		fmt.Fprintln(u.writer(), uri)
+		if st, er := u.a.LoadSettings(); er == nil && st.Server != nil {
+			if label, alt, ok := altLink(*st.Server, p); ok {
+				fmt.Fprintf(u.writer(), "%s\n%s\n", u.a.T("同一中转的另一地址：")+label, alt)
+			}
+		}
 	} else {
 		u.printf("在客户端中把服务器地址改为 %s，端口改为 %d，其余参数保持不变\n", p.PublicHost, p.PublicPort)
 	}
@@ -553,7 +627,7 @@ func (u *UI) relayEdit(id string) error {
 	if !p.Enabled {
 		toggle = "启用中转"
 	}
-	v := u.menu(p.Name, []menuItem{item("destination", "修改目标"), item("entry", "修改入口（监听端口/公网端口）"), item("protocol", "修改传输协议"), item("name", "重命名"), item("toggle", toggle)}, "返回")
+	v := u.menu(p.Name, []menuItem{item("destination", "修改目标"), item("entry", "修改入口（监听端口/公网端口）"), item("protocol", "修改传输协议"), item("name", "重命名"), item("toggle", toggle), item("network", "修改网络（入站/出站 IPv4·IPv6）")}, "返回")
 	if u.err != nil || v == "" {
 		return u.err
 	}
@@ -577,6 +651,23 @@ func (u *UI) relayEdit(id string) error {
 		}
 	case "protocol":
 		u.relayProtocol(&p, setup)
+		u.relayTargetNetwork(&p)
+	case "network":
+		if !p.nativeRelay() {
+			u.warn("此中转由旧版 GOST 引擎运行，无法控制地址族。保存后将改由内置转发引擎运行（端口、目标和分享链接不变）")
+		}
+		defIn, defOut := p.InboundMode, p.OutboundPolicy
+		if defIn == "" {
+			defIn = p.inboundMode()
+		}
+		if p.relayMode() == relayRemote && defOut == "" {
+			_, defOut = u.relayPrefs()
+		}
+		setup, e = u.relayInbound(&p, setup, defIn)
+		if e != nil {
+			return e
+		}
+		u.relayOutbound(&p, defOut)
 	case "name":
 		p.Name = u.ask("中转名称", p.Name)
 		if u.err != nil {
@@ -621,34 +712,37 @@ func (u *UI) relayEdit(id string) error {
 // relaySetup describes the relay's own entry as server settings (for edits).
 func (u *UI) relaySetup(p Profile) ServerSetup {
 	setup := ServerSetup{NAT: p.NAT, PublicHost: p.PublicHost, Listen: p.Listen, Network: "both"}
-	if saved, e := u.a.LoadSettings(); e == nil && saved.Server != nil && saved.Server.NAT == p.NAT {
-		setup.LocalStart, setup.LocalEnd, setup.PublicStart, setup.Network = saved.Server.LocalStart, saved.Server.LocalEnd, saved.Server.PublicStart, saved.Server.Network
+	if saved, e := u.a.LoadSettings(); e == nil && saved.Server != nil {
+		// The detected public addresses let a changed inbound mode pick a matching one.
+		setup.IPv4, setup.IPv6 = saved.Server.IPv4, saved.Server.IPv6
+		if saved.Server.NAT == p.NAT {
+			setup.LocalStart, setup.LocalEnd, setup.PublicStart, setup.Network = saved.Server.LocalStart, saved.Server.LocalEnd, saved.Server.PublicStart, saved.Server.Network
+		}
 	}
 	return setup
 }
 
-// relayTest checks the relay service, its destination and, when the original link is
-// known, a full protocol round trip through the relay.
+// relayTest diagnoses a relay layer by layer: local sockets, destination resolution and
+// connectivity, a connection through the relay itself and, when the original node link is
+// known and the user agrees, the full protocol and the real exit.
 func (u *UI) relayTest(p Profile) error {
 	u.relayDiagram(p)
 	fmt.Fprintln(u.writer())
 	if !p.Enabled {
 		return errors.New("中转已停用")
 	}
-	if u.a.Running(p) == u.a.T("运行中") || u.a.ServiceMode == "none" {
-		if listening(p) {
-			u.good(fmt.Sprintf(u.a.T("中转正在监听 %s"), relayListen(p)))
-		} else {
-			u.warn(fmt.Sprintf(u.a.T("中转未在 %s 上监听"), relayListen(p)))
-		}
-	} else {
-		u.fail(fmt.Sprintf(u.a.T("中转服务未运行，运行 rout logs %s 查看原因"), p.ID))
+	full := p.TargetURI != "" && u.yes("包含完整协议测试（需要 sing-box，约十几秒）", true)
+	if u.err != nil {
+		return u.err
 	}
-	u.relayChecks(checkRelayDestination(p))
-	if p.TargetURI != "" && u.yes("通过中转执行完整协议测试", true) {
-		return u.a.Probe(p)
+	u.say("正在分层检测…")
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	rep := u.a.diagnoseRelay(ctx, p, u.diagEnvOrDefault(), diagOpts{Full: full})
+	u.printReport(rep)
+	if !full {
+		u.say("端口可达不代表代理协议可用；请再用实际客户端连接公网入口验证")
 	}
-	u.say("端口可达不代表代理协议可用；请再用实际客户端连接公网入口验证")
 	return u.err
 }
 func (u *UI) relayDelete(s State, p Profile) error {

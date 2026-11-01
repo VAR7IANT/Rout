@@ -528,6 +528,9 @@ func (m nftMeter) tableRules(p Profile, r TrafficRecord) string {
 		match := ""
 		if p.Listen == "0.0.0.0" {
 			match = "meta nfproto ipv4 "
+		} else if p.Listen == "::" && p.InboundMode == inIPv6 {
+			// An explicitly IPv6-only entry never serves IPv4: do not meter IPv4 packets.
+			match = "meta nfproto ipv6 "
 		} else if p.Listen != "::" {
 			family := "ip"
 			if strings.Contains(p.Listen, ":") {
