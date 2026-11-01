@@ -436,7 +436,9 @@ func (d diagger) layerRelay(ctx context.Context, env diagEnv, p Profile, target 
 		}
 		for _, n := range p.Networks() {
 			if n == "udp" {
-				d.layerRelayUDP(ctx, env, p, entry, fam)
+				if d.layerRelayUDP(ctx, env, p, entry, fam) {
+					okEntry = host
+				}
 				continue
 			}
 			if !targetTCP {
@@ -466,10 +468,14 @@ func (d diagger) layerRelay(ctx context.Context, env diagEnv, p Profile, target 
 	return okEntry
 }
 
-func (d diagger) layerRelayUDP(ctx context.Context, env diagEnv, p Profile, entry, fam string) {
+// layerRelayUDP probes a UDP entry. It reports whether the entry may go on to the protocol
+// and exit layers: everything except a definite failure does, because a QUIC server that
+// does not answer the probe (filtering, obfuscation) is inconclusive, and the engine-based
+// test is the real check for it.
+func (d diagger) layerRelayUDP(ctx context.Context, env diagEnv, p Profile, entry, fam string) bool {
 	if quicProtocolName(p.TargetURI) == "" {
 		d.add(4, diagInfo, "UDP 经由中转的转发无法在没有协议信息时验证（%s 入口 %s）", fam, entry)
-		return
+		return true
 	}
 	network := "udp4"
 	if fam == "IPv6" {
@@ -478,11 +484,14 @@ func (d diagger) layerRelayUDP(ctx context.Context, env diagEnv, p Profile, entr
 	switch e := env.quicProbe(ctx, network, entry); {
 	case e == nil:
 		d.add(4, diagOK, "UDP 经由中转得到 QUIC 响应（%s 入口 %s）", fam, entry)
+		return true
 	case errors.Is(e, errNoQUICAnswer):
 		d.add(4, diagWarn, "UDP 经由中转没有得到 QUIC 响应（%s 入口 %s）；目标可能过滤了 UDP 或启用了混淆", fam, entry)
+		return true
 	default:
 		d.add(4, diagFail, "UDP 经由中转的探测失败（%s 入口 %s）：%s", fam, entry, e.Error())
 	}
+	return false
 }
 
 type relayProbeKind int

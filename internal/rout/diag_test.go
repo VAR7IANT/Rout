@@ -727,3 +727,88 @@ func TestFetchErrorsNameTheStage(t *testing.T) {
 
 // reportRaces keeps the unused-import guard honest.
 var _ sync.Mutex
+
+// ---- regressions from review of the first push ----------------------------------------------------
+
+func TestUDPOnlyRelayStillGetsTheProtocolAndExitLayers(t *testing.T) {
+	a := diagApp()
+	quic := fakeQUIC(t, true)
+	_, quicPort, _ := ParseEndpoint(quic)
+	port, _ := freePort()
+	// A remote Hysteria2 relay: UDP only, so no TCP entry ever answers layer 4.
+	p := nativeRelayProfile(inIPv4, outIPv4Only, "quic-host.example:"+itoa(quicPort), port)
+	p.Listen, p.Protocol, p.RelayMode = "0.0.0.0", "udp", relayRemote
+	p.TargetURI = "hysteria2://secret@quic-host.example:" + itoa(quicPort) + "?sni=x.example#h"
+	cfg, _ := nativeRelayConfigOf(p)
+	startRelay(t, cfg, func(r *relayRuntime) {
+		r.dialer.Resolver.Lookup = fakeLookup(map[string][]string{"quic-host.example": {"127.0.0.1"}}, nil)
+	})
+	env := diagEnvFor(map[string][]string{"quic-host.example": {"127.0.0.1"}}, nil)
+	ran := 0
+	env.full = func(*App, Profile, string, int) fullProbe {
+		ran++
+		return fullProbe{V4: "198.51.100.19", ErrV6: errors.New("network unreachable")}
+	}
+	rep := a.diagnoseRelay(context.Background(), p, env, diagOpts{Full: true})
+	if ran != 1 || !rep.Has(5, diagOK) || !rep.Has(6, diagOK) {
+		t.Fatalf("the engine-based test did not run for a UDP-only relay (ran=%d):\n%s", ran, rep.Text())
+	}
+	if strings.Contains(rep.Text(), "skipping the protocol test") {
+		t.Fatalf("protocol test skipped although the UDP entry answered:\n%s", rep.Text())
+	}
+	// A definite UDP failure at the entry still stops the protocol layers.
+	env.quicProbe = func(context.Context, string, string) error { return syscall.ECONNREFUSED }
+	ran = 0
+	rep = a.diagnoseRelay(context.Background(), p, env, diagOpts{Full: true})
+	if ran != 0 || !rep.Has(4, diagFail) {
+		t.Fatalf("a refused UDP entry must stop the run (ran=%d):\n%s", ran, rep.Text())
+	}
+}
+
+func TestStaleDNSLimitCountsFromTheOriginalAnswer(t *testing.T) {
+	// During a sustained outage every refresh used to restart the ten-minute clock, so an
+	// obsolete address could be used forever. The limit must hold across repeated refreshes.
+	r := NewResolver()
+	r.StaleFor = 10 * time.Minute
+	var down bool
+	r.Lookup = func(ctx context.Context, network, host string) ([]netip.Addr, error) {
+		if down {
+			return nil, &net.DNSError{Err: "server misbehaving", Name: host}
+		}
+		return []netip.Addr{netip.MustParseAddr("192.0.2.5")}, nil
+	}
+	now := time.Now()
+	r.Now = func() time.Time { return now }
+	if _, e := r.Resolve(context.Background(), "o.example", true, true); e != nil {
+		t.Fatal(e)
+	}
+	down = true
+	// A call every 40 seconds (longer than the cache lifetimes) for eleven minutes.
+	var lastOK time.Duration
+	for elapsed := 40 * time.Second; elapsed <= 11*time.Minute; elapsed += 40 * time.Second {
+		now = now.Add(40 * time.Second)
+		res, e := r.Resolve(context.Background(), "o.example", true, true)
+		if e == nil {
+			if !res.Stale {
+				t.Fatalf("at %v: an answer from a dead resolver is not stale?", elapsed)
+			}
+			lastOK = elapsed
+			if res.Age < elapsed-time.Second {
+				t.Fatalf("at %v: reported age %v is younger than the real age", elapsed, res.Age)
+			}
+		}
+	}
+	if lastOK < 9*time.Minute || lastOK >= 10*time.Minute+40*time.Second {
+		t.Fatalf("stale answers were served until %v, expected the 10 minute limit", lastOK)
+	}
+	if _, e := r.Resolve(context.Background(), "o.example", true, true); e == nil {
+		t.Fatal("still resolving from a stale answer after the limit")
+	}
+	// Recovery works: once DNS is back the fresh answer replaces the stale one.
+	down = false
+	now = now.Add(time.Minute)
+	res, e := r.Resolve(context.Background(), "o.example", true, true)
+	if e != nil || res.Stale {
+		t.Fatalf("recovery: %+v %v", res, e)
+	}
+}

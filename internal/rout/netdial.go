@@ -118,6 +118,15 @@ type resolveEntry struct {
 	stale bool
 	since time.Time
 }
+
+// origin is when the answer was really fetched, whatever the cache did to it since.
+func (e *resolveEntry) origin() time.Time {
+	if e.stale {
+		return e.since
+	}
+	return e.fetched
+}
+
 type resolveCall struct {
 	done  chan struct{}
 	addrs []netip.Addr
@@ -242,12 +251,10 @@ func (r *Resolver) fill(key, network, host string, prev *resolveEntry, now time.
 	switch {
 	case err == nil && len(clean) == 0:
 		err = &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
-	case err != nil && prev != nil && prev.err == nil && len(prev.addrs) > 0 && now.Sub(prev.fetched) < r.StaleFor:
-		since := prev.fetched
-		if prev.stale {
-			since = prev.since
-		}
-		clean, err, stale, staleAge = prev.addrs, nil, true, now.Sub(since)
+	case err != nil && prev != nil && prev.err == nil && len(prev.addrs) > 0 && now.Sub(prev.origin()) < r.StaleFor:
+		// The limit counts from when the answer was really fetched: a stale entry's own
+		// timestamp is rewritten on every refresh and must not restart the clock.
+		clean, err, stale, staleAge = prev.addrs, nil, true, now.Sub(prev.origin())
 	}
 	r.mu.Lock()
 	switch {
