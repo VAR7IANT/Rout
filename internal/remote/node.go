@@ -212,31 +212,45 @@ func deepCopy(v any) any {
 	return v
 }
 
+// canonLink writes a share link in a canonical spelling: no #fragment, host in lower case,
+// query sorted, the default transport and an empty path left out. keepUser keeps the
+// credential (for comparing whole links); connSig drops it because the credential is already
+// part of the node's base identity.
+func canonLink(raw string, keepUser bool) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		l, _, _ := strings.Cut(raw, "#")
+		return l
+	}
+	u.Fragment = ""
+	if !keepUser {
+		u.User = nil
+	}
+	q := u.Query()
+	if q.Get("type") == "tcp" || q.Get("type") == "" {
+		q.Del("type") // the default transport is written explicitly by some producers
+	}
+	if q.Get("headerType") == "none" {
+		q.Del("headerType")
+	}
+	u.RawQuery = q.Encode()
+	u.Host = strings.ToLower(u.Host)
+	if u.Path == "/" {
+		u.Path = ""
+	}
+	return u.String()
+}
+
+// CanonicalLink is canonLink with the credential kept, for de-duplicating whole links.
+func CanonicalLink(raw string) string { return canonLink(raw, true) }
+
 // connSig is the node's complete connection configuration without its display name. It is
-// the share link in canonical form (query sorted, no #fragment), so the same account written
-// as a link or as a Clash mapping gets the same signature; only when no link can be written
-// does it fall back to the original Mihomo mapping.
+// the share link in canonical form, so the same account written as a link or as a Clash
+// mapping gets the same signature; only when no link can be written does it fall back to the
+// original Mihomo mapping.
 func (n Node) connSig() string {
 	if n.Link != "" {
-		if u, err := url.Parse(n.Link); err == nil {
-			u.Fragment = ""
-			u.User = nil // the credential is already part of the base identity
-			q := u.Query()
-			if q.Get("type") == "tcp" || q.Get("type") == "" {
-				q.Del("type") // the default transport is written explicitly by some producers
-			}
-			if q.Get("headerType") == "none" {
-				q.Del("headerType")
-			}
-			u.RawQuery = q.Encode()
-			u.Host = strings.ToLower(u.Host)
-			if u.Path == "/" {
-				u.Path = ""
-			}
-			return "l:" + u.String()
-		}
-		l, _, _ := strings.Cut(n.Link, "#")
-		return "l:" + l
+		return "l:" + canonLink(n.Link, false)
 	}
 	if n.Clash != nil {
 		m := make(map[string]any, len(n.Clash))

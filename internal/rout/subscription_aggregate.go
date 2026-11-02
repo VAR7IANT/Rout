@@ -150,7 +150,7 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 					c.node.Base64Why = e.Error()
 				} else {
 					c.baseLink = uri
-					c.linkKey = "link:" + stripFragment(uri)
+					c.linkKey = "link:" + remote.CanonicalLink(uri)
 				}
 			}
 		case itemRemote:
@@ -189,7 +189,7 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 				c.node.Notes = append(c.node.Notes, n.Notes...)
 				if n.Link != "" {
 					c.baseLink = n.Link
-					c.linkKey = "link:" + stripFragment(n.Link)
+					c.linkKey = "link:" + remote.CanonicalLink(n.Link)
 				} else {
 					c.linkKey = "fp:" + n.Fingerprint
 				}
@@ -266,13 +266,6 @@ func shortID(n *AggNode) string {
 		return "第三方 " + n.NodeID
 	}
 	return "本机 " + n.NodeID
-}
-
-func stripFragment(link string) string {
-	if i := strings.IndexByte(link, '#'); i >= 0 {
-		return link[:i]
-	}
-	return link
 }
 
 func fillLocal(out *AggregateExport, c *aggCand, sub Subscription) {

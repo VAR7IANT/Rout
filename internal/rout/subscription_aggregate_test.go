@@ -653,3 +653,40 @@ func TestSubscriptionViewReturnsResolvedRemoteIDsAndSaveWorks(t *testing.T) {
 		t.Fatalf("saving the items the view returned failed: %v", e)
 	}
 }
+
+// The same connection written with its query parameters in another order, by another provider,
+// is one connection for de-duplication; a genuinely different setting is not.
+func TestAggregateDedupeIgnoresQueryParameterOrder(t *testing.T) {
+	sc := newAggScene(t)
+	reordered := "trojan://trojanpw@203.0.113.20:443?type=ws&host=t.example.net&path=%2Fws&sni=t.example.net&security=tls#Other%20Name"
+	differentPath := "trojan://trojanpw@203.0.113.20:443?security=tls&sni=t.example.net&type=ws&host=t.example.net&path=%2Fother#Different"
+	other := &fakeSource{body: linkList(reordered, differentPath)}
+	sc.a.remoteFetch = other.fetch
+	src2, e := sc.a.AddRemoteSource(RemoteSourceSpec{Name: "Second", URL: "https://second.provider.test/s", Enabled: true})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), src2.ID); e != nil {
+		t.Fatal(e)
+	}
+	snap2 := snapshotOf(t, sc.a, src2.ID)
+	items := []SubItem{sc.rnode(t, sc.links, "JP Trojan")}
+	for _, n := range snap2.Nodes {
+		items = append(items, SubItem{Kind: itemRemote, SourceID: src2.ID, RemoteID: n.ID})
+	}
+	if len(items) != 3 {
+		t.Fatalf("setup: %d items", len(items))
+	}
+	_, token, e := sc.a.CreateAggregateSubscription("Order", AggregateSpec{Items: items, Dedupe: true})
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, body := sc.fetchFormat(t, sc.server(), token, "")
+	lines := decodeBody(t, body)
+	if len(lines) != 2 {
+		t.Fatalf("want the original plus the genuinely different configuration, got %v", lines)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "%2Fother") {
+		t.Fatalf("the distinct configuration was collapsed: %v", lines)
+	}
+}
