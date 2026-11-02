@@ -276,6 +276,9 @@ func normaliseTags(tags []string) []string {
 // AddRemoteSource stores a new source. A static source (pasted links or content) is parsed
 // immediately and rejected if it holds no node; a URL source is fetched by the caller.
 func (a *App) AddRemoteSource(spec RemoteSourceSpec) (RemoteSource, error) {
+	if strings.TrimSpace(spec.URL) != "" && strings.TrimSpace(spec.Content) != "" {
+		return RemoteSource{}, errors.New("请只提供订阅地址或粘贴内容之一")
+	}
 	src := RemoteSource{
 		ID: RandomHex(6), Name: strings.TrimSpace(spec.Name), Note: strings.TrimSpace(spec.Note), Tags: normaliseTags(spec.Tags),
 		UserAgent: strings.TrimSpace(spec.UserAgent), Enabled: spec.Enabled, CreatedAt: time.Now().UTC(),

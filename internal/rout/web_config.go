@@ -259,6 +259,14 @@ func verifyPassword(hash, pw string) bool {
 	return subtle.ConstantTimeCompare(got, key) == 1
 }
 
+// webNow is the wall clock the panel records; tests substitute a fake one.
+func (a *App) webNow() time.Time {
+	if a.webHooks != nil && a.webHooks.now != nil {
+		return a.webHooks.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
 // SetWebPassword stores a new password hash after checking its strength.
 func (a *App) SetWebPassword(pw string) error {
 	if e := checkPasswordStrength(pw); e != nil {
@@ -269,7 +277,7 @@ func (a *App) SetWebPassword(pw string) error {
 		return e
 	}
 	return a.mutateWebConfig(func(c *WebConfig) error {
-		c.PasswordHash, c.PasswordChangedAt = h, time.Now().UTC()
+		c.PasswordHash, c.PasswordChangedAt = h, a.webNow()
 		return nil
 	})
 }

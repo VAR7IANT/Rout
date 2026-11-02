@@ -266,6 +266,13 @@ func (s *WebServer) nodeRoutes() {
 		if e != nil {
 			return nil, e
 		}
+		st, e := c.a.Load()
+		if e != nil {
+			return nil, e
+		}
+		if _, e := FindExit(st, id); e != nil {
+			return nil, errNotFound("找不到对象")
+		}
 		return s.runDiag(c, func(ctx context.Context) (DiagView, error) { return c.a.TestExit(ctx, id) })
 	})
 }

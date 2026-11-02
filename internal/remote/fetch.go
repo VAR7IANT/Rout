@@ -77,6 +77,9 @@ func ValidateURL(raw string) (*url.URL, error) {
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return nil, errors.New("订阅地址只能使用 http:// 或 https://")
 	}
+	if u.User != nil {
+		return nil, errors.New("订阅地址不能包含用户名和密码，请使用地址中的令牌参数")
+	}
 	host := u.Hostname()
 	if host == "" || !isASCII(host) {
 		return nil, errors.New("订阅域名无效（国际化域名请使用 Punycode 形式）")

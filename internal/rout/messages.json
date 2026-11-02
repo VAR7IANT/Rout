@@ -1507,5 +1507,7 @@
  "管理面板只能监听本机回环地址，请通过 HTTPS 反向代理对外提供":"The management panel can only listen on the loopback address. Expose it through an HTTPS reverse proxy",
  "管理面板无法监听 %s：%w":"The management panel cannot listen on %s: %w",
  "查询更新失败":"The update check failed",
- "最新发布版本标签无效":"The latest release tag is invalid"
+ "最新发布版本标签无效":"The latest release tag is invalid",
+ "订阅地址不能包含用户名和密码，请使用地址中的令牌参数":"The source address cannot contain a user name and password. Use the token parameter in the address instead",
+ "请只提供订阅地址或粘贴内容之一":"Provide either a source address or pasted content, not both"
 }

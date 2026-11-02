@@ -43,7 +43,26 @@ func (a *App) webMutate(change func(old State) (State, error)) error {
 
 // headlessUI gives access to the host-inspection helpers of the interactive UI.
 func (a *App) headlessUI() *UI {
-	return &UI{a: a, in: bufio.NewReader(strings.NewReader("")), out: io.Discard}
+	u := &UI{a: a, in: bufio.NewReader(strings.NewReader("")), out: io.Discard}
+	if a.webHooks != nil && a.webHooks.ui != nil {
+		a.webHooks.ui(u)
+	}
+	return u
+}
+
+// webTestHooks replace the parts of the host the panel inspects, so tests do not depend on
+// the machine they run on.
+type webTestHooks struct {
+	ui   func(*UI)
+	diag *diagEnv
+	now  func() time.Time
+}
+
+func (a *App) diagEnvironment() diagEnv {
+	if a.webHooks != nil && a.webHooks.diag != nil {
+		return *a.webHooks.diag
+	}
+	return defaultDiagEnv()
 }
 
 func validDisplayName(name string) error {
@@ -851,7 +870,7 @@ func (a *App) TestProfile(ctx context.Context, id string, full bool) (DiagView, 
 	if !p.Enabled {
 		return DiagView{}, errors.New("节点已停用")
 	}
-	return diagView(a, a.diagnose(ctx, p, defaultDiagEnv(), diagOpts{Full: full})), nil
+	return diagView(a, a.diagnose(ctx, p, a.diagEnvironment(), diagOpts{Full: full})), nil
 }
 
 // TestExit runs the layered diagnosis of an outbound.
@@ -864,5 +883,5 @@ func (a *App) TestExit(ctx context.Context, id string) (DiagView, error) {
 	if e != nil {
 		return DiagView{}, e
 	}
-	return diagView(a, a.diagnoseProxy(ctx, ex, defaultDiagEnv(), diagOpts{Full: true})), nil
+	return diagView(a, a.diagnoseProxy(ctx, ex, a.diagEnvironment(), diagOpts{Full: true})), nil
 }

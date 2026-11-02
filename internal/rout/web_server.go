@@ -40,8 +40,10 @@ type WebServer struct {
 	cfgErr  error
 	ipMu    sync.Mutex
 	ipCache pubIPCache
-	// detectIPs finds the server's public addresses; tests replace it.
-	detectIPs func() (string, string)
+	// detectIPs finds the server's public addresses and lookupHost resolves a name; tests
+	// replace both.
+	detectIPs  func() (string, string)
+	lookupHost func(ctx context.Context, host string) ([]string, error)
 
 	trMu    sync.Mutex
 	trCache map[string]trafficEntry
@@ -137,7 +139,7 @@ func NewWebServer(a *App, logf func(string, ...any)) *WebServer {
 	}
 	now := time.Now
 	s := &WebServer{a: a, now: now, sessions: newSessionStore(now), limiter: newLoginLimiter(now), audit: &auditLog{}, loginSem: make(chan struct{}, 2),
-		mux: http.NewServeMux(), ui: webui.Handler(), logf: logf, detectIPs: DetectPublicIPs, trCache: map[string]trafficEntry{},
+		mux: http.NewServeMux(), ui: webui.Handler(), logf: logf, detectIPs: DetectPublicIPs, lookupHost: net.DefaultResolver.LookupHost, trCache: map[string]trafficEntry{},
 		diagSem: make(chan struct{}, 2), fetchLatest: latestReleaseTag}
 	s.metrics = newSysSampler()
 	s.routes()

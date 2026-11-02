@@ -181,7 +181,7 @@ func (s *WebServer) networkView(ctx context.Context) NetworkView {
 	cctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	start := time.Now()
-	_, e := net.DefaultResolver.LookupHost(cctx, "github.com")
+	_, e := s.lookupHost(cctx, "github.com")
 	v.DNS.Millis = time.Since(start).Milliseconds()
 	v.DNS.OK = e == nil
 	if e != nil {

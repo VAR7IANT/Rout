@@ -28,6 +28,8 @@ type App struct {
 	// remoteFetch downloads a third-party subscription; tests replace it. Nil means the
 	// SSRF-guarded fetcher.
 	remoteFetch remoteFetchFunc
+	// webHooks lets tests replace host inspection in the panel; nil in production.
+	webHooks *webTestHooks
 	// Only the running monitor reopens sealed checkpoints.
 	monitorMode bool
 }

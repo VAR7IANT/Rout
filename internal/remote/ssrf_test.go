@@ -37,7 +37,7 @@ func TestCheckIPBlocksDangerousDestinations(t *testing.T) {
 }
 
 func TestValidateURL(t *testing.T) {
-	good := []string{"https://example.org/sub?token=abc", "http://example.org:8080/a", "https://user:pw@example.org/x", "https://8.8.8.8/x"}
+	good := []string{"https://example.org/sub?token=abc", "http://example.org:8080/a", "https://8.8.8.8/x"}
 	for _, u := range good {
 		if _, err := ValidateURL(u); err != nil {
 			t.Errorf("%s should be valid: %v", u, err)
@@ -51,6 +51,8 @@ func TestValidateURL(t *testing.T) {
 		"https://example.org:0/", "https://example.org:70000/", "https://exämple.org/", "https://a b.org/",
 		"https://example.org/\nHost: evil", "http://[fd00:ec2::254]/", "http://2130706433/",
 		"https://" + strings.Repeat("a", 5000) + ".org/",
+		// Credentials in the address would be sent as HTTP authentication, logged and copied.
+		"https://user:pw@example.org/x", "https://user@example.org/x",
 	}
 	for _, u := range bad {
 		if _, err := ValidateURL(u); err == nil {
