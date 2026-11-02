@@ -80,6 +80,11 @@ func (s *WebServer) checkPassword(c *reqCtx, cfg WebConfig, pw string) error {
 	case <-c.r.Context().Done():
 		return errBad("请求已取消")
 	}
+	// Failures recorded while this request waited for a hashing slot may have locked the
+	// client out: look again before spending a hash (and a guess) on it.
+	if ok, retry := s.limiter.check(ip); !ok {
+		return &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "尝试次数过多，请稍后再试", Retry: int(retry.Seconds()) + 1}
+	}
 	if !verifyPassword(cfg.PasswordHash, pw) {
 		s.limiter.failure(ip)
 		s.audit.add(s.now(), ip, "password rejected")

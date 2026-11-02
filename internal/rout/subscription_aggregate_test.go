@@ -230,14 +230,18 @@ func TestAggregateUnverifiedTLSIsRefusedUnlessAllowed(t *testing.T) {
 	if !strings.Contains(body, "cannot") && !strings.Contains(body, "无法生成") && !strings.Contains(body, "diagnostic") {
 		t.Errorf("no diagnostic for the omitted nodes:\n%s", body)
 	}
-	// Base64 keeps the provider's link, parameters included; the client decides.
+	// The same policy applies to Base64: unverified-TLS links are withheld by default.
 	_, b64 := sc.fetchFormat(t, h, token, "")
-	if lines := decodeBody(t, b64); len(lines) != 2 && len(lines) != 3 || !strings.Contains(strings.Join(lines, "\n"), "allowInsecure=1") {
-		t.Fatalf("Base64 lines: %v", lines)
+	if lines := decodeBody(t, b64); len(lines) != 1 || strings.Contains(strings.Join(lines, "\n"), "nsecure=1") {
+		t.Fatalf("Base64 exported unverified-TLS links by default: %v", lines)
 	}
 	// Explicit opt-in exports them with the setting the provider chose.
 	if e = sc.a.SetSubscriptionItems(sub.ID, AggregateSpec{Items: items, AllowInsecure: true}); e != nil {
 		t.Fatal(e)
+	}
+	_, b64 = sc.fetchFormat(t, h, token, "")
+	if joined := strings.Join(decodeBody(t, b64), "\n"); !strings.Contains(joined, "allowInsecure=1") {
+		t.Fatalf("opt-in Base64 lost the provider's link: %s", joined)
 	}
 	_, body = sc.fetchFormat(t, h, token, "mihomo")
 	doc := parseMihomoDoc(t, body)

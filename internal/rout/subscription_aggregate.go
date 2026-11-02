@@ -3,6 +3,7 @@ package rout
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -298,7 +299,11 @@ func fillLocal(out *AggregateExport, c *aggCand, sub Subscription) {
 
 func fillRemote(out *AggregateExport, c *aggCand, sub Subscription) {
 	n, rn := &c.node, c.remote
-	if link, ok := rn.LinkNamed(n.Name); ok {
+	if rn.Link != "" && linkInsecure(rn.Link) && !sub.AllowInsecure {
+		// The same policy as the Mihomo output: no unverified TLS unless the subscription allows it.
+		n.Base64Why = "节点关闭了证书验证（allowInsecure），默认不导出；可在订阅设置中允许"
+		out.Warnings = append(out.Warnings, fmt.Sprintf("订阅项 %d（%s）无法生成 Base64 链接：%s", n.Index+1, shortID(n), n.Base64Why))
+	} else if link, ok := rn.LinkNamed(n.Name); ok {
 		if n.Name == rn.Name {
 			link = rn.Link
 		}
@@ -345,6 +350,20 @@ func mihomoRemote(n remote.Node, name string, allowInsecure bool) (M, error) {
 	}
 	proxy["name"] = name
 	return proxy, nil
+}
+
+// linkInsecure reports a share link that turns certificate verification off without pinning
+// the certificate (Reality does not verify certificates, so it is not affected).
+func linkInsecure(raw string) bool {
+	u, e := url.Parse(raw)
+	if e != nil {
+		return false
+	}
+	q := u.Query()
+	if q.Get("insecure") != "1" && q.Get("allowInsecure") != "1" {
+		return false
+	}
+	return q.Get("pinSHA256") == "" && q.Get("security") != "reality"
 }
 
 // clashInsecure reports a proxy that turns certificate verification off without pinning the
