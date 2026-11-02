@@ -2,3 +2,8 @@
 /rout
 *.test
 coverage.out
+# Web panel build output (embedded into the binary at build time)
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
+/web/node_modules/
+/web/coverage/

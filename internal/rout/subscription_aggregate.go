@@ -475,9 +475,9 @@ func (c *remoteCache) lookup(id string) (RemoteSource, *RemoteSnapshot, error) {
 
 // AggregateSpec is the editable part of an aggregate subscription.
 type AggregateSpec struct {
-	Items         []SubItem
-	Dedupe        bool
-	AllowInsecure bool
+	Items         []SubItem `json:"items"`
+	Dedupe        bool      `json:"dedupe"`
+	AllowInsecure bool      `json:"allow_insecure"`
 }
 
 // checkAggregate validates items against the current state and sources and fills in the

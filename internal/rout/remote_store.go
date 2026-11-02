@@ -250,14 +250,14 @@ func (a *App) saveRemoteSnapshot(s *RemoteSnapshot) error {
 
 // RemoteSourceSpec is what the administrator supplies when adding a source.
 type RemoteSourceSpec struct {
-	Name        string
-	Note        string
-	Tags        []string
-	URL         string
-	Content     string
-	UserAgent   string
-	IntervalMin int
-	Enabled     bool
+	Name        string   `json:"name"`
+	Note        string   `json:"note"`
+	Tags        []string `json:"tags"`
+	URL         string   `json:"url"`
+	Content     string   `json:"content"`
+	UserAgent   string   `json:"user_agent"`
+	IntervalMin int      `json:"interval_min"`
+	Enabled     bool     `json:"enabled"`
 }
 
 func normaliseTags(tags []string) []string {
@@ -353,14 +353,14 @@ func snapshotFrom(id string, p remote.Parsed, ui *remote.UserInfo, title string,
 
 // RemoteSourcePatch lists the fields that may change; nil means "leave as is".
 type RemoteSourcePatch struct {
-	Name          *string
-	Note          *string
-	Tags          *[]string
-	URL           *string // empty/nil keeps the stored URL
-	UserAgent     *string
-	Enabled       *bool
-	IntervalMin   *int
-	DisabledNodes *[]string
+	Name          *string   `json:"name"`
+	Note          *string   `json:"note"`
+	Tags          *[]string `json:"tags"`
+	URL           *string   `json:"url"` // empty/nil keeps the stored URL
+	UserAgent     *string   `json:"user_agent"`
+	Enabled       *bool     `json:"enabled"`
+	IntervalMin   *int      `json:"interval_min"`
+	DisabledNodes *[]string `json:"disabled_nodes"`
 }
 
 // UpdateRemoteSource changes a source and reports whether its URL changed (the caller then
