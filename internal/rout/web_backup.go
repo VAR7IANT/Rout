@@ -365,6 +365,13 @@ func (a *App) RestoreBackup(p *parsedBackup) error {
 			// cached for the same ID (it may come from a URL the backup does not know), so
 			// nothing fetched from another definition is exported under the restored one.
 			snap = &RemoteSnapshot{SourceID: src.ID, Nodes: []remote.Node{}, Status: RemoteStatus{State: "never"}}
+			if src.Kind == sourceKindStatic {
+				// A pasted source has no URL to refresh from: its content is the data. Parse it
+				// again so it keeps exporting after the restore.
+				if parsed, er := remote.Parse([]byte(src.Content)); er == nil && len(parsed.Nodes) > 0 {
+					snap = snapshotFrom(src.ID, parsed, nil, "", a.webNow())
+				}
+			}
 		}
 		if e = a.saveRemoteSnapshot(snap); e != nil {
 			return e

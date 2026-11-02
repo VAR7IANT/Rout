@@ -479,3 +479,32 @@ func TestRestoreWithoutSnapshotsResetsCachedSnapshots(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// A pasted (static) source has nothing to refresh from, so a restore without snapshots must
+// rebuild its node list from the content the backup keeps.
+func TestRestoreWithoutSnapshotsRebuildsStaticSources(t *testing.T) {
+	a := testApp(t)
+	src, e := a.AddRemoteSource(RemoteSourceSpec{Name: "Pasted", Enabled: true, Content: linkList(linkVless, linkTrojan)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	before := snapshotOf(t, a, src.ID)
+	st, _ := a.Load()
+	cfg, _ := a.loadRemoteConfig()
+	if e = os.Remove(a.remoteSnapshotPath(src.ID)); e != nil {
+		t.Fatal(e)
+	}
+	e = a.RestoreBackup(&parsedBackup{Full: true, SnapshotsOmitted: true, State: st, Remote: cfg, Snaps: map[string]*RemoteSnapshot{}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := snapshotOf(t, a, src.ID)
+	if len(got.Nodes) != len(before.Nodes) || len(got.Nodes) != 2 || got.Status.State != "ok" {
+		t.Fatalf("static source not rebuilt: %d nodes, state %q", len(got.Nodes), got.Status.State)
+	}
+	for i := range got.Nodes {
+		if got.Nodes[i].ID != before.Nodes[i].ID {
+			t.Fatal("node identities changed across the restore")
+		}
+	}
+}
