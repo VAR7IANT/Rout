@@ -70,7 +70,7 @@ func newWebEnvFor(t *testing.T, a *App) *webEnv {
 	ws.limiter = newLoginLimiter(clock.now)
 	ws.detectIPs = func() (string, string) { return v4Addr, v6Addr }
 	ws.lookupHost = func(context.Context, string) ([]string, error) { return []string{"192.0.2.1"}, nil }
-	ws.fetchLatest = func(context.Context) (string, error) { return "v0.5.0", nil }
+	ws.fetchLatest = func(context.Context) (string, error) { return "v9.9.9", nil }
 	return &webEnv{t: t, a: a, ws: ws, clock: clock}
 }
 
