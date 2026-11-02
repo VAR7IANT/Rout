@@ -50,7 +50,7 @@ var helpLines = [][2]string{
 	{"rout list", "全部节点和中转、状态与完整连接链接"},
 	{"rout status", "服务运行状态"},
 	{"rout doctor [--fix]", "只读诊断；--fix 逐项确认后修复"},
-	{"rout test ID", "测试本地入口、协议和出站（IPv4/IPv6）"},
+	{"rout test ID", "分层测试：监听、解析、连通、中转、协议握手与实际出口（IPv4/IPv6）"},
 	{"rout export ID [FILE]", "输出连接链接，或保存 sing-box 客户端配置"},
 	{"rout export all [FILE]", "输出全部连接链接，或保存到文件"},
 	{"rout copy ID", "输出链接并请求终端复制"},
@@ -134,6 +134,14 @@ func Run(args []string) (result error) {
 	}
 	if a.Home == "/" || a.BinDir == "/" || a.Home == a.BinDir {
 		return errors.New("配置和内核目录必须是独立专用目录")
+	}
+	// The native relay's service entry point: it reads only its own configuration file and
+	// is started by the init system as root, never interactively.
+	if cmd == "relay-serve" {
+		if len(args) != 2 {
+			return errors.New("用法：rout relay-serve 配置文件")
+		}
+		return RunNativeRelay(args[1])
 	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		if settings, er := a.LoadSettings(); er == nil && language == "" {

@@ -11,13 +11,13 @@ import (
 func nodeListenOptions(c listenCaps) []menuItem {
 	var items []menuItem
 	if c.V4 {
-		items = append(items, item("ipv4", "IPv4 (0.0.0.0)"))
+		items = append(items, item(inIPv4, "IPv4 (0.0.0.0)"))
 	}
 	if c.V4 && c.V6 && c.DualStack {
-		items = append(items, item("dual", "双栈 (IPv4 + IPv6)"))
+		items = append(items, item(inDual, "双栈 (IPv4 + IPv6)"))
 	}
 	if c.V6 {
-		items = append(items, item("ipv6", "IPv6 (::)"))
+		items = append(items, item(inIPv6, "IPv6 (::)"))
 	}
 	return items
 }
@@ -52,40 +52,48 @@ func (u *UI) nodeListeningSetup(setup ServerSetup, protocols ...string) (ServerS
 	} else {
 		u.say(items[0].label)
 	}
+	setup.inbound = selected
 	switch selected {
-	case "ipv4":
+	case inIPv4:
 		setup.Listen = "0.0.0.0"
-	case "dual":
+	case inDual, inIPv6:
 		setup.Listen = "::"
-	case "ipv6":
-		setup.Listen = "::"
+		// "dual" is a verified dual-stack wildcard. "ipv6" is recorded as not serving
+		// IPv4: the engine cannot set IPV6_V6ONLY, so the node config rejects IPv4
+		// sources explicitly (see serverConfig) instead of relying on the socket.
+		mapped := selected == inDual && caps.DualStack
+		setup.ipv4Mapped = &mapped
 	}
-	if setup.Listen == "::" {
-		setup.ipv4Mapped = &caps.DualStack
+	return u.alignPublicHost(setup, selected)
+}
+
+// alignPublicHost keeps the address clients are told to use consistent with the inbound
+// mode. A public endpoint is separate from the listening capability: custom domains and
+// compatible addresses are kept; an IPv6 literal is never advertised for an IPv4 listener
+// (or vice versa) just because it was saved previously.
+func (u *UI) alignPublicHost(setup ServerSetup, selected string) (ServerSetup, error) {
+	family := familyOf(setup.PublicHost)
+	if selected == inDual || family == "" || family == selected {
+		return setup, nil
 	}
-	// A public endpoint is separate from the listening capability. Keep custom
-	// domains and compatible addresses; never advertise an IPv6 literal for an
-	// IPv4 listener (or vice versa) just because it was saved previously.
-	if family := familyOf(setup.PublicHost); selected != "dual" && family != "" && family != selected {
-		host := setup.IPv4
-		if selected == "ipv6" {
-			host = setup.IPv6
+	host := setup.IPv4
+	if selected == inIPv6 {
+		host = setup.IPv6
+	}
+	for host == "" && u.err == nil {
+		host = u.ask("公网连接 IP 或域名", "")
+		if !validPublicHost(host) || (familyOf(host) != "" && familyOf(host) != selected) {
+			u.say("公网连接地址与所选监听模式不匹配")
+			host = ""
 		}
-		for host == "" && u.err == nil {
-			host = u.ask("公网连接 IP 或域名", "")
-			if !validPublicHost(host) || (familyOf(host) != "" && familyOf(host) != selected) {
-				u.say("公网连接地址与所选监听模式不匹配")
-				host = ""
-			}
-		}
-		if u.err != nil {
-			return setup, u.err
-		}
-		setup.PublicHost = host
-		setup.Family = familyOf(host)
-		if setup.Family == "" {
-			setup.Family = "custom"
-		}
+	}
+	if u.err != nil {
+		return setup, u.err
+	}
+	setup.PublicHost = host
+	setup.Family = familyOf(host)
+	if setup.Family == "" {
+		setup.Family = "custom"
 	}
 	return setup, nil
 }

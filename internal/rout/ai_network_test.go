@@ -99,7 +99,7 @@ func aiProxyFixture(t *testing.T, origin, network string, encrypted bool, expire
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Proxy{protocol, h, p, "fixture-user", "fixture-password"}, count, broken, cert
+	return Proxy{Protocol: protocol, Host: h, Port: p, Username: "fixture-user", Password: "fixture-password"}, count, broken, cert
 }
 
 // Unlike service tests, these processes need no root or init system. Explicit stop
@@ -358,7 +358,7 @@ func TestIntegrationAIUDP(t *testing.T) {
 			p.Port, _ = freePort()
 			p.PublicPort = p.Port
 			if bound {
-				p.AIRoute = &AIRoute{Outbound: &Proxy{"http", "127.0.0.1", 1, "u", "p"}, RuleSet: AIRuleSetCurrent}
+				p.AIRoute = &AIRoute{Outbound: &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 1, Username: "u", Password: "p"}, RuleSet: AIRuleSetCurrent}
 			}
 			cfg, err := serverConfig(p, t.TempDir())
 			if err != nil {

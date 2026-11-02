@@ -250,4 +250,7 @@ func (u *UI) fitListen(p *Profile) {
 		return
 	}
 	p.Listen = "::"
+	if p.InboundMode != "" {
+		p.InboundMode = inDual
+	}
 }

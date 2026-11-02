@@ -299,7 +299,7 @@ func httpProxyFixture(t *testing.T) (*Proxy, *atomic.Int32) {
 	}))
 	t.Cleanup(s.Close)
 	h, p, _ := ParseEndpoint(strings.TrimPrefix(s.URL, "http://"))
-	return &Proxy{"http", h, p, "test-user", "p:a@ss%$"}, count
+	return &Proxy{Protocol: "http", Host: h, Port: p, Username: "test-user", Password: "p:a@ss%$"}, count
 }
 func socksFixture(t *testing.T) (*Proxy, *atomic.Int32) {
 	t.Helper()
@@ -380,7 +380,7 @@ func socksFixture(t *testing.T) (*Proxy, *atomic.Int32) {
 		}
 	}()
 	h, p, _ := ParseEndpoint(l.Addr().String())
-	return &Proxy{"socks5", h, p, "test-user", "p:a@ss%$"}, count
+	return &Proxy{Protocol: "socks5", Host: h, Port: p, Username: "test-user", Password: "p:a@ss%$"}, count
 }
 func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
 	if os.Getenv("ROUT_SKIP_SINGBOX_RUNTIME") == "1" {
@@ -556,7 +556,7 @@ func TestIntegrationConfigSchema(t *testing.T) {
 				p.CertPEM = cert
 				p.KeyPEM = key
 				if mode != "direct" {
-					p.Outbound = &Proxy{mode, "proxy.example", 1080, "user", "special:p@ss%$"}
+					p.Outbound = &Proxy{Protocol: mode, Host: "proxy.example", Port: 1080, Username: "user", Password: "special:p@ss%$"}
 				}
 				if e := a.writeProfile(p); e != nil {
 					t.Fatal(e)
@@ -653,7 +653,7 @@ func TestIntegrationServiceLifecycle(t *testing.T) {
 		t.Fatal("metadata edit restarted a node")
 	}
 	old, _ = a.Load()
-	registry := UpsertExit(old, Exit{ID: RandomHex(6), Name: "Independent", Proxy: Proxy{"http", "192.0.2.1", 80, "u", "p"}})
+	registry := UpsertExit(old, Exit{ID: RandomHex(6), Name: "Independent", Proxy: Proxy{Protocol: "http", Host: "192.0.2.1", Port: 80, Username: "u", Password: "p"}})
 	if e = a.Commit(old, registry, false); e != nil {
 		t.Fatal(e)
 	}
@@ -686,7 +686,7 @@ func TestIntegrationServiceLifecycle(t *testing.T) {
 	// Verify live fail-closed behavior with an unavailable proxy endpoint.
 	old, _ = a.Load()
 	deadPort, _ := freePort()
-	p.Outbound = &Proxy{"http", "127.0.0.1", deadPort, "u", "p"}
+	p.Outbound = &Proxy{Protocol: "http", Host: "127.0.0.1", Port: deadPort, Username: "u", Password: "p"}
 	if e = a.Commit(old, replace(old, p), false); e != nil {
 		t.Fatal(e)
 	}

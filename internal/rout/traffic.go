@@ -192,7 +192,11 @@ func (a *App) trafficActive() bool {
 	return e == nil
 }
 func trafficShape(p Profile) string {
-	b, _ := json.Marshal([]any{p.Listen, p.Port, p.Networks(), p.trafficPolicy().LimitBytes})
+	shape := []any{p.Listen, p.Port, p.Networks(), p.trafficPolicy().LimitBytes}
+	if p.InboundMode == inIPv6 {
+		shape = append(shape, "ipv6-only") // legacy profiles keep their original fingerprint
+	}
+	b, _ := json.Marshal(shape)
 	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 func trafficSchedule(p TrafficPolicy, now time.Time) string {

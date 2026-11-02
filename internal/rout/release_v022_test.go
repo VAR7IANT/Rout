@@ -73,7 +73,7 @@ func TestInvalidProtocolCombinations(t *testing.T) {
 	p.Network = "udp"
 	p.Port, _ = freePort()
 	p.PublicPort = p.Port
-	ex := Exit{ID: RandomHex(6), Name: "Exit", Proxy: Proxy{"socks5", "192.0.2.10", 1080, "u", "p"}}
+	ex := Exit{ID: RandomHex(6), Name: "Exit", Proxy: Proxy{Protocol: "socks5", Host: "192.0.2.10", Port: 1080, Username: "u", Password: "p"}}
 	old, _ := a.Load()
 	next := UpsertExit(replace(old, p), ex)
 	next, _ = BindExit(next, p.ID, ex.ID)

@@ -32,7 +32,13 @@ type App struct {
 func DefaultApp() *App                     { return &App{Home: "/etc/rout", BinDir: "/opt/rout/bin", ServiceMode: "auto"} }
 func itoa(n int) string                    { return strconv.Itoa(n) }
 func (a *App) profileDir(id string) string { return filepath.Join(a.Home, "profiles", id) }
+
+// engineName is the downloaded engine a profile runs on; "" means Rout itself (the native
+// relay), which needs no download.
 func (a *App) engineName(p Profile) string {
+	if p.nativeRelay() {
+		return ""
+	}
 	if p.Kind == "relay" {
 		return "gost"
 	}
@@ -216,7 +222,14 @@ func removeProfile(s State, id string) State {
 	return out
 }
 
+// nativeBindProbe really binds a native relay's sockets to see whether they are free;
+// tests replace it to exercise the flows on hosts without IPv6.
+var nativeBindProbe = bindProbe
+
 func CheckAvailable(p Profile) error {
+	if p.nativeRelay() {
+		return nativeBindProbe(p)
+	}
 	for _, n := range p.Networks() {
 		addr := net.JoinHostPort(p.Listen, itoa(p.Port))
 		if n == "tcp" {
@@ -370,8 +383,10 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 				}
 				return fmt.Errorf("%s (%s): %w", p.Name, p.Protocol, e)
 			}
-			if e := a.EnsureEngine(a.engineName(p)); e != nil {
-				return e
+			if name := a.engineName(p); name != "" {
+				if e := a.EnsureEngine(name); e != nil {
+					return e
+				}
 			}
 		}
 	}
@@ -560,6 +575,11 @@ func runtimeEqual(a, b Profile) bool {
 	return reflect.DeepEqual(a, b)
 }
 func checkNetworkAvailable(p Profile, network string) error {
+	if p.nativeRelay() {
+		q := p
+		q.Protocol = network
+		return nativeBindProbe(q)
+	}
 	addr := net.JoinHostPort(p.Listen, itoa(p.Port))
 	if network == "tcp" {
 		l, e := net.Listen("tcp", addr)

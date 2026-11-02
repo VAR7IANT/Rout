@@ -14,7 +14,16 @@ type Exit struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Proxy Proxy  `json:"proxy"`
+	// Kind is "" for a plain SOCKS5/HTTP(S) proxy (every exit written by earlier versions)
+	// and "remote" for a Remote Server: another VPS/NAT whose public IP the traffic leaves
+	// from, reached through an authenticated proxy or a node protocol (see exit_remote.go).
+	Kind string `json:"kind,omitempty"`
+	// RemoteNetwork records which transports the remote server's port mapping accepts
+	// ("tcp", "udp", "both"); empty means unknown. A TCP-only NAT cannot reach a QUIC node.
+	RemoteNetwork string `json:"remote_network,omitempty"`
 }
+
+const exitRemote = "remote"
 
 func (s State) Clone() State {
 	out := s
@@ -85,6 +94,9 @@ func (s State) validateExits() error {
 		}
 		ids[e.ID] = true
 		if er := e.Proxy.Validate(); er != nil {
+			return fmt.Errorf("%s: %w", e.Name, er)
+		}
+		if er := e.validateKind(); er != nil {
 			return fmt.Errorf("%s: %w", e.Name, er)
 		}
 	}

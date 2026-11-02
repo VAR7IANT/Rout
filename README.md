@@ -97,6 +97,22 @@ vless://…@[2001:db8::7]:34567?…#Tokyo-VLESS
 
 The second link is also shown by *Copy link*, *Export all links* and `rout list`. IPv6 literals are always bracketed in links and `host:port` fields, relay destinations accept `2001:db8::1`, `[2001:db8::1]:443` or a pasted IPv6 share link, and the same IPv6 address written differently (`2001:DB8:0::1`) is recognised in loop checks. Choosing an IPv6 public address for a node that listens on IPv4 only offers to switch it to `::` (this restarts only that node).
 
+### Inbound family per entry (IPv4, IPv6 or dual stack)
+
+The saved server address says which address clients are *told* to use; it no longer decides how a new relay *listens*. A new relay asks once, and only offers what the host can really bind (each family is tried with an explicit `tcp4`/`tcp6`/`udp4`/`udp6` socket, never inferred from a wildcard):
+
+```text
+Inbound network (which IP family clients use to reach this relay)
+   1  IPv4          Listen on IPv4 only (0.0.0.0); no IPv6 socket is created
+   2  IPv6          Listen on IPv6 only (::, IPV6_V6ONLY); IPv4 connections are not accepted
+   3  Dual stack    One separate listening socket for IPv4 and one for IPv6, on the same port
+Choose [1]:
+```
+
+IPv4 is the default and the last choice is remembered. A single-family host is told what it has and is not asked. Dual stack is two sockets on one port, verified at creation to be able to coexist; it does not rely on a dual-stack wildcard, so it behaves the same whatever `net.ipv6.bindv6only` or the kernel's IPv4-mapped support say. The mode is stored on the relay (`inbound_mode`) and is never silently turned into dual stack; the public address is kept consistent with it (an IPv6 literal is never advertised by an IPv4 entry). Only a dual-stack relay prints a second link for the other address.
+
+Nodes use the same three choices when they are created. sing-box cannot set `IPV6_V6ONLY`, so an explicit **IPv6** node listens on `::` and refuses IPv4 clients by source address in its routing rules (the first rule rejects `0.0.0.0/0`); it is not offered as dual stack, its metering counts IPv6 only, and it prints no IPv4 link. Nodes created by older versions keep their saved listening address and behavior.
+
 ### Legacy NAT-VPS mappings
 
 Hosts set up with v0.3.0 or earlier in NAT mode keep working. Nothing is migrated or rewritten: the saved internal range, public offset and allowed networks stay in `settings.json`, existing NAT nodes and relays keep their ports, and new entries on such a host keep following the saved mapping (a notice says so) because a regular-VPS port would be unreachable there. Editing an existing NAT node or relay still asks for the provider-mapped public port. To start using regular-VPS behavior for new entries, choose Settings → Server address → *Switch to a regular VPS*; this asks for confirmation, changes only the saved default and leaves existing NAT entries as they are. There is no menu to create a new NAT mapping.
@@ -107,31 +123,68 @@ Only traffic through a managed node uses its outbound proxy. SSH, package update
 
 ## Relays
 
-Relays → **Create relay** walks through four steps and shows the whole path before anything changes:
+Relays → **Create relay** walks through a few steps and shows the whole path before anything changes:
 
 1. **Where the traffic goes:** *Local machine* (a service on this server) or *Remote relay server* (another server). The last choice is remembered.
-2. **Entry on the current server:** Rout uses the saved server address and shows the planned listening address, a free listening port and the public entry once; press Enter to use them, or answer `n` to choose the port yourself (TCP and UDP availability is checked). The listening address is derived from the host (`0.0.0.0`, or `::` for IPv6 and dual-stack) and is never the public address. The public port equals the listening port. (A legacy NAT host still asks for the provider-mapped public port.)
-3. **Destination:** local relays default to `127.0.0.1` and list this server's nodes by listening port. Remote relays require an explicit host (IPv4, IPv6 without brackets, or a domain) and port, or a pasted share link; the current server's public IP is never filled in.
-4. **Transport:** TCP, UDP or TCP+UDP, explained in the menu (limited to what the saved mapping allows on a legacy NAT host).
+2. **Entry on the current server:** the **inbound network** (IPv4, IPv6 or dual stack, see above), then the planned listening address, a free listening port (checked on every family the entry binds, TCP and UDP) and the public entry; press Enter to use them, or answer `n` to choose the port yourself. The public port equals the listening port. (A legacy NAT host still asks for the provider-mapped public port.)
+3. **Destination:** local relays default to `127.0.0.1` and list this server's nodes by listening port. Remote relays require an explicit host (IPv4, IPv6 without brackets, or a domain) and port, or a pasted share link; the current server's public IP is never filled in. A pasted link is recognized (`Recognized: TCP / VLESS Reality (destination host:port)`) and answers the transport question itself.
+4. **Transport:** TCP, UDP or TCP+UDP, explained in the menu (limited to what the saved mapping allows on a legacy NAT host). Skipped when a VLESS/AnyTLS/Trojan or Hysteria2/TUIC link settles it.
+5. **Outbound policy** (remote destinations, only on a host that can route both families): how the relay reaches the destination, independent of the inbound family.
 
 ```text
 Client → 203.0.113.10:40005 (public entry) → 0.0.0.0:20005 (listening) → 198.51.100.7:8443 (destination) · UDP
 ```
 
+**Outbound policy** (`outbound_policy`), per relay and independent of the inbound mode:
+
+| Policy | Behavior |
+| --- | --- |
+| IPv4 first (default) | A records first; IPv6 only as a fallback |
+| IPv6 first | AAAA records first; IPv4 only as a fallback |
+| IPv4 only / IPv6 only | The other family is never resolved, tried or connected, and a literal address of the wrong family is refused when the relay is saved |
+| Auto | Only addresses this host has a route to are tried (checked per destination in the kernel's routing table); both families are raced with a short head start for IPv6 (RFC 6724 / Happy Eyeballs) and the family that worked last is tried first |
+
+Because the two settings are independent, **IPv6 in → IPv4 out** (and every other combination: IPv4 → IPv6, dual stack → IPv4/IPv6, …) is simply two ordinary TCP connections joined by the relay; no NAT64 is involved. Example:
+
+```text
+Client ──IPv6──▶ AS3 relay [2001:db8::7]:29519 ──TCP over IPv4──▶ ft-us.example.net:44275 (VLESS Reality)
+```
+
+**Native forwarder and legacy relays.** New relays run on Rout's own forwarder (`rout relay-serve`, started from a copy of the manager next to the engines, under the same systemd/OpenRC sandbox as before, with no extra capabilities). It binds one explicit socket per family, applies the outbound policy, and resolves a domain destination again when its short cache entry (30 s; Go does not expose DNS TTLs) expires or when every cached address fails, so a NAT whose address changes keeps working; a brief DNS outage reuses the last answer for up to ten minutes and the test says so. It forwards bytes only: it holds no credentials, speaks no proxy protocol and refuses to dial its own listener. Relays created by earlier versions keep running on GOST with exactly their old configuration until you pick **Edit relay → Change network**; that moves one relay to the native forwarder (same port, destination and share link) after a preview. Renaming or disabling a legacy relay does not migrate it. GOST cannot bind IPv6-only or restrict dialing, which is why the choice is explicit. Details and the reasoning: [docs/NETWORK.md](docs/NETWORK.md).
+
+**TCP and UDP capability.** A plain TCP port mapping carries TCP only. Hysteria2 and TUIC are QUIC (UDP), so Rout refuses to create such a relay for a destination that only accepts TCP, instead of writing UDP into a TCP socket:
+
+```text
+The destination currently supports TCP only. Hysteria2 needs UDP transport and cannot be used through a
+plain TCP port relay. Choose a UDP relay, or use a compatible tunnel that can encapsulate UDP
+```
+
+Links settle the transport (VLESS, AnyTLS, Trojan: TCP; Hysteria2, TUIC: UDP; Shadowsocks: either) and a mismatch is explained. When a relay carries UDP to a remote server and the destination is not a TCP-only link, Rout asks whether the destination's port mapping accepts UDP (default *TCP + UDP, or not sure*; *TCP only* blocks UDP). UDP-over-TCP encapsulation is deliberately not offered: it needs a compatible decapsulating peer on the far side, adds head-of-line blocking that defeats QUIC congestion control, and cannot be made transparent to Hysteria2/TUIC. A relay forwards UDP to a UDP-capable destination or refuses.
+
 Checks before saving: address and port validity, port conflicts (TCP and UDP separately), and forwarding loops (the relay's own listening port or public entry, or a chain of local relays leading back to it). Forwarding to another port on the same server is allowed, and a destination that merely shares the server's public IP is not treated as a loop: on NAT VPS hosts that IP is shared. When the destination is the public entry of a node on this server, Rout offers to switch to `127.0.0.1:<listening port>` instead, because many networks cannot hairpin (connect to their own public address). Reachability: a local destination is checked for a listening socket; a remote TCP destination gets a real connection attempt, which proves the port is reachable, not that the proxy protocol works. UDP has no handshake and is never reported as verified.
 
-After saving, Rout prints the client endpoint and, when the destination is a known node or a pasted link, a share link rewritten to the relay entry. **Test relay** repeats the checks and can run a full protocol test through the relay. **Edit relay** changes destination, entry, transport, name or state; **Delete relay** defaults to No. Relays created by older versions keep working; their destination type is inferred.
+After saving, Rout prints the client endpoint and, when the destination is a known node or a pasted link, a share link rewritten to the relay entry: only the address and port change; UUID, Reality public key, short ID, SNI, fingerprint, flow and every other parameter are kept byte for byte. **Test relay** runs the [layered diagnosis](#diagnostics) and can include a full protocol test through the relay. **Edit relay** changes destination, entry, transport, name or state; **Delete relay** defaults to No. Relays created by older versions keep working; their destination type is inferred.
 
 ## Outbound proxies
 
 Outbound proxies decide how a node reaches the internet. **Direct connection** (no proxy) is built in. Relays have no outbound proxy: they forward traffic unchanged to their destination.
 
-Outbound proxies → **Create**: choose SOCKS5, HTTP CONNECT or HTTPS CONNECT (certificate verification), then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Proxies are listed and selected **by number** (`Name — PROTOCOL — host:port — usage`), with Direct connection offered as the last choice. Their stable internal IDs never change and never need to be typed.
+Outbound proxies → **Create**: choose SOCKS5, HTTP CONNECT, HTTPS CONNECT (certificate verification) or **Remote server**, then enter `IP:port:username:password` (IPv6: `[addr]:port:user:pass`; passwords may contain colons). Proxies are listed and selected **by number** (`Name — KIND — host:port — usage`), with Direct connection offered right after the stored ones and *New outbound proxy* last, so an exit can also be created while choosing one for a node. Their stable internal IDs never change and never need to be typed.
 
-- **Test** shows the observed outgoing IP (IPv4, falling back to IPv6).
+**Remote server exits.** Traffic leaves from another VPS/NAT's public IP. That only works if something on the far side carries it out, so Rout accepts exactly two forms and reuses what it already has:
+
+| What the remote server runs | How it is used |
+| --- | --- |
+| A node (a Rout node on another VPS: VLESS Reality, AnyTLS, Trojan, Shadowsocks, Hysteria2, TUIC) | Paste its share link; sing-box dials it as the outbound |
+| An authenticated SOCKS5 / HTTP / HTTPS proxy | `IP:port:user:password`; accounts are mandatory, open proxies are not accepted |
+
+A bare TCP/UDP **port mapping is not an exit**: the connection would be forwarded but the destination would still see this server's IP, so Rout explains this and points to Relays. Nothing here opens a listener or a proxy on this server. A Remote server is **verified with a real request before it is saved**; if the check fails you are told which layer failed and nothing is stored unless you explicitly answer *Save anyway*. Hysteria2/TUIC links need UDP to the remote server: asked once, and a TCP-only NAT is refused with the message above. Certificate-pinned Hysteria2 links are refused (the pinned engine cannot verify them). Node-link credentials live only in `state.json` (mode 0600) and backups; they are never printed, logged or shown by *View*.
+
+- **Test** runs the layered diagnosis of the exit: address resolution (both families), connection to the proxy or remote server, protocol/credential handshake (a rejected password is reported as such), and the observed exit address per family.
+- **View** shows type, endpoint, transport needs, capabilities and everything that references the exit (nodes, AI Smart Routing), without credentials.
 - **Assign to nodes** changes only the nodes you pick, in one transaction, after testing the proxy once. Nodes that cannot use a proxy (UDP-only Shadowsocks) are skipped with the reason. You can also pick the outbound while creating nodes.
-- **Edit** updates every node using the proxy transactionally; renaming alone restarts nothing.
-- **Delete** is refused while any node uses the proxy, and names those nodes, so nothing silently falls back to the VPS IP.
+- **Edit** updates every node using the exit transactionally and nothing else (other exits and unrelated nodes are untouched); renaming alone restarts nothing. An exit that points back at an entry of this server is refused as a routing loop.
+- **Delete** is refused while any node or AI Smart Routing uses the exit, and names them, so nothing silently falls back to the VPS IP.
 
 Outbound proxies carry TCP only: UDP through a proxy is rejected rather than leaked. **SOCKS5 and HTTP CONNECT are unencrypted between the VPS and proxy, including proxy credentials.** HTTPS CONNECT verifies the proxy certificate using the system CA store and hostname, with no plaintext retry. Old entries retain their transport; migration is explicit. See [transport security, SSH tunnel setup and VPS acceptance](docs/AI_ROUTING.md).
 
@@ -216,13 +269,28 @@ The same actions are under Manage nodes → Edit node → Certificate. An expire
 
 `rout doctor` is read-only. It checks the OS, init system, IPv4/IPv6 routes, configuration validity, file permissions, engine binaries, generated configurations, service and port state, port conflicts, certificates, nftables, the traffic monitor and helper version, checkpoint freshness and per-node accounting state. It exits non-zero when problems are found. `rout doctor --fix` offers safe repairs (private file modes, leftover Rout metering tables, reinstalling the monitor helper), each confirmed separately.
 
+### Layered connectivity tests
+
+`rout test ID` and *Test relay* / *Test outbound proxy* check one layer at a time and say which layer failed and why, instead of one generic "request failed":
+
+| Layer | What is proved |
+| --- | --- |
+| 1 Local listening | The sockets are bound (read from the kernel's socket tables, per family and address); an IPv6-only entry with a stray IPv4 socket is flagged |
+| 2 Destination resolution | What the name resolves to (IPv4 and IPv6), whether the outbound policy fits, a name that points back at this host |
+| 3 Destination connectivity | A real TCP handshake with the family and address used and its latency; failures are told apart: DNS error, connection refused, timeout, no route, policy mismatch, loop. UDP: a QUIC Version Negotiation probe for Hysteria2/TUIC (any QUIC server must answer it); other UDP is never claimed verified |
+| 4 Relay availability | A connection through the relay's own entry (each family it serves) reaches the destination: bytes arrive, or the connection stays open; a relay that accepts and immediately drops is a failure, not "listening ✓" |
+| 5 Proxy protocol | TLS camouflage handshake for Reality links; SOCKS5/HTTP(S) credentials; with sing-box, the real client handshake (failure hints: Reality / authentication / TLS / refused / timeout) |
+| 6 Real exit | A request through the whole chain: IPv4 exit, IPv6 exit, which family worked, failing stage and error |
+
+If only a TCP port is reachable the report says `! The proxy protocol handshake has not been verified` and the verdict does not call the node usable. The exit address services are queried through the chain, so layer 6 needs Internet access from the VPS.
+
 ## Commands
 
 ```sh
 rout                          # interactive menu
 rout list | status            # nodes with links | service state
 rout doctor [--fix]           # diagnostics
-rout test ID                  # local entry → protocol → outbound proxy, IPv4 and IPv6
+rout test ID                  # layered test: listening → resolution → connectivity → relay → protocol → real exit
 rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
 rout relays | outbounds | settings   # `exits` still works as an alias
@@ -275,7 +343,9 @@ sudo rout update      # refuses downgrades; keeps /usr/local/bin/rout.previous
 | --- | --- |
 | Debian / Ubuntu, systemd | Supported; CI runs real systemd lifecycle, sandbox and quota-guard tests |
 | Alpine, OpenRC | Supported; CI runs an OpenRC lifecycle test in an Alpine container |
-| IPv4-only / IPv6-only / dual stack | Supported; detection and tests do not require IPv4; one `::` listener serves both families where the host allows it |
+| IPv4-only / IPv6-only / dual stack | Supported; inbound family chosen per entry (IPv4 / IPv6 / dual stack), outbound family chosen per relay; detection and tests do not require IPv4 |
+| Relays from older versions | Keep running on GOST with their old configuration; *Change network* moves one to the native forwarder |
+| Downgrade after using the family settings or Remote server exits | Older Rout cannot read Remote server exits (`protocol: node`); restore a compatible backup first. Native relays would run as GOST relays with their saved listening address (dual stack and IPv6-only are then not honored) |
 | Existing NAT-VPS mappings | Keep working; not offered for new setups (see Legacy NAT-VPS mappings) |
 | OpenVZ / restricted LXC | Proxies work; accounting needs nftables + `CAP_NET_ADMIN` |
 
@@ -295,6 +365,8 @@ ROUT_TEST_ENGINES=/tmp/rout-engines go test -race -count=1 -v ./internal/rout
 ```
 
 Test layers: unit and simulated tests (fake meter, scripted English/Chinese UI) always run. Engine integration tests send real encrypted traffic for all five protocols, SOCKS5, HTTP and HTTPS CONNECT outbound proxies and TCP/UDP relays, including relays built through the interactive flow (`ROUT_TEST_ENGINES`). Kernel tests run real nftables in a disposable network namespace (`ROUT_TEST_NFT=1`), covering seal/reboot/crash recovery, batching, preservation of unknown historical tables, probe cleanup, multiple limited nodes, and upgrade/rollback against the published v0.2.1 binary. A Debian 12 container additionally checks real nftables 1.0.6 JSON/text compatibility and failure cleanup (see [traffic testing](docs/TRAFFIC.md#real-compatibility-regression-tests)). Init tests need a disposable root host: systemd (`ROUT_TEST_SYSTEMD=1`, `ROUT_TEST_TRAFFIC_SYSTEMD=1`) or OpenRC (`ROUT_TEST_OPENRC=1`). Native Hysteria URI tests use `scripts/test-native-hy2.sh`. Native Mihomo tests use the checksum-pinned core from `scripts/test-mihomo.sh` with `ROUT_TEST_MIHOMO`; they validate YAML and send real TCP/UDP traffic, including rejection of incorrect certificate pins. Real-systemd subscription upgrade tests exercise the published v0.3.4 binary and a helper built from the pinned v0.3.5 commit (that release has no binary assets). Engine-installation tests (download failure, corrupt archive, checksum mismatch, killed installer, concurrent installers, peak RSS of a 96 MiB engine against the old in-memory approach) run in every `go test`; IPv6 and dual-stack tests skip themselves on hosts without an IPv6 stack.
+
+Three kinds of tests are kept apart. **Unit and simulated** tests (injected DNS/dialers, fake sockets, scripted UI, loopback sockets, the native forwarder run in-process) always run; they cover the family model, policies, dynamic domains, capability refusals, exits and migration, and they run IPv6 cases only where the host has IPv6. **Engine integration** tests (`ROUT_TEST_ENGINES`) send real VLESS Reality, AnyTLS, Shadowsocks, Hysteria2 and TUIC traffic through the native forwarder, a remote-node exit with right and wrong credentials, and an IPv6-only node refusing IPv4 clients; the real `rout relay-serve` process is started and stopped, and under real systemd the relay runs in the hardened unit. **Real-network** tests (`ROUT_TEST_REALNET=1`) resolve and dial real public hosts with each outbound policy and probe a public QUIC server; they are off by default and skip on a machine without direct Internet access. None of these is a VPS/NAT acceptance test: loopback and CI success says nothing about a provider's NAT, firewall or IPv6 routing.
 
 CI runs everything above plus `govulncheck` and cross-compilation on every push. **Releases are published only from an explicit version tag** that matches the compiled version and `install.sh`; pushes to `main` never publish. Release publication verifies all updater assets and public downloads; existing releases are completed safely instead of skipped. An explicit repair workflow builds the original tag commit without moving it. See [release integrity and repair](docs/RELEASING.md).
 

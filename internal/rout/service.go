@@ -1,10 +1,13 @@
 package rout
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -60,13 +63,70 @@ func unitSandbox(p Profile) string {
 
 const openrcLogLimit = 5 << 20
 
-func (a *App) systemdUnit(p Profile) string {
-	engine := a.enginePath(a.engineName(p))
+// relayHelper is the copy of the manager that serves native relays. Like the subscription
+// helper it lives outside /usr/local/bin, so replacing the manager (rout update) never
+// swaps the binary under a running relay; `rout apply` refreshes it.
+func (a *App) relayHelper() string { return filepath.Join(a.BinDir, "rout-relay-v1") }
+
+// serviceCommand is the program and arguments a profile's service runs.
+func (a *App) serviceCommand(p Profile) (string, []string) {
 	conf := filepath.Join(a.profileDir(p.ID), "config.json")
-	args := []string{"run", "-c", conf}
-	if p.Kind == "relay" {
-		args = []string{"-C", conf}
+	switch {
+	case p.nativeRelay():
+		return a.relayHelper(), []string{"relay-serve", conf}
+	case p.Kind == "relay":
+		return a.enginePath(a.engineName(p)), []string{"-C", conf}
 	}
+	return a.enginePath(a.engineName(p)), []string{"run", "-c", conf}
+}
+
+// ensureRelayHelper installs (or refreshes) the native relay helper, streaming the copy.
+func (a *App) ensureRelayHelper() error {
+	exe, e := os.Executable()
+	if e != nil {
+		return e
+	}
+	if resolved, er := filepath.EvalSymlinks(exe); er == nil {
+		exe = resolved
+	}
+	if same, _ := sameFileContent(exe, a.relayHelper()); same {
+		return nil
+	}
+	if e = os.MkdirAll(a.BinDir, 0755); e != nil {
+		return e
+	}
+	return copyFileAtomic(exe, a.relayHelper(), 0755)
+}
+
+func sameFileContent(a, b string) (bool, error) {
+	fa, e := os.Open(a)
+	if e != nil {
+		return false, e
+	}
+	defer fa.Close()
+	fb, e := os.Open(b)
+	if e != nil {
+		return false, e
+	}
+	defer fb.Close()
+	sa, _ := fa.Stat()
+	sb, _ := fb.Stat()
+	if sa == nil || sb == nil || sa.Size() != sb.Size() {
+		return false, nil
+	}
+	ha, hb := sha256.New(), sha256.New()
+	buf := make([]byte, copyBufferSize)
+	if _, e = io.CopyBuffer(struct{ io.Writer }{ha}, fa, buf); e != nil {
+		return false, e
+	}
+	if _, e = io.CopyBuffer(struct{ io.Writer }{hb}, fb, buf); e != nil {
+		return false, e
+	}
+	return bytes.Equal(ha.Sum(nil), hb.Sum(nil)), nil
+}
+
+func (a *App) systemdUnit(p Profile) string {
+	engine, args := a.serviceCommand(p)
 	cmdline := quoteArgs(append([]string{engine}, args...), unitQuote)
 	after, pre := "After=network-online.target\n", ""
 	if guard := a.trafficGuardCommand(p, unitQuote); guard != "" {
@@ -78,12 +138,7 @@ func (a *App) systemdUnit(p Profile) string {
 }
 func (a *App) openrcScript(p Profile) string {
 	name := serviceName(p)
-	engine := a.enginePath(a.engineName(p))
-	conf := filepath.Join(a.profileDir(p.ID), "config.json")
-	args := []string{"run", "-c", conf}
-	if p.Kind == "relay" {
-		args = []string{"-C", conf}
-	}
+	engine, args := a.serviceCommand(p)
 	// Soft network ordering like systemd's Wants=/After=: start after the network when
 	// it is configured, but neither block forever nor stop with a networking restart.
 	// Finite nodes keep a hard dependency on their monitor.
@@ -112,6 +167,11 @@ func (a *App) setServiceMode(p Profile, enabled, restart bool) error {
 		}
 	}
 	name := serviceName(p)
+	if p.nativeRelay() {
+		if e = a.ensureRelayHelper(); e != nil {
+			return fmt.Errorf("无法安装内置转发程序：%w", e)
+		}
+	}
 	if m == "systemd" {
 		written, e := writeIfChanged(filepath.Join("/etc/systemd/system", name+".service"), a.systemdUnit(p), 0644)
 		if e != nil {
@@ -365,7 +425,7 @@ func (a *App) Logs(p Profile) error {
 func redactProxySecrets(text string, s State) string {
 	secrets := map[string]bool{}
 	add := func(p Proxy) {
-		for _, v := range []string{p.Username, p.Password, base64.StdEncoding.EncodeToString([]byte(p.Username + ":" + p.Password))} {
+		for _, v := range append(p.secretsOf(), base64.StdEncoding.EncodeToString([]byte(p.Username+":"+p.Password))) {
 			if v != "" {
 				secrets[v], secrets[url.QueryEscape(v)], secrets[url.PathEscape(v)] = true, true, true
 				quoted := strconv.Quote(v)

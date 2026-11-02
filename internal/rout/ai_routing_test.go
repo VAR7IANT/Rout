@@ -57,7 +57,7 @@ func aiTestExit(t *testing.T, a *App, name, host string, port int) Exit {
 	if e != nil {
 		t.Fatal(e)
 	}
-	ex := Exit{ID: RandomHex(6), Name: name, Proxy: Proxy{"socks5", host, port, "user", "pass"}}
+	ex := Exit{ID: RandomHex(6), Name: name, Proxy: Proxy{Protocol: "socks5", Host: host, Port: port, Username: "user", Password: "pass"}}
 	if e = a.Commit(s, UpsertExit(s, ex), false); e != nil {
 		t.Fatal(e)
 	}
@@ -787,7 +787,7 @@ func TestAIGeneratedConfigPassesSingBoxCheck(t *testing.T) {
 	p.Port, _ = freePort()
 	p.PublicPort = p.Port
 	s, _ := a.Load()
-	ex := Exit{ID: RandomHex(6), Name: "Canada", Proxy: Proxy{"socks5", "198.51.100.77", 1080, "u", "p"}}
+	ex := Exit{ID: RandomHex(6), Name: "Canada", Proxy: Proxy{Protocol: "socks5", Host: "198.51.100.77", Port: 1080, Username: "u", Password: "p"}}
 	s = UpsertExit(s, ex)
 	s = replace(s, p)
 	s.AI = &AIRouting{Enabled: true, BoundInboundIDs: []string{p.ID}, AIOutboundID: ex.ID, RuleSetVersion: AIRuleSetCurrent}

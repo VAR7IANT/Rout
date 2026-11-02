@@ -26,6 +26,8 @@ type UI struct {
 	detectAddrs  func() Addresses
 	caps         func() listenCaps
 	probeProxy   func(Proxy) (string, error)
+	routes       func() familyRoutes // test hook: which families the host can route
+	diag         *diagEnv            // test hook: replaces the diagnostics environment
 	checkReality func(string) error
 	// Presentation state: the logo appears once per session; tests can force it,
 	// simulate a color terminal or fix the width.
@@ -169,11 +171,11 @@ func ProtocolLabel(p string) string {
 func (u *UI) outboundLabel(s State, p Profile) string {
 	if p.ExitID != "" {
 		if e, er := FindExit(s, p.ExitID); er == nil {
-			return e.Name + " (" + strings.ToUpper(e.Proxy.Protocol) + ")"
+			return e.Name + " (" + e.KindLabel() + ")"
 		}
 	}
 	if p.Outbound != nil {
-		return strings.ToUpper(p.Outbound.Protocol) + " " + net.JoinHostPort(p.Outbound.Host, itoa(p.Outbound.Port))
+		return strings.ToUpper(p.Outbound.Kind()) + " " + net.JoinHostPort(p.Outbound.Host, itoa(p.Outbound.Port))
 	}
 	return u.a.T("直连")
 }
@@ -409,7 +411,7 @@ func (u *UI) outboundLine(s State, i int, e Exit) {
 	if n := len(u.exitUsers(s, e.ID)); n > 0 {
 		use = fmt.Sprintf(u.a.T("%d 个节点使用"), n)
 	}
-	fmt.Fprintf(u.writer(), "  %s %s — %s — %s — %s\n", u.paint(accent, fmt.Sprintf("%2d.", i)), u.bold(e.Name), strings.ToUpper(e.Proxy.Protocol), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), u.dim(use))
+	fmt.Fprintf(u.writer(), "  %s %s — %s — %s — %s\n", u.paint(accent, fmt.Sprintf("%2d.", i)), u.bold(e.Name), e.KindLabel(), net.JoinHostPort(e.Proxy.Host, itoa(e.Proxy.Port)), u.dim(use))
 	if warning := proxySecurityWarning(e.Proxy); warning != "" {
 		u.warn(warning)
 	}
@@ -431,33 +433,53 @@ func (u *UI) pickProxy(s State) (Exit, bool) {
 	return s.Exits[n-1], true
 }
 
-// pickOutbound chooses what a node uses: one of the proxies, or Direct connection as
-// the last numbered entry. ok=false means the user went back.
-func (u *UI) pickOutbound(s State, current string) (string, bool) {
-	for i, e := range s.Exits {
-		u.outboundLine(s, i+1, e)
-	}
-	direct := len(s.Exits) + 1
-	fmt.Fprintf(u.writer(), "  %s %s\n", u.paint(accent, fmt.Sprintf("%2d.", direct)), u.bold(u.a.T("直连（不使用出站代理）")))
-	def := itoa(direct)
-	for i, e := range s.Exits {
-		if e.ID == current {
-			def = itoa(i + 1)
+// pickOutbound chooses what a node uses: one of the stored outbounds, Direct connection,
+// or a new outbound created on the spot. It returns the (possibly refreshed) state: a new
+// outbound is committed first, so callers must continue from the returned state.
+// ok=false means the user went back.
+func (u *UI) pickOutbound(s State, current string) (State, string, bool) {
+	for {
+		for i, e := range s.Exits {
+			u.outboundLine(s, i+1, e)
 		}
+		direct := len(s.Exits) + 1
+		newItem := direct + 1
+		fmt.Fprintf(u.writer(), "  %s %s\n", u.paint(accent, fmt.Sprintf("%2d.", direct)), u.bold(u.a.T("直连（不使用出站代理）")))
+		fmt.Fprintf(u.writer(), "  %s %s\n", u.paint(accent, fmt.Sprintf("%2d.", newItem)), u.bold(u.a.T("新增出站代理")))
+		def := itoa(direct)
+		for i, e := range s.Exits {
+			if e.ID == current {
+				def = itoa(i + 1)
+			}
+		}
+		allowed := []string{"0"}
+		for i := 1; i <= newItem; i++ {
+			allowed = append(allowed, itoa(i))
+		}
+		v := u.choose("选择出站（0 返回）", allowed, def)
+		n, _ := strconv.Atoi(v)
+		if u.err != nil || n == 0 {
+			return s, "", false
+		}
+		switch {
+		case n == direct:
+			return s, "", true
+		case n == newItem:
+			next, e, err := u.newExit(s)
+			if err != nil {
+				if errors.Is(err, errQuit) || errors.Is(err, io.EOF) || u.err != nil {
+					return s, "", false
+				}
+				if !errors.Is(err, errCancelled) {
+					u.fail(u.a.Error(err))
+				}
+				continue
+			}
+			u.good("出站代理已保存")
+			return next, e.ID, true
+		}
+		return s, s.Exits[n-1].ID, true
 	}
-	allowed := []string{"0"}
-	for i := 1; i <= direct; i++ {
-		allowed = append(allowed, itoa(i))
-	}
-	v := u.choose("选择出站（0 返回）", allowed, def)
-	n, _ := strconv.Atoi(v)
-	if u.err != nil || n == 0 {
-		return "", false
-	}
-	if n == direct {
-		return "", true
-	}
-	return s.Exits[n-1].ID, true
 }
 
 // uniqueName keeps generated batch names distinct from every existing node.
@@ -509,9 +531,12 @@ func (u *UI) bindProfile(old State, p Profile) error {
 		return errors.New("中转节点没有出站代理：它把流量原样转发到目标")
 	}
 	u.printf("当前出站：%s\n", u.outboundLabel(old, p))
-	id, ok := u.pickOutbound(old, p.ExitID)
+	old, id, ok := u.pickOutbound(old, p.ExitID)
 	if !ok {
 		return u.err
+	}
+	if fresh, er := Find(old, p.ID); er == nil {
+		p = fresh
 	}
 	return u.assignOutbound(old, []Profile{p}, id)
 }
@@ -572,24 +597,6 @@ func (u *UI) assignOutbound(old State, nodes []Profile, id string) error {
 	u.good("出站已更新")
 	return nil
 }
-func (u *UI) proxyInput() (Proxy, error) {
-	protocol := u.option("代理协议", []menuItem{item("socks5", "SOCKS5"), item("http", "HTTP CONNECT"), item("https", "HTTPS CONNECT（验证证书）")}, "socks5")
-	if warning := proxySecurityWarning(Proxy{Protocol: protocol}); warning != "" {
-		u.warn(warning)
-	}
-	for u.err == nil {
-		raw := u.secret("输入代理 IP:端口:用户名:密码（IPv6 使用 [地址]:端口:用户名:密码）")
-		if u.err != nil {
-			return Proxy{}, u.err
-		}
-		p, e := ParseProxy(protocol, raw)
-		if e == nil {
-			return *p, nil
-		}
-		u.say(u.a.Error(e))
-	}
-	return Proxy{}, u.err
-}
 func (u *UI) testExit(p Proxy) (string, error) {
 	if u.probeProxy != nil {
 		return u.probeProxy(p)
@@ -625,7 +632,7 @@ func (u *UI) outbounds() error {
 			use = fmt.Sprintf(u.a.T("%d 个节点使用"), direct)
 		}
 		fmt.Fprintf(u.writer(), "  %s %s — %s — %s\n", u.paint(accent, "  ·"), u.bold(u.a.T("直连")), u.a.T("内置，不经过代理"), u.dim(use))
-		v := u.menu("", []menuItem{item("add", "创建出站代理"), item("edit", "编辑出站代理"), item("test", "测试出站代理"), item("delete", "删除出站代理"), item("assign", "分配给节点")}, "返回")
+		v := u.menu("", []menuItem{item("add", "创建出站代理"), item("edit", "编辑出站代理"), item("test", "测试出站代理"), item("delete", "删除出站代理"), item("assign", "分配给节点"), item("view", "查看出站代理与引用")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
 		}
@@ -640,27 +647,21 @@ func (u *UI) outbounds() error {
 		}
 	}
 }
-func proxyName(p Proxy) string { return strings.ToUpper(p.Protocol) + "-" + p.Host }
 func (u *UI) outboundAction(s State, v string) error {
 	switch v {
 	case "add":
-		p, e := u.proxyInput()
-		if e != nil {
-			return e
-		}
-		name := u.ask("出站代理名称", proxyName(p))
-		if u.err != nil {
-			return u.err
-		}
-		next := UpsertExit(s, Exit{ID: RandomHex(6), Name: name, Proxy: p})
-		if e = u.a.Commit(s, next, false); e != nil {
+		if _, _, e := u.newExit(s); e != nil {
+			if errors.Is(e, errCancelled) {
+				u.say("已取消")
+				return nil
+			}
 			return e
 		}
 		u.good("出站代理已保存；未改变任何节点。可在『分配给节点』中使用")
-		return nil
+		return u.err
 	case "assign":
 		u.say("1. 选择出站")
-		id, ok := u.pickOutbound(s, "")
+		s, id, ok := u.pickOutbound(s, "")
 		if !ok {
 			return u.err
 		}
@@ -677,27 +678,34 @@ func (u *UI) outboundAction(s State, v string) error {
 	}
 	users := u.exitUsers(s, ex.ID)
 	switch v {
+	case "view":
+		u.exitDetail(s, ex)
 	case "test":
 		u.say("正在测试出站代理…")
-		ip, e := u.testExit(ex.Proxy)
-		if e != nil {
-			return e
-		}
-		u.good(fmt.Sprintf(u.a.T("出站代理可用，实际出口 IP：%s"), ip))
+		return u.exitCheck(ex)
 	case "edit":
 		ex.Name = u.ask("出站代理名称", ex.Name)
-		previous := ex.Proxy
+		previous := ex
 		if u.yes("修改代理地址或认证信息", false) {
-			var e error
-			if ex.Proxy, e = u.proxyInput(); e != nil {
+			in, e := u.exitInput()
+			if e != nil {
 				return e
+			}
+			// Replacing the endpoint keeps the identity (ID, name, references); the kind
+			// follows the new input.
+			ex.Proxy, ex.Kind, ex.RemoteNetwork = in.Proxy, in.Kind, in.RemoteNetwork
+			if er := exitSelfLoop(s, ex.Proxy, localIPs()); er != nil {
+				return er
 			}
 		}
 		if u.err != nil {
 			return u.err
 		}
-		if ex.Proxy != previous && len(users) > 0 {
-			if _, e := u.testExit(ex.Proxy); e != nil {
+		if er := ex.validateKind(); er != nil {
+			return er
+		}
+		if ex.Proxy != previous.Proxy && len(users) > 0 {
+			if e := u.exitCheck(ex); e != nil {
 				return e
 			}
 			if !u.yes(fmt.Sprintf(u.a.T("保存修改（将重启使用它的 %d 个节点）"), len(users)), true) {

@@ -286,6 +286,15 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv("ROUT_ENGINE_CHILD"); mode != "" {
 		os.Exit(engineChild(mode))
 	}
+	// A native relay's service runs "rout relay-serve CONFIG" from a copy of the manager.
+	// Under test that copy is this binary, so it serves the real command line.
+	if len(os.Args) > 1 && os.Args[1] == "relay-serve" {
+		if e := Run(os.Args[1:]); e != nil {
+			fmt.Fprintln(os.Stderr, e)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	os.Exit(m.Run())
 }
 

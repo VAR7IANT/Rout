@@ -8,7 +8,19 @@ import (
 
 type M = map[string]any
 
+// proxyConfig builds the sing-box outbound (tag "egress") for an outbound proxy. It never
+// falls back to a direct connection: if a stored remote-node link cannot be converted
+// (which validation prevents), the outbound points at a closed local port so traffic
+// fails instead of leaving from this server's own address.
 func proxyConfig(p Proxy) M {
+	if p.Protocol == proxyNode {
+		out, e := URIOutbound(p.Link)
+		if e != nil {
+			return M{"type": "socks", "tag": "egress", "server": "127.0.0.1", "server_port": 1, "version": "5", "network": "tcp"}
+		}
+		out["tag"] = "egress"
+		return out
+	}
 	t := p.Protocol
 	if t == "socks5" {
 		t = "socks"
@@ -32,6 +44,18 @@ func proxyConfig(p Proxy) M {
 // HTTP and unverified third-party SOCKS UDP are TCP-only. No direct fallback exists.
 func serverConfig(p Profile, dir string) (M, error) {
 	if p.Kind == "relay" {
+		if p.nativeRelay() {
+			cfg, e := nativeRelayConfigOf(p)
+			if e != nil {
+				return nil, e
+			}
+			b, e := json.Marshal(cfg)
+			if e != nil {
+				return nil, e
+			}
+			var out M
+			return out, json.Unmarshal(b, &out)
+		}
 		services := []any{}
 		for _, n := range p.Networks() {
 			s := M{"name": p.ID + "-" + n, "addr": net.JoinHostPort(p.Listen, itoa(p.Port)), "handler": M{"type": n}, "listener": M{"type": n}, "forwarder": M{"nodes": []any{M{"name": "target", "addr": p.Target}}}}
@@ -87,6 +111,12 @@ func serverConfig(p Profile, dir string) (M, error) {
 		if aiOut != nil {
 			outbounds = append(outbounds, aiOut)
 		}
+	}
+	if p.InboundMode == inIPv6 && p.Listen == "::" {
+		// sing-box listens on "::" as a dual-stack socket and offers no IPV6_V6ONLY option.
+		// An explicitly IPv6-only node therefore refuses IPv4 clients by source address,
+		// ahead of every other rule.
+		rules = append([]any{M{"inbound": []string{"entry"}, "source_ip_cidr": []string{"0.0.0.0/0"}, "action": "reject"}}, rules...)
 	}
 	return M{"log": M{"level": "warn", "timestamp": true}, "inbounds": []any{in}, "outbounds": outbounds, "route": M{"rules": rules, "final": "egress"}}, nil
 }

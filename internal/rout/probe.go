@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,11 +30,11 @@ func fetchIP(proxyAddress, endpoint string) (string, error) {
 	client := &http.Client{Transport: transport, Timeout: 12 * time.Second}
 	r, e := client.Get(endpoint)
 	if e != nil {
-		return "", errors.New("请求失败（连接、认证、TLS 或网络不可用）")
+		return "", classifyFetch(e)
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return "", fmt.Errorf("IP 检测 HTTP %d", r.StatusCode)
+		return "", &fetchError{Kind: fetchHTTP, Status: r.StatusCode}
 	}
 	b, e := io.ReadAll(io.LimitReader(r.Body, 128))
 	if e != nil {
@@ -41,7 +42,7 @@ func fetchIP(proxyAddress, endpoint string) (string, error) {
 	}
 	ip := strings.TrimSpace(string(b))
 	if net.ParseIP(ip) == nil {
-		return "", errors.New("检测站返回的不是有效 IP")
+		return "", &fetchError{Kind: fetchNotIP}
 	}
 	return ip, nil
 }
@@ -114,13 +115,45 @@ func orUnavailable(a *App, ip string) string {
 func freePort() (int, error) {
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
-		return 0, e
+		// An IPv6-only host has no IPv4 loopback address to borrow a port from.
+		var e6 error
+		if l, e6 = net.Listen("tcp", "[::1]:0"); e6 != nil {
+			return 0, e
+		}
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// tailBuffer keeps the last bytes written to it (the end of an engine's log).
+type tailBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > t.max {
+		t.buf = t.buf[len(t.buf)-t.max:]
+	}
+	return len(p), nil
+}
+func (t *tailBuffer) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.buf)
+}
+
 func (a *App) withClient(config M, port int, fn func(string) error) error {
+	return a.withClientLog(config, port, func(proxy string, _ func() string) error { return fn(proxy) })
+}
+
+// withClientLog is withClient that also hands fn the tail of the client's error log, so a
+// failed request can be explained. The log can name hosts; it is never shown verbatim.
+func (a *App) withClientLog(config M, port int, fn func(string, func() string) error) error {
 	if e := a.EnsureEngine("sing-box"); e != nil {
 		return e
 	}
@@ -143,8 +176,9 @@ func (a *App) withClient(config M, port int, fn func(string) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, a.enginePath("sing-box"), "run", "-c", path)
+	logs := &tailBuffer{max: 16 << 10}
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = logs
 	if e = cmd.Start(); e != nil {
 		return e
 	}
@@ -176,7 +210,7 @@ func (a *App) withClient(config M, port int, fn func(string) error) error {
 	if !ready {
 		return errors.New("临时检测入口未就绪")
 	}
-	return fn("socks5://" + address)
+	return fn("socks5://"+address, logs.String)
 }
 
 func (a *App) ProbeProxy(p Proxy) (string, error) {
@@ -199,59 +233,4 @@ func (a *App) ProbeProxy(p Proxy) (string, error) {
 		return er
 	})
 	return ip, e
-}
-func (a *App) Probe(p Profile) error {
-	if !p.Enabled {
-		return errors.New("节点已停用")
-	}
-	v4, v6 := DetectPublicIPs()
-	a.printf("本服务器公网 IPv4：%s\n", orUnavailable(a, v4))
-	a.printf("本服务器公网 IPv6：%s\n", orUnavailable(a, v6))
-	a.say("正在通过本地入口测试完整连接…")
-	port, e := freePort()
-	if e != nil {
-		return e
-	}
-	host := p.Listen
-	if host == "0.0.0.0" {
-		host = "127.0.0.1"
-	}
-	if host == "::" {
-		host = "::1"
-	}
-	conf, e := ClientConfig(p, host, p.Port, port)
-	if e != nil {
-		return e
-	}
-	e = a.withClient(conf, port, func(proxy string) error {
-		// Either family proves the path; an IPv6-only exit is a working exit.
-		var first error
-		ok := false
-		for _, family := range []struct{ label, network string }{{"IPv4", "tcp4"}, {"IPv6", "tcp6"}} {
-			var ip string
-			var e error
-			for _, endpoint := range ipEndpoints[family.network] {
-				if ip, e = fetchIP(proxy, endpoint); e == nil {
-					break
-				}
-			}
-			if e != nil {
-				if first == nil {
-					first = e
-				}
-				a.printf("经此节点的出口 %s：不可用\n", family.label)
-				continue
-			}
-			ok = true
-			a.printf("经此节点的出口 %s：%s\n", family.label, ip)
-		}
-		if !ok {
-			return first
-		}
-		return nil
-	})
-	if e == nil {
-		a.say("本地入口、协议握手与出站请求均已通过；公网端口仍需用外部客户端验证")
-	}
-	return e
 }

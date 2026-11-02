@@ -173,4 +173,72 @@ func TestIntegrationSystemdSandboxProtocols(t *testing.T) {
 			}
 		})
 	}
+	// The native relay runs the same way: a real unit, the same sandbox, a copy of the manager.
+	for _, network := range []string{"tcp", "udp"} {
+		t.Run("native-relay-"+network, func(t *testing.T) {
+			var target string
+			if network == "tcp" {
+				echo, _ := net.Listen("tcp", "127.0.0.1:0")
+				defer echo.Close()
+				go func() {
+					for {
+						c, e := echo.Accept()
+						if e != nil {
+							return
+						}
+						go func() { defer c.Close(); io.Copy(c, c) }()
+					}
+				}()
+				target = echo.Addr().String()
+			} else {
+				echo, _ := net.ListenPacket("udp", "127.0.0.1:0")
+				defer echo.Close()
+				go func() {
+					b := make([]byte, 512)
+					for {
+						n, addr, e := echo.ReadFrom(b)
+						if e != nil {
+							return
+						}
+						echo.WriteTo(b[:n], addr)
+					}
+				}()
+				target = echo.LocalAddr().String()
+			}
+			port, _ := freePort()
+			p := nativeRelayProfile(inIPv4, outAuto, target, port)
+			p.ID, p.Name, p.Protocol, p.RelayMode = RandomHex(6), "native-"+network, network, relayLocal
+			s, _ := a.Load()
+			if e := a.Commit(s, replace(s, p), false); e != nil {
+				t.Fatal(e)
+			}
+			if got := capabilities(p); got != "0000000000000400" {
+				t.Fatal("unexpected native relay capability bounding set", got)
+			}
+			if _, e := os.Stat(a.relayHelper()); e != nil {
+				t.Fatal("relay helper was not installed", e)
+			}
+			if b, _ := os.ReadFile("/proc/" + servicePID("systemd", serviceName(p)) + "/cmdline"); !strings.Contains(string(b), "relay-serve") {
+				t.Fatalf("service command line %q", b)
+			}
+			c, e := net.DialTimeout(network, net.JoinHostPort("127.0.0.1", itoa(port)), time.Second)
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer c.Close()
+			c.SetDeadline(time.Now().Add(3 * time.Second))
+			c.Write([]byte("ping"))
+			b := make([]byte, 4)
+			if _, e = io.ReadFull(c, b); e != nil || string(b) != "ping" {
+				t.Fatal("sandboxed native relay failed", e)
+			}
+			// Restart recovery: the unit comes back after a restart with the same sockets.
+			if e = a.Restart(p.ID); e != nil {
+				t.Fatal(e)
+			}
+			if !listening(p) {
+				t.Fatal("native relay not listening after a restart")
+			}
+		})
+	}
 }

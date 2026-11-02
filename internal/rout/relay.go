@@ -146,27 +146,62 @@ func checkRelayDestination(p Profile) []relayCheck {
 		}
 		return out
 	}
+	dialer := NewPolicyDialer(p.outboundPolicy())
+	dialer.Timeout = relayDialTimeout
 	if net.ParseIP(h) == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), relayDialTimeout)
-		addrs, e := net.DefaultResolver.LookupHost(ctx, h)
+		res, e := dialer.Resolver.Resolve(ctx, h, true, true)
 		cancel()
-		if e != nil || len(addrs) == 0 {
+		if e != nil {
 			return append(out, relayCheck{warning: true, text: fmt.Sprintf("无法从本机解析域名 %s", h)})
 		}
-		out = append(out, relayCheck{ok: true, text: fmt.Sprintf("域名 %s 解析为 %s", h, strings.Join(addrs, ", "))})
+		v4, v6 := familySummary(res.Addrs)
+		out = append(out, relayCheck{ok: true, text: fmt.Sprintf("域名 %s 解析为 IPv4: %s；IPv6: %s", h, noneIfEmpty(v4), noneIfEmpty(v6))})
 	}
 	for _, n := range p.Networks() {
 		if n == "udp" {
 			out = append(out, relayCheck{warning: true, text: "UDP 没有连接握手，无法用连通性测试验证；请用实际客户端确认"})
 			continue
 		}
-		c, e := net.DialTimeout("tcp", p.Target, relayDialTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), relayDialTimeout+2*time.Second)
+		c, rep, e := dialer.DialContext(ctx, p.Target)
+		cancel()
 		if e != nil {
-			out = append(out, relayCheck{warning: true, text: fmt.Sprintf("本机无法建立到 %s 的 TCP 连接，请确认远程端口已开放", p.Target)})
+			out = append(out, relayCheck{warning: true, text: dialCheckText(p.Target, e)})
 			continue
 		}
 		c.Close()
-		out = append(out, relayCheck{ok: true, text: fmt.Sprintf("本机可以建立到 %s 的 TCP 连接（仅证明端口可达，不代表代理协议可用）", p.Target)})
+		out = append(out, relayCheck{ok: true, text: fmt.Sprintf("本机可以建立到 %s 的 TCP 连接（%s，仅证明端口可达，不代表代理协议可用）", p.Target, ipFamilyLabel(rep.Used.Addr()))})
 	}
 	return out
+}
+
+func noneIfEmpty(list []string) string {
+	if len(list) == 0 {
+		return "-"
+	}
+	return strings.Join(list, ", ")
+}
+
+// dialCheckText says why a connection check failed, by kind.
+func dialCheckText(target string, err error) string {
+	var de *DialError
+	if !errors.As(err, &de) {
+		return fmt.Sprintf("本机无法建立到 %s 的 TCP 连接，请确认远程端口已开放", target)
+	}
+	switch de.Kind {
+	case kindRefused:
+		return fmt.Sprintf("目标 %s 拒绝连接：端口未开放或服务未运行", target)
+	case kindTimeout:
+		return fmt.Sprintf("连接 %s 超时：目标不可达或被防火墙丢弃", target)
+	case kindUnreachable:
+		return fmt.Sprintf("本机没有到 %s 的路由", target)
+	case kindDNS:
+		return fmt.Sprintf("无法从本机解析 %s 的域名", target)
+	case kindFamily, kindNoAddress:
+		return fmt.Sprintf("目标 %s 没有符合出站策略的地址", target)
+	case kindLoop:
+		return fmt.Sprintf("目标 %s 指向本中转自身，会形成转发循环", target)
+	}
+	return fmt.Sprintf("本机无法建立到 %s 的 TCP 连接，请确认远程端口已开放", target)
 }

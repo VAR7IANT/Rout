@@ -1,5 +1,11 @@
 # Upgrading and rollback safety
 
+## Unreleased: address families, native relays and Remote server exits
+
+No migration and nothing restarts: existing nodes, relays (they keep running on GOST with their old configuration), exits, subscriptions, tokens, share links, AI routing and traffic state are unchanged, and unchanged entries serialize exactly as before. New relays run on the native forwarder, which needs no download but is started from a copy of the manager (`<bin-dir>/rout-relay-v1`, refreshed by `rout apply`; `rout doctor` reports a missing copy). To get IPv6-only, dual-stack or outbound-policy control on an existing relay, use **Edit relay → Change network** (a preview is shown; port, destination and link stay the same).
+
+Rollback: an older manager does not know the new fields. A native relay then runs as a GOST relay on its saved listening address (`0.0.0.0` or `::`), so IPv6-only and dual-stack behavior and the outbound policy are not honored; and it cannot load a state file containing a **Remote server exit** (`protocol: node`), so remove such exits or restore a pre-upgrade backup (taken automatically before every change) before downgrading. Explicit IPv6-only nodes keep the `::` listener with their IPv4-rejecting rule inside the node's own sing-box configuration, which an older manager rewrites without the rule on the next apply.
+
 ## To v0.3.10
 
 No migration. Subscriptions, tokens, nodes, relays, AI routing, traffic state and existing HTTPS ownership records are unchanged. **Deploy / repair HTTPS** now works when the saved public URL has no site behind it (for example after Caddy was uninstalled), rebuilds a Rout-managed fragment that vanished, and can repair an installed but stopped Caddy after a separate explicit confirmation; see [Repairing HTTPS when the saved URL has no site behind it](SUBSCRIPTIONS.md#repairing-https-when-the-saved-url-has-no-site-behind-it). Run `rout update`; the existing updater/installer works as before. Rollback: restore the previous manager; it only returns to the earlier, stricter refusal and leaves any deployed HTTPS configuration in place.

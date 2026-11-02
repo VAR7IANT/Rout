@@ -32,7 +32,7 @@ func testApp(t *testing.T) *App {
 }
 func testUI(a *App, input string) (*UI, *bytes.Buffer) {
 	out := &bytes.Buffer{}
-	return &UI{a: a, in: bufio.NewReader(strings.NewReader(input)), out: out, caps: func() listenCaps { return listenCaps{V4: true} }, detectIP: func() string { return "203.0.113.10" }, checkReality: func(string) error { return nil }}, out
+	return &UI{a: a, in: bufio.NewReader(strings.NewReader(input)), out: out, caps: func() listenCaps { return listenCaps{V4: true} }, routes: func() familyRoutes { return familyRoutes{V4: true} }, detectIP: func() string { return "203.0.113.10" }, checkReality: func(string) error { return nil }}, out
 }
 func TestLanguagePersistenceAndSwitch(t *testing.T) {
 	a := testApp(t)
@@ -325,7 +325,7 @@ func TestExitPreflightFailurePreservesNodes(t *testing.T) {
 	p := fixture(t, "vless")
 	p.Port, _ = freePort()
 	p.PublicPort = p.Port
-	ex := Exit{ID: RandomHex(6), Name: "Shared", Proxy: Proxy{"socks5", "192.0.2.10", 6719, "u", "p"}}
+	ex := Exit{ID: RandomHex(6), Name: "Shared", Proxy: Proxy{Protocol: "socks5", Host: "192.0.2.10", Port: 6719, Username: "u", Password: "p"}}
 	next := UpsertExit(replace(old, p), ex)
 	next, _ = BindExit(next, p.ID, ex.ID)
 	if e := a.Commit(old, next, false); e != nil {
