@@ -1,8 +1,10 @@
 package rout
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -148,7 +150,7 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 					c.node.Base64Why = e.Error()
 				} else {
 					c.baseLink = uri
-					c.linkKey = "link:" + stripFragment(uri)
+					c.linkKey = "link:" + remote.CanonicalLink(uri)
 				}
 			}
 		case itemRemote:
@@ -173,7 +175,7 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 			case !d.src.Enabled:
 				c.node.Original, c.node.Name, c.node.Protocol = n.Name, n.Name, n.Protocol
 				c.node.Skipped = "订阅源已停用"
-			case d.dis[n.ID]:
+			case d.dis[n.ID] || d.dis[it.RemoteID]:
 				c.node.Original, c.node.Name, c.node.Protocol = n.Name, n.Name, n.Protocol
 				c.node.Skipped = "节点已在订阅源中停用"
 			default:
@@ -187,7 +189,7 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 				c.node.Notes = append(c.node.Notes, n.Notes...)
 				if n.Link != "" {
 					c.baseLink = n.Link
-					c.linkKey = "link:" + stripFragment(n.Link)
+					c.linkKey = "link:" + remote.CanonicalLink(n.Link)
 				} else {
 					c.linkKey = "fp:" + n.Fingerprint
 				}
@@ -266,13 +268,6 @@ func shortID(n *AggNode) string {
 	return "本机 " + n.NodeID
 }
 
-func stripFragment(link string) string {
-	if i := strings.IndexByte(link, '#'); i >= 0 {
-		return link[:i]
-	}
-	return link
-}
-
 func fillLocal(out *AggregateExport, c *aggCand, sub Subscription) {
 	n, p := &c.node, c.local
 	if c.baseLink != "" {
@@ -298,7 +293,11 @@ func fillLocal(out *AggregateExport, c *aggCand, sub Subscription) {
 
 func fillRemote(out *AggregateExport, c *aggCand, sub Subscription) {
 	n, rn := &c.node, c.remote
-	if link, ok := rn.LinkNamed(n.Name); ok {
+	if rn.Link != "" && linkInsecure(rn.Link) && !sub.AllowInsecure {
+		// The same policy as the Mihomo output: no unverified TLS unless the subscription allows it.
+		n.Base64Why = "节点关闭了证书验证（allowInsecure），默认不导出；可在订阅设置中允许"
+		out.Warnings = append(out.Warnings, fmt.Sprintf("订阅项 %d（%s）无法生成 Base64 链接：%s", n.Index+1, shortID(n), n.Base64Why))
+	} else if link, ok := rn.LinkNamed(n.Name); ok {
 		if n.Name == rn.Name {
 			link = rn.Link
 		}
@@ -347,6 +346,38 @@ func mihomoRemote(n remote.Node, name string, allowInsecure bool) (M, error) {
 	return proxy, nil
 }
 
+// linkInsecure reports a share link that turns certificate verification off without pinning
+// the certificate (Reality does not verify certificates, so it is not affected).
+func linkInsecure(raw string) bool {
+	u, e := url.Parse(raw)
+	if e != nil {
+		return false
+	}
+	q := u.Query()
+	if q.Get("insecure") != "1" && q.Get("allowInsecure") != "1" {
+		return false
+	}
+	if !pinnedCertificate(q.Get("pinSHA256")) && !(q.Get("security") == "reality" && strings.TrimSpace(q.Get("pbk")) != "") {
+		return true
+	}
+	return false
+}
+
+// pinnedCertificate accepts a usable SHA-256 certificate pin (64 hex digits, optionally
+// colon-separated); an empty or malformed value pins nothing.
+func pinnedCertificate(v any) bool {
+	str, ok := v.(string)
+	if !ok {
+		return false
+	}
+	str = strings.ReplaceAll(strings.TrimSpace(str), ":", "")
+	if len(str) != 64 {
+		return false
+	}
+	_, e := hex.DecodeString(str)
+	return e == nil
+}
+
 // clashInsecure reports a proxy that turns certificate verification off without pinning the
 // certificate. Reality does not use certificate verification, so it is not affected.
 func clashInsecure(m map[string]any) bool {
@@ -354,11 +385,15 @@ func clashInsecure(m map[string]any) bool {
 	if !skip {
 		return false
 	}
-	if _, pinned := m["fingerprint"]; pinned {
+	if pinnedCertificate(m["fingerprint"]) {
 		return false
 	}
-	if _, reality := m["reality-opts"]; reality {
-		return false
+	if opts, ok := m["reality-opts"].(map[string]any); ok {
+		// Reality replaces certificate verification only with a real key; an empty or null
+		// block is ordinary TLS with verification turned off.
+		if pk, _ := opts["public-key"].(string); strings.TrimSpace(pk) != "" {
+			return false
+		}
 	}
 	return true
 }

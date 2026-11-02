@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/VAR7IANT/Rout/internal/remote"
 	"gopkg.in/yaml.v3"
@@ -230,14 +231,18 @@ func TestAggregateUnverifiedTLSIsRefusedUnlessAllowed(t *testing.T) {
 	if !strings.Contains(body, "cannot") && !strings.Contains(body, "无法生成") && !strings.Contains(body, "diagnostic") {
 		t.Errorf("no diagnostic for the omitted nodes:\n%s", body)
 	}
-	// Base64 keeps the provider's link, parameters included; the client decides.
+	// The same policy applies to Base64: unverified-TLS links are withheld by default.
 	_, b64 := sc.fetchFormat(t, h, token, "")
-	if lines := decodeBody(t, b64); len(lines) != 2 && len(lines) != 3 || !strings.Contains(strings.Join(lines, "\n"), "allowInsecure=1") {
-		t.Fatalf("Base64 lines: %v", lines)
+	if lines := decodeBody(t, b64); len(lines) != 1 || strings.Contains(strings.Join(lines, "\n"), "nsecure=1") {
+		t.Fatalf("Base64 exported unverified-TLS links by default: %v", lines)
 	}
 	// Explicit opt-in exports them with the setting the provider chose.
 	if e = sc.a.SetSubscriptionItems(sub.ID, AggregateSpec{Items: items, AllowInsecure: true}); e != nil {
 		t.Fatal(e)
+	}
+	_, b64 = sc.fetchFormat(t, h, token, "")
+	if joined := strings.Join(decodeBody(t, b64), "\n"); !strings.Contains(joined, "allowInsecure=1") {
+		t.Fatalf("opt-in Base64 lost the provider's link: %s", joined)
 	}
 	_, body = sc.fetchFormat(t, h, token, "mihomo")
 	doc := parseMihomoDoc(t, body)
@@ -567,5 +572,154 @@ func TestAggregateEditValidation(t *testing.T) {
 	// The CLI node editor refuses to flatten an aggregate.
 	if e = sc.a.SetSubscriptionNodes(sub.ID, []string{sc.nodes[0].ID}); e == nil {
 		t.Fatal("SetSubscriptionNodes silently dropped the third-party items")
+	}
+}
+
+// A node the administrator excluded at the source must stay excluded when the provider rotates
+// its credentials and the aggregate follows it to the replacement.
+func TestAggregateDisabledNodeStaysDisabledAfterCredentialRotation(t *testing.T) {
+	sc := newAggScene(t)
+	trojan := sc.rnode(t, sc.links, "JP Trojan")
+	_, token, e := sc.a.CreateAggregateSubscription("Disabled", AggregateSpec{Items: []SubItem{trojan, sc.local(0)}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	dis := []string{trojan.RemoteID}
+	if _, e = sc.a.UpdateRemoteSource(sc.links.ID, RemoteSourcePatch{DisabledNodes: &dis}); e != nil {
+		t.Fatal(e)
+	}
+	h := sc.server()
+	if _, body := sc.fetchFormat(t, h, token, ""); len(decodeBody(t, body)) != 1 {
+		t.Fatalf("setup: disabled node exported: %v", decodeBody(t, body))
+	}
+	sc.fsLinks.set(linkList(strings.Replace(linkTrojan, "trojanpw", "newpassword", 1), linkHy2), nil)
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), sc.links.ID); e != nil {
+		t.Fatal(e)
+	}
+	_, body := sc.fetchFormat(t, h, token, "")
+	if lines := decodeBody(t, body); len(lines) != 1 || strings.Contains(lines[0], "newpassword") {
+		t.Fatalf("credential rotation re-enabled an excluded node: %v", lines)
+	}
+}
+
+func TestEmptyOrMalformedFingerprintIsNotACertificatePin(t *testing.T) {
+	good := strings.Repeat("ab", 32)
+	for _, tc := range []struct {
+		fp     any
+		insec  bool
+		reason string
+	}{
+		{"", true, "empty"}, {"zz", true, "short"}, {strings.Repeat("g", 64), true, "not hex"}, {nil, true, "missing"}, {123, true, "not a string"},
+		{good, false, "plain sha256"}, {strings.ToUpper(good), false, "upper case"},
+	} {
+		m := map[string]any{"type": "hysteria2", "skip-cert-verify": true}
+		if tc.fp != nil {
+			m["fingerprint"] = tc.fp
+		}
+		if clashInsecure(m) != tc.insec {
+			t.Errorf("%s: insecure=%v want %v", tc.reason, !tc.insec, tc.insec)
+		}
+	}
+}
+
+// The editor sends the node IDs it was given back on save; after a credential rotation they must
+// be the IDs of the nodes the entries resolved to, or the save is rejected.
+func TestSubscriptionViewReturnsResolvedRemoteIDsAndSaveWorks(t *testing.T) {
+	sc := newAggScene(t)
+	old := sc.rnode(t, sc.links, "JP Trojan")
+	sub, _, e := sc.a.CreateAggregateSubscription("Rotate", AggregateSpec{Items: []SubItem{old, sc.local(0)}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	rotated := strings.Replace(linkTrojan, "trojanpw", "newpassword", 1)
+	sc.fsLinks.set(linkList(rotated, linkHy2), nil)
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), sc.links.ID); e != nil {
+		t.Fatal(e)
+	}
+	st := sc.state(t)
+	v := sc.a.subscriptionView(st, st.Subscriptions[0], time.Now(), nil)
+	if len(v.Items) != 2 || v.Items[0].Status != "ok" || v.Items[0].NodeID == old.RemoteID {
+		t.Fatalf("view still carries the obsolete id: %+v", v.Items[0])
+	}
+	var items []SubItem
+	for _, iv := range v.Items {
+		if iv.Kind == itemRemote {
+			items = append(items, SubItem{Kind: itemRemote, SourceID: iv.SourceID, RemoteID: iv.NodeID})
+		} else {
+			items = append(items, SubItem{Kind: itemLocal, NodeID: iv.NodeID})
+		}
+	}
+	if e = sc.a.SetSubscriptionItems(sub.ID, AggregateSpec{Items: items}); e != nil {
+		t.Fatalf("saving the items the view returned failed: %v", e)
+	}
+}
+
+// The same connection written with its query parameters in another order, by another provider,
+// is one connection for de-duplication; a genuinely different setting is not.
+func TestAggregateDedupeIgnoresQueryParameterOrder(t *testing.T) {
+	sc := newAggScene(t)
+	reordered := "trojan://trojanpw@203.0.113.20:443?type=ws&host=t.example.net&path=%2Fws&sni=t.example.net&security=tls#Other%20Name"
+	differentPath := "trojan://trojanpw@203.0.113.20:443?security=tls&sni=t.example.net&type=ws&host=t.example.net&path=%2Fother#Different"
+	other := &fakeSource{body: linkList(reordered, differentPath)}
+	sc.a.remoteFetch = other.fetch
+	src2, e := sc.a.AddRemoteSource(RemoteSourceSpec{Name: "Second", URL: "https://second.provider.test/s", Enabled: true})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), src2.ID); e != nil {
+		t.Fatal(e)
+	}
+	snap2 := snapshotOf(t, sc.a, src2.ID)
+	items := []SubItem{sc.rnode(t, sc.links, "JP Trojan")}
+	for _, n := range snap2.Nodes {
+		items = append(items, SubItem{Kind: itemRemote, SourceID: src2.ID, RemoteID: n.ID})
+	}
+	if len(items) != 3 {
+		t.Fatalf("setup: %d items", len(items))
+	}
+	_, token, e := sc.a.CreateAggregateSubscription("Order", AggregateSpec{Items: items, Dedupe: true})
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, body := sc.fetchFormat(t, sc.server(), token, "")
+	lines := decodeBody(t, body)
+	if len(lines) != 2 {
+		t.Fatalf("want the original plus the genuinely different configuration, got %v", lines)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "%2Fother") {
+		t.Fatalf("the distinct configuration was collapsed: %v", lines)
+	}
+}
+
+func TestEmptyRealityBlockDoesNotExemptInsecureProxy(t *testing.T) {
+	base := func() map[string]any { return map[string]any{"type": "trojan", "skip-cert-verify": true} }
+	for name, opts := range map[string]any{"null": nil, "empty map": map[string]any{}, "blank key": map[string]any{"public-key": " "}, "not a map": "x"} {
+		m := base()
+		m["reality-opts"] = opts
+		if !clashInsecure(m) {
+			t.Errorf("%s: exempted without usable Reality settings", name)
+		}
+	}
+	m := base()
+	m["reality-opts"] = map[string]any{"public-key": "abc", "short-id": "01"}
+	if clashInsecure(m) {
+		t.Error("a Reality node with a public key must not be treated as unverified TLS")
+	}
+}
+
+func TestLinkInsecureNeedsRealPinOrRealityKey(t *testing.T) {
+	good := strings.Repeat("cd", 32)
+	for link, want := range map[string]bool{
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1":                   true,
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1&pinSHA256=":        true,
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1&pinSHA256=zz":      true,
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1&pinSHA256=" + good: false,
+		"vless://u@h.example.org:443?security=reality&insecure=1":                     true,
+		"vless://u@h.example.org:443?security=reality&insecure=1&pbk=AAAA":            false,
+		"trojan://p@h.example.org:443?security=tls":                                   false,
+	} {
+		if got := linkInsecure(link); got != want {
+			t.Errorf("%s: got %v want %v", link, got, want)
+		}
 	}
 }

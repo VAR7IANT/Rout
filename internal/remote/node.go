@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"net/url"
 	"strings"
@@ -209,4 +210,72 @@ func deepCopy(v any) any {
 		return out
 	}
 	return v
+}
+
+// canonLink writes a share link in a canonical spelling: no #fragment, host in lower case,
+// query sorted, the default transport and an empty path left out. keepUser keeps the
+// credential (for comparing whole links); connSig drops it because the credential is already
+// part of the node's base identity.
+func canonLink(raw string, keepUser bool) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		l, _, _ := strings.Cut(raw, "#")
+		return l
+	}
+	u.Fragment = ""
+	if !keepUser {
+		u.User = nil
+	}
+	q := u.Query()
+	if q.Get("type") == "tcp" || q.Get("type") == "" {
+		q.Del("type") // the default transport is written explicitly by some producers
+	}
+	if q.Get("headerType") == "none" {
+		q.Del("headerType")
+	}
+	u.RawQuery = q.Encode()
+	u.Host = strings.ToLower(u.Host)
+	if u.Path == "/" {
+		u.Path = ""
+	}
+	return u.String()
+}
+
+// CanonicalLink is canonLink with the credential kept, for de-duplicating whole links.
+func CanonicalLink(raw string) string { return canonLink(raw, true) }
+
+// connSig is the node's complete connection configuration without its display name. It is
+// the share link in canonical form, so the same account written as a link or as a Clash
+// mapping gets the same signature; only when no link can be written does it fall back to the
+// original Mihomo mapping.
+func (n Node) connSig() string {
+	if n.Link != "" {
+		return "l:" + canonLink(n.Link, false)
+	}
+	if n.Clash != nil {
+		m := make(map[string]any, len(n.Clash))
+		for k, v := range n.Clash {
+			if k != "name" {
+				m[k] = v
+			}
+		}
+		b, _ := json.Marshal(m) // map keys are sorted: canonical
+		return "c:" + string(b)
+	}
+	return "-"
+}
+
+// dedupeKey identifies an exact repeat: same endpoint, credential and connection settings.
+func (n Node) dedupeKey() string { return n.Fingerprint + "\x00" + n.connSig() }
+
+// deriveIdentity sets the node's identity from its endpoint, credential AND complete connection
+// settings. The identity therefore depends only on the node itself: not on the order the
+// provider lists it in, and not on whether siblings with the same endpoint and credential
+// exist, so adding or removing a sibling never changes another node's ID. When a provider edits
+// a node's own settings its ID changes; saved references to a node whose endpoint is still
+// unique are re-found by the loose (protocol, host, port) lookup.
+func (n *Node) deriveIdentity() {
+	h := sha256.Sum256([]byte(n.Fingerprint + "\x00" + n.connSig()))
+	n.Fingerprint = hex.EncodeToString(h[:])
+	n.ID = n.Fingerprint[:12]
 }

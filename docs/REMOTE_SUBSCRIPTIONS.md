@@ -31,6 +31,8 @@ Only `http`/`https` URLs. The fetcher resolves the hostname, rejects loopback, p
 
 A subscription may now hold items of three kinds: a local node, a whole source, or specific nodes of a source. Order is explicit and editable; items can be renamed, deduplicated (by protocol + server + port + credential identity) and appear in several aggregates. Sources and local nodes are never modified. Output formats: Base64 and Mihomo YAML on the existing `/s/TOKEN` URL (`?format=mihomo`). Nodes that cannot be represented in a format are omitted and listed in a compatibility report (shown in the panel and returned by the API), never emitted as pseudo-valid configuration. sing-box JSON and Quantumult X output are not implemented.
 
+Entries that share protocol, server, port and credential but differ in any connection setting (WebSocket path, SNI, flow, ...) are different connection choices and are all imported; only an exact repeat (same settings, possibly another name) counts as a duplicate. A node's ID and fingerprint are derived from its endpoint, credential and complete connection settings (never its name), so they do not depend on the order the provider lists nodes in or on whether sibling variants exist; adding or removing a sibling does not change another node's ID. If a provider edits a node's own settings its ID changes; aggregate selections of a node whose endpoint is still unique are re-found by endpoint, while ambiguous ones are reported instead of guessed.
+
 A subscription without remote items produces byte-identical output to v0.4.0.
 
 ## Failure isolation

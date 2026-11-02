@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useI18n } from '../i18n'
+import { useI18n, type TFn } from '../i18n'
+import type { MessageKey } from '../i18n/catalog'
 import { api, download, saveBlob } from '../lib/api'
 import { formatBytes, formatDateTime, formatPercent, formatRelative, formatUptime, parseDate } from '../lib/format'
 import { useNow, useResource } from '../lib/hooks'
@@ -888,7 +889,7 @@ function RestoreCard() {
               <Notice tone="warn" title={t('sys.rs.warnings')}>
                 <ul className="plain-list">
                   {plan.warnings.map((w) => (
-                    <li key={w}>{w}</li>
+                    <li key={w}>{warningText(t, w)}</li>
                   ))}
                 </ul>
               </Notice>
@@ -944,4 +945,10 @@ function RestoreCard() {
       <span className="sr-only">{formatDateTime(undefined)}</span>
     </Card>
   )
+}
+
+const RESTORE_WARNINGS = ['plain_state_backup', 'sources_kept', 'aggregate_without_sources', 'snapshots_omitted'] as const
+
+function warningText(t: TFn, w: string): string {
+  return (RESTORE_WARNINGS as readonly string[]).includes(w) ? t(`sys.rs.warn.${w}` as MessageKey) : w
 }

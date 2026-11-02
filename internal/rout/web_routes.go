@@ -80,13 +80,30 @@ func (s *WebServer) checkPassword(c *reqCtx, cfg WebConfig, pw string) error {
 	case <-c.r.Context().Done():
 		return errBad("请求已取消")
 	}
+	// Failures recorded while this request waited for a hashing slot may have locked the
+	// client out: look again before spending a hash (and a guess) on it.
+	if ok, retry := s.limiter.check(ip); !ok {
+		return &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited", Msg: "尝试次数过多，请稍后再试", Retry: int(retry.Seconds()) + 1}
+	}
 	if !verifyPassword(cfg.PasswordHash, pw) {
 		s.limiter.failure(ip)
 		s.audit.add(s.now(), ip, "password rejected")
 		return &apiError{Status: http.StatusUnauthorized, Code: "invalid_credentials", Msg: "密码错误"}
 	}
+	// The password may have been changed (rout web passwd) while this request waited for a
+	// hashing slot or was hashing: the answer only counts for the password that is current now.
+	if !s.passwordUnchanged(cfg) {
+		return &apiError{Status: http.StatusConflict, Code: "password_changed", Msg: "管理密码刚刚被更改，请重新输入"}
+	}
 	s.limiter.success(ip)
 	return nil
+}
+
+// passwordUnchanged reads the configuration afresh (not through the short-lived cache) and
+// reports whether it still holds the password hash that was verified.
+func (s *WebServer) passwordUnchanged(verified WebConfig) bool {
+	cur, e := s.a.LoadWebConfig()
+	return e == nil && cur.PasswordHash == verified.PasswordHash && cur.PasswordChangedAt.Equal(verified.PasswordChangedAt)
 }
 
 func (s *WebServer) apiLogin(c *reqCtx) (any, error) {
@@ -102,6 +119,11 @@ func (s *WebServer) apiLogin(c *reqCtx) (any, error) {
 		return nil, e
 	}
 	token, sess := s.sessions.create(clientIP(c.r), c.r.UserAgent())
+	if !s.passwordUnchanged(cfg) {
+		// Changed between the check and the session: never hand out a session for the old password.
+		s.sessions.destroy(token)
+		return nil, &apiError{Status: http.StatusConflict, Code: "password_changed", Msg: "管理密码刚刚被更改，请重新输入"}
+	}
 	s.setCookie(c.w, c.r, cfg, token, cfg.maxAge())
 	s.audit.add(s.now(), clientIP(c.r), "login")
 	return map[string]any{"csrf": sess.CSRF, "session_id": sess.ID, "version": Version}, nil

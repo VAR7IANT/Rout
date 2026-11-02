@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/VAR7IANT/Rout/internal/remote"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,6 +37,9 @@ type BackupBundle struct {
 type RemoteBackup struct {
 	Sources   []RemoteSource             `json:"sources"`
 	Snapshots map[string]*RemoteSnapshot `json:"snapshots,omitempty"`
+	// SnapshotsOmitted is set when the imported node lists were left out to keep the file
+	// restorable; the sources themselves are complete and a refresh brings the nodes back.
+	SnapshotsOmitted bool `json:"snapshots_omitted,omitempty"`
 }
 
 // BackupBundle collects the current state and sources.
@@ -65,17 +69,39 @@ func (a *App) BackupBundle(now time.Time) (BackupBundle, error) {
 	return b, nil
 }
 
-// WriteBackupBundle writes the bundle to path with mode 0600.
-func (a *App) WriteBackupBundle(path string, now time.Time) error {
+// EncodeBackup serializes a full backup and guarantees that the result is within what
+// ParseBackup and the restore endpoint accept. Imported node lists can be large; when the
+// whole bundle would be too big they are left out (they are re-created by the next refresh)
+// and the bundle says so. If even the state and source definitions do not fit, the backup is
+// refused instead of producing a file that no restore path could read.
+func (a *App) EncodeBackup(now time.Time) ([]byte, error) {
 	b, e := a.BackupBundle(now)
 	if e != nil {
-		return e
+		return nil, e
 	}
 	raw, e := json.MarshalIndent(b, "", "  ")
 	if e != nil {
+		return nil, e
+	}
+	if len(raw)+1 > backupMaxSize && b.Remote != nil && len(b.Remote.Snapshots) > 0 {
+		b.Remote.Snapshots, b.Remote.SnapshotsOmitted = nil, true
+		if raw, e = json.MarshalIndent(b, "", "  "); e != nil {
+			return nil, e
+		}
+	}
+	if len(raw)+1 > backupMaxSize {
+		return nil, fmt.Errorf("备份超过 %d MiB 的恢复上限，无法生成可恢复的备份；请先删除不用的订阅源", backupMaxSize>>20)
+	}
+	return append(raw, '\n'), nil
+}
+
+// WriteBackupBundle writes the bundle to path with mode 0600.
+func (a *App) WriteBackupBundle(path string, now time.Time) error {
+	raw, e := a.EncodeBackup(now)
+	if e != nil {
 		return e
 	}
-	return AtomicWrite(path, append(raw, '\n'), 0600)
+	return AtomicWrite(path, raw, 0600)
 }
 
 // parsedBackup is a decoded and validated backup, ready to compare or apply.
@@ -86,6 +112,8 @@ type parsedBackup struct {
 	Snaps   map[string]*RemoteSnapshot
 	Created time.Time
 	Version string
+	// SnapshotsOmitted: the backup holds source definitions only; sources need a refresh.
+	SnapshotsOmitted bool
 }
 
 // ParseBackup accepts both formats: a v0.5.0 bundle and the plain state file that every
@@ -120,7 +148,8 @@ func ParseBackup(raw []byte) (*parsedBackup, error) {
 	if e != nil {
 		return nil, e
 	}
-	out := &parsedBackup{Full: true, State: st, Created: b.CreatedAt, Version: b.RoutVersion, Remote: remoteConfig{Schema: remoteSchema, Sources: []RemoteSource{}}, Snaps: map[string]*RemoteSnapshot{}}
+	omitted := b.Remote != nil && b.Remote.SnapshotsOmitted
+	out := &parsedBackup{Full: true, State: st, Created: b.CreatedAt, Version: b.RoutVersion, Remote: remoteConfig{Schema: remoteSchema, Sources: []RemoteSource{}}, Snaps: map[string]*RemoteSnapshot{}, SnapshotsOmitted: omitted}
 	if b.Remote != nil {
 		out.Remote.Sources = b.Remote.Sources
 		if e := out.Remote.validate(); e != nil {
@@ -255,6 +284,9 @@ func (a *App) PlanRestore(p *parsedBackup) (RestorePlan, error) {
 		pr = append(pr, x.ID+"|"+x.Name)
 	}
 	plan.Sources = idDiff(cr, pr)
+	if p.SnapshotsOmitted {
+		plan.Warnings = append(plan.Warnings, "snapshots_omitted")
+	}
 	if !p.Full {
 		plan.Warnings = append(plan.Warnings, "plain_state_backup")
 		if len(cr) > 0 {
@@ -327,10 +359,22 @@ func (a *App) RestoreBackup(p *parsedBackup) error {
 		return e
 	}
 	for _, src := range p.Remote.Sources {
-		if snap := p.Snaps[src.ID]; snap != nil {
-			if e = a.saveRemoteSnapshot(snap); e != nil {
-				return e
+		snap := p.Snaps[src.ID]
+		if snap == nil {
+			// No imported data came with this source: drop whatever the current installation
+			// cached for the same ID (it may come from a URL the backup does not know), so
+			// nothing fetched from another definition is exported under the restored one.
+			snap = &RemoteSnapshot{SourceID: src.ID, Nodes: []remote.Node{}, Status: RemoteStatus{State: "never"}}
+			if src.Kind == sourceKindStatic {
+				// A pasted source has no URL to refresh from: its content is the data. Parse it
+				// again so it keeps exporting after the restore.
+				if parsed, er := remote.Parse([]byte(src.Content)); er == nil && len(parsed.Nodes) > 0 {
+					snap = snapshotFrom(src.ID, parsed, nil, "", a.webNow())
+				}
 			}
+		}
+		if e = a.saveRemoteSnapshot(snap); e != nil {
+			return e
 		}
 	}
 	// Snapshots of sources that no longer exist are removed on the next scheduler pass.

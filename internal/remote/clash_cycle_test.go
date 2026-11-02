@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -164,5 +165,107 @@ func TestParseContextCancelled(t *testing.T) {
 	}
 	if _, err := ParseContext(context.Background(), []byte(b.String())); err != nil {
 		t.Fatalf("uncancelled parse failed: %v", err)
+	}
+}
+
+func TestImportKeepsDistinctConnectionConfigurations(t *testing.T) {
+	uuid := "11111111-1111-4111-8111-111111111111"
+	a := "vless://" + uuid + "@a.example.org:443?security=tls&sni=a.example.org&type=ws&path=%2Fone#A"
+	b := "vless://" + uuid + "@a.example.org:443?security=tls&sni=a.example.org&type=ws&path=%2Ftwo#B"
+	exact := "vless://" + uuid + "@a.example.org:443?security=tls&sni=a.example.org&type=ws&path=%2Fone#Renamed"
+	p, err := Parse([]byte(a + "\n" + b + "\n" + exact + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Nodes) != 2 || p.Duplicates != 1 {
+		t.Fatalf("nodes=%d duplicates=%d", len(p.Nodes), p.Duplicates)
+	}
+	if p.Nodes[0].ID == p.Nodes[1].ID || p.Nodes[0].Fingerprint == p.Nodes[1].Fingerprint {
+		t.Fatal("variants must have their own identity")
+	}
+	// Identity depends on the connection settings, not on the order the provider lists them.
+	r, _ := Parse([]byte(b + "\n" + a + "\n"))
+	byPath := func(p Parsed) map[string]string {
+		m := map[string]string{}
+		for _, n := range p.Nodes {
+			if strings.Contains(n.Link, "%2Fone") {
+				m["one"] = n.ID
+			} else {
+				m["two"] = n.ID
+			}
+		}
+		return m
+	}
+	if x, y := byPath(p), byPath(r); x["one"] != y["one"] || x["two"] != y["two"] || x["one"] == x["two"] {
+		t.Fatalf("identities changed with provider order: %v vs %v", x, y)
+	}
+	// Adding a sibling configuration must not change the identity of an existing one.
+	alone, _ := Parse([]byte(a + "\n"))
+	both, _ := Parse([]byte(a + "\n" + b + "\n"))
+	if alone.Nodes[0].ID != both.Nodes[0].ID || alone.Nodes[0].Fingerprint != both.Nodes[0].Fingerprint {
+		t.Fatal("adding a sibling variant changed the existing node's identity")
+	}
+	// A rename is not a different configuration.
+	renamed, _ := Parse([]byte(strings.Replace(a, "#A", "#Other", 1) + "\n"))
+	if renamed.Nodes[0].ID != alone.Nodes[0].ID {
+		t.Fatal("a rename changed the identity")
+	}
+
+	y := `
+proxies:
+  - {name: x1, type: trojan, server: t.example.org, port: 443, password: pw, network: ws, ws-opts: {path: /one}, sni: t.example.org}
+  - {name: x2, type: trojan, server: t.example.org, port: 443, password: pw, network: ws, ws-opts: {path: /two}, sni: t.example.org}
+  - {name: x3, type: trojan, server: t.example.org, port: 443, password: pw, network: ws, ws-opts: {path: /one}, sni: t.example.org}
+`
+	c, err := Parse([]byte(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Nodes) != 2 || c.Duplicates != 1 || c.Nodes[0].ID == c.Nodes[1].ID {
+		t.Fatalf("clash: nodes=%d dup=%d", len(c.Nodes), c.Duplicates)
+	}
+}
+
+func TestLegacyShadowsocksPasswordMayContainAt(t *testing.T) {
+	raw := "aes-128-gcm:p@ss@proxy.example.org:443"
+	link := "ss://" + base64.RawURLEncoding.EncodeToString([]byte(raw)) + "#legacy"
+	p, err := Parse([]byte(link + "\n"))
+	if err != nil || len(p.Nodes) != 1 {
+		t.Fatalf("err=%v nodes=%d issues=%+v", err, len(p.Nodes), p.Issues)
+	}
+	n := p.Nodes[0]
+	if n.Server != "proxy.example.org" || n.Port != 443 {
+		t.Fatalf("host/port split wrongly: %s:%d", n.Server, n.Port)
+	}
+	if n.Fingerprint == "" {
+		t.Fatal("no identity")
+	}
+}
+
+func TestAnyTLSFullCredentialIsPartOfIdentity(t *testing.T) {
+	p, err := Parse([]byte("anytls://account:first@proxy.example.org:443?sni=proxy.example.org\nanytls://account:second@proxy.example.org:443?sni=proxy.example.org\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Nodes) != 2 || p.Duplicates != 0 || p.Nodes[0].ID == p.Nodes[1].ID {
+		t.Fatalf("different passwords were merged: nodes=%d dup=%d", len(p.Nodes), p.Duplicates)
+	}
+}
+
+func TestClashPasswordMayEndWithColon(t *testing.T) {
+	doc := `
+proxies:
+  - {name: a, type: trojan, server: a.example.org, port: 443, password: "secret:"}
+  - {name: b, type: hysteria2, server: b.example.org, port: 443, password: "pw:"}
+  - {name: c, type: anytls, server: c.example.org, port: 443, password: "x:"}
+  - {name: d, type: ss, server: d.example.org, port: 8388, cipher: aes-128-gcm, password: "y:"}
+`
+	p, err := Parse([]byte(doc))
+	if err != nil || len(p.Nodes) != 4 {
+		t.Fatalf("err=%v nodes=%d issues=%+v", err, len(p.Nodes), p.Issues)
+	}
+	empty, _ := Parse([]byte("proxies:\n  - {name: e, type: trojan, server: e.example.org, port: 443, password: \"\"}\n"))
+	if len(empty.Nodes) != 0 {
+		t.Fatal("an empty password must still be refused")
 	}
 }

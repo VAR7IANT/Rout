@@ -421,16 +421,12 @@ func (s *WebServer) systemRoutes() {
 		return map[string]int{"fixed": c.a.FixPermissions()}, nil
 	})
 	s.handle("GET /api/system/backup", rr, func(c *reqCtx) (any, error) {
-		b, e := c.a.BackupBundle(s.now())
-		if e != nil {
-			return nil, e
-		}
-		raw, e := json.MarshalIndent(b, "", "  ")
+		raw, e := c.a.EncodeBackup(s.now())
 		if e != nil {
 			return nil, e
 		}
 		s.audit.add(s.now(), clientIP(c.r), "download backup")
-		return &rawResponse{ContentType: "application/json", Filename: "rout-backup-" + s.now().UTC().Format("20060102-150405") + ".json", Body: append(raw, '\n')}, nil
+		return &rawResponse{ContentType: "application/json", Filename: "rout-backup-" + s.now().UTC().Format("20060102-150405") + ".json", Body: raw}, nil
 	})
 	s.handle("POST /api/system/restore", routeOpts{reauth: true, body: backupMaxSize + 4096}, s.apiRestore)
 }

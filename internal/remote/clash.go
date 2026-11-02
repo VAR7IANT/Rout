@@ -376,6 +376,9 @@ func ParseClashContext(ctx context.Context, data []byte) (Parsed, error) {
 			continue
 		}
 		n, err := nodeFromClash(m)
+		if err == nil {
+			n.deriveIdentity()
+		}
 		if err != nil {
 			level := "error"
 			if IsPlaceholder(err) {
@@ -384,11 +387,11 @@ func ParseClashContext(ctx context.Context, data []byte) (Parsed, error) {
 			p.Issues = append(p.Issues, Issue{Level: level, Line: i + 1, Name: cleanName(asString(m["name"])), Protocol: truncate(strings.ToLower(asString(m["type"])), 20), Reason: err.Error()})
 			continue
 		}
-		if seen[n.ID] {
+		if seen[n.dedupeKey()] {
 			p.Duplicates++
 			continue
 		}
-		seen[n.ID] = true
+		seen[n.dedupeKey()] = true
 		p.Nodes = append(p.Nodes, n)
 		if len(p.Nodes) > MaxNodes {
 			return Parsed{}, fmt.Errorf("节点数量超过上限 %d", MaxNodes)
@@ -534,7 +537,7 @@ func nodeFromClash(m map[string]any) (Node, error) {
 		n.Security = "tls"
 		n.SNI = first(asString(m["sni"]), asString(m["servername"]))
 	}
-	if cred == "" || strings.HasSuffix(cred, ":") {
+	if cred == "" {
 		return Node{}, errors.New("缺少认证信息")
 	}
 	if placeholderHost(server) {
@@ -842,7 +845,7 @@ func base64RawURL(b []byte) string {
 // and account; a conversion that does not is reported instead of being published.
 func finishLink(link string, n Node) string {
 	link = SetName(link, n.Name)
-	back, err := ParseLink(link)
+	back, err := parseLinkNode(link)
 	if err != nil || back.Fingerprint != n.Fingerprint {
 		return ""
 	}

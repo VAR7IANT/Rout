@@ -42,6 +42,14 @@ func decodeB64(s string) ([]byte, error) {
 // ParseLink reads one share link. The returned node keeps the original link (with a
 // canonical form for legacy Shadowsocks), so nothing the source specified is dropped.
 func ParseLink(raw string) (Node, error) {
+	n, err := parseLinkNode(raw)
+	if err == nil {
+		n.deriveIdentity()
+	}
+	return n, err
+}
+
+func parseLinkNode(raw string) (Node, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > maxLinkBytes || strings.ContainsAny(raw, "\r\n\x00") {
 		return Node{}, errors.New("链接为空或过长")
@@ -119,6 +127,9 @@ func parseURLNode(raw, protocol string) (Node, error) {
 		n.Security = securityOf(first(q.Get("security"), "tls"))
 		n.Transport = transportOf(q.Get("type"))
 	case "anytls":
+		if pw, has := u.User.Password(); has {
+			cred += ":" + pw
+		}
 		n.Security = securityOf(first(q.Get("security"), "tls"))
 	case "hysteria2":
 		if pw, has := u.User.Password(); has {
@@ -225,10 +236,12 @@ func parseSS(raw string) (Node, error) {
 		if err != nil {
 			return Node{}, errors.New("Shadowsocks 链接无效")
 		}
-		cred, hp, ok := strings.Cut(string(dec), "@")
-		if !ok {
+		// The host:port is last; a password may itself contain '@'.
+		i := strings.LastIndex(string(dec), "@")
+		if i < 0 {
 			return Node{}, errors.New("Shadowsocks 链接无效")
 		}
+		cred, hp := string(dec)[:i], string(dec)[i+1:]
 		m, p, ok := strings.Cut(cred, ":")
 		if !ok {
 			return Node{}, errors.New("Shadowsocks 凭据无效")
@@ -295,11 +308,11 @@ func ParseLinks(text string) (Parsed, error) {
 			p.Issues = append(p.Issues, Issue{Level: level, Line: i + 1, Protocol: truncate(strings.ToLower(scheme), 20), Reason: err.Error()})
 			continue
 		}
-		if seen[n.ID] {
+		if seen[n.dedupeKey()] {
 			p.Duplicates++
 			continue
 		}
-		seen[n.ID] = true
+		seen[n.dedupeKey()] = true
 		p.Nodes = append(p.Nodes, n)
 		if len(p.Nodes) > MaxNodes {
 			return Parsed{}, fmt.Errorf("节点数量超过上限 %d", MaxNodes)
