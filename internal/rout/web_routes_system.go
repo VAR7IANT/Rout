@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-const webServiceName = "rout-web"
-
 type ServiceItem struct {
 	Unit  string `json:"unit"`
 	Kind  string `json:"kind"` // subscription, web, node, relay
@@ -193,7 +191,7 @@ func (a *App) serviceLog(st State, unit string, lines int) (string, error) {
 	case unit == "subscription":
 		name = a.subscriptionService()
 	case unit == "web":
-		name = webServiceName
+		name = a.webService()
 	case idPattern.MatchString(unit):
 		p, e := Find(st, unit)
 		if e != nil {

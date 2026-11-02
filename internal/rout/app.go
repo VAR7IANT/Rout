@@ -611,32 +611,17 @@ func (a *App) Backup(path string) error {
 	}
 	return AtomicWrite(path, b, 0600)
 }
+
+// Restore applies a backup file: either the plain state that `rout backup` writes (and every
+// earlier version wrote) or the full bundle that also carries third-party sources.
 func (a *App) Restore(path string) error {
 	b, e := os.ReadFile(path)
 	if e != nil {
 		return e
 	}
-	next, e := DecodeState(b)
+	p, e := ParseBackup(b)
 	if e != nil {
 		return e
 	}
-	old, e := a.Load()
-	if e != nil {
-		return e
-	}
-	for _, p := range old.Profiles {
-		if p.trafficPolicy().LimitBytes > 0 {
-			if _, er := Find(next, p.ID); er != nil {
-				return errors.New("备份缺少有限额节点，请先显式取消限额或删除节点")
-			}
-		}
-	}
-	for _, sub := range old.Subscriptions {
-		if sub.Plan != nil && sub.Plan.LimitBytes > 0 {
-			if _, er := findSubscription(next, sub.ID); er != nil {
-				return errors.New("备份缺少有流量额度的订阅，请先清除其额度或删除订阅")
-			}
-		}
-	}
-	return a.Commit(old, next, true)
+	return a.RestoreBackup(p)
 }
