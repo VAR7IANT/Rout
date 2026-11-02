@@ -127,6 +127,9 @@ func parseURLNode(raw, protocol string) (Node, error) {
 		n.Security = securityOf(first(q.Get("security"), "tls"))
 		n.Transport = transportOf(q.Get("type"))
 	case "anytls":
+		if pw, has := u.User.Password(); has {
+			cred += ":" + pw
+		}
 		n.Security = securityOf(first(q.Get("security"), "tls"))
 	case "hysteria2":
 		if pw, has := u.User.Password(); has {

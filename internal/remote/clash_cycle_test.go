@@ -241,3 +241,31 @@ func TestLegacyShadowsocksPasswordMayContainAt(t *testing.T) {
 		t.Fatal("no identity")
 	}
 }
+
+func TestAnyTLSFullCredentialIsPartOfIdentity(t *testing.T) {
+	p, err := Parse([]byte("anytls://account:first@proxy.example.org:443?sni=proxy.example.org\nanytls://account:second@proxy.example.org:443?sni=proxy.example.org\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Nodes) != 2 || p.Duplicates != 0 || p.Nodes[0].ID == p.Nodes[1].ID {
+		t.Fatalf("different passwords were merged: nodes=%d dup=%d", len(p.Nodes), p.Duplicates)
+	}
+}
+
+func TestClashPasswordMayEndWithColon(t *testing.T) {
+	doc := `
+proxies:
+  - {name: a, type: trojan, server: a.example.org, port: 443, password: "secret:"}
+  - {name: b, type: hysteria2, server: b.example.org, port: 443, password: "pw:"}
+  - {name: c, type: anytls, server: c.example.org, port: 443, password: "x:"}
+  - {name: d, type: ss, server: d.example.org, port: 8388, cipher: aes-128-gcm, password: "y:"}
+`
+	p, err := Parse([]byte(doc))
+	if err != nil || len(p.Nodes) != 4 {
+		t.Fatalf("err=%v nodes=%d issues=%+v", err, len(p.Nodes), p.Issues)
+	}
+	empty, _ := Parse([]byte("proxies:\n  - {name: e, type: trojan, server: e.example.org, port: 443, password: \"\"}\n"))
+	if len(empty.Nodes) != 0 {
+		t.Fatal("an empty password must still be refused")
+	}
+}

@@ -537,7 +537,7 @@ func nodeFromClash(m map[string]any) (Node, error) {
 		n.Security = "tls"
 		n.SNI = first(asString(m["sni"]), asString(m["servername"]))
 	}
-	if cred == "" || strings.HasSuffix(cred, ":") {
+	if cred == "" {
 		return Node{}, errors.New("缺少认证信息")
 	}
 	if placeholderHost(server) {
