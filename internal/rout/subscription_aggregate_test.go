@@ -573,3 +573,30 @@ func TestAggregateEditValidation(t *testing.T) {
 		t.Fatal("SetSubscriptionNodes silently dropped the third-party items")
 	}
 }
+
+// A node the administrator excluded at the source must stay excluded when the provider rotates
+// its credentials and the aggregate follows it to the replacement.
+func TestAggregateDisabledNodeStaysDisabledAfterCredentialRotation(t *testing.T) {
+	sc := newAggScene(t)
+	trojan := sc.rnode(t, sc.links, "JP Trojan")
+	_, token, e := sc.a.CreateAggregateSubscription("Disabled", AggregateSpec{Items: []SubItem{trojan, sc.local(0)}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	dis := []string{trojan.RemoteID}
+	if _, e = sc.a.UpdateRemoteSource(sc.links.ID, RemoteSourcePatch{DisabledNodes: &dis}); e != nil {
+		t.Fatal(e)
+	}
+	h := sc.server()
+	if _, body := sc.fetchFormat(t, h, token, ""); len(decodeBody(t, body)) != 1 {
+		t.Fatalf("setup: disabled node exported: %v", decodeBody(t, body))
+	}
+	sc.fsLinks.set(linkList(strings.Replace(linkTrojan, "trojanpw", "newpassword", 1), linkHy2), nil)
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), sc.links.ID); e != nil {
+		t.Fatal(e)
+	}
+	_, body := sc.fetchFormat(t, h, token, "")
+	if lines := decodeBody(t, body); len(lines) != 1 || strings.Contains(lines[0], "newpassword") {
+		t.Fatalf("credential rotation re-enabled an excluded node: %v", lines)
+	}
+}

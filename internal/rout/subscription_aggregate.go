@@ -174,7 +174,7 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 			case !d.src.Enabled:
 				c.node.Original, c.node.Name, c.node.Protocol = n.Name, n.Name, n.Protocol
 				c.node.Skipped = "订阅源已停用"
-			case d.dis[n.ID]:
+			case d.dis[n.ID] || d.dis[it.RemoteID]:
 				c.node.Original, c.node.Name, c.node.Protocol = n.Name, n.Name, n.Protocol
 				c.node.Skipped = "节点已在订阅源中停用"
 			default:
