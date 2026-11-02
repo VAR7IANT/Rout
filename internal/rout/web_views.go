@@ -250,7 +250,7 @@ type ExitView struct {
 	Warning       string   `json:"warning,omitempty"`
 }
 
-func exitView(s State, e Exit) ExitView {
+func exitView(a *App, s State, e Exit) ExitView {
 	v := ExitView{ID: e.ID, Name: e.Name, Kind: "classic", Protocol: e.Proxy.Protocol, Label: e.KindLabel(), Host: e.Proxy.Host, Port: e.Proxy.Port,
 		HasAuth: e.Proxy.Username != "" || e.Proxy.Password != "" || e.Proxy.Link != "", Transport: exitTransport(e.Proxy), RemoteNetwork: e.RemoteNetwork,
 		Nodes: []string{}, NodeIDs: []string{}}
@@ -261,7 +261,7 @@ func exitView(s State, e Exit) ExitView {
 		v.Protocol = linkScheme(e.Proxy.Link)
 	}
 	if w := proxySecurityWarning(e.Proxy); w != "" {
-		v.Warning = w
+		v.Warning = a.T(w)
 	}
 	refs := exitReferences(s, e.ID)
 	v.AI = refs.AI
@@ -331,7 +331,7 @@ func (a *App) subscriptionView(s State, sub Subscription, now time.Time, tokens 
 		for i, n := range exp.Nodes {
 			it := sub.Items[i]
 			iv := SubItemView{Kind: n.Kind, NodeID: it.NodeID, SourceID: it.SourceID, Source: n.Source, Name: n.Name, Custom: it.Name, Protocol: n.Protocol,
-				Status: "ok", Skipped: n.Skipped, Base64OK: n.Base64OK, Base64Why: n.Base64Why, MihomoOK: n.MihomoOK, MihomoWhy: n.MihomoWhy, Notes: n.Notes}
+				Status: "ok", Skipped: a.T(n.Skipped), Base64OK: n.Base64OK, Base64Why: a.T(n.Base64Why), MihomoOK: n.MihomoOK, MihomoWhy: a.T(n.MihomoWhy), Notes: a.translateAll(n.Notes)}
 			if it.Kind == itemRemote {
 				iv.NodeID = it.RemoteID
 			}
@@ -356,19 +356,19 @@ func (a *App) subscriptionView(s State, sub Subscription, now time.Time, tokens 
 			p, ok := byID[id]
 			switch {
 			case !ok:
-				iv.Status, iv.Skipped, iv.Base64OK = "skipped", "节点已删除", false
+				iv.Status, iv.Skipped, iv.Base64OK = "skipped", a.T("节点已删除"), false
 			case !p.Enabled:
 				iv.Name, iv.Protocol = p.Name, p.Protocol
-				iv.Status, iv.Skipped, iv.Base64OK = "skipped", "节点已停用", false
+				iv.Status, iv.Skipped, iv.Base64OK = "skipped", a.T("节点已停用"), false
 			default:
 				iv.Name, iv.Protocol = p.Name, p.Protocol
 				if _, e := p.URI(); e != nil {
-					iv.Base64OK, iv.Base64Why = false, e.Error()
+					iv.Base64OK, iv.Base64Why = false, a.Error(e)
 				}
 				if _, e := mihomoNode(p); e == nil {
 					iv.MihomoOK = true
 				} else {
-					iv.MihomoWhy = e.Error()
+					iv.MihomoWhy = a.Error(e)
 				}
 			}
 			v.Local++
@@ -407,5 +407,17 @@ func sortedProfiles(s State, kind string) []Profile {
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
+	return out
+}
+
+// translateAll translates a list of server-generated messages into the request language.
+func (a *App) translateAll(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = a.T(s)
+	}
 	return out
 }

@@ -9,16 +9,20 @@ import (
 )
 
 type subCreateReq struct {
-	Name          string    `json:"name"`
-	NodeIDs       []string  `json:"node_ids"`
-	Items         []SubItem `json:"items"`
-	Dedupe        bool      `json:"dedupe"`
-	AllowInsecure bool      `json:"allow_insecure"`
+	Name    string    `json:"name"`
+	NodeIDs []string  `json:"node_ids"`
+	Items   []SubItem `json:"items"`
+	// Aggregate asks for an aggregate subscription (custom names, third-party nodes, dedupe)
+	// even when the items alone would fit a standard one.
+	Aggregate     bool `json:"aggregate"`
+	Dedupe        bool `json:"dedupe"`
+	AllowInsecure bool `json:"allow_insecure"`
 }
 
 type subItemsReq struct {
 	NodeIDs       []string  `json:"node_ids"`
 	Items         []SubItem `json:"items"`
+	Aggregate     bool      `json:"aggregate"`
 	Dedupe        bool      `json:"dedupe"`
 	AllowInsecure bool      `json:"allow_insecure"`
 }
@@ -95,7 +99,7 @@ func (s *WebServer) subscriptionRoutes() {
 			sub Subscription
 			e   error
 		)
-		if len(req.Items) > 0 || req.Dedupe || req.AllowInsecure {
+		if len(req.Items) > 0 || req.Aggregate || req.Dedupe || req.AllowInsecure {
 			if len(req.NodeIDs) > 0 {
 				return nil, errBad("请只使用 items 或 node_ids 之一")
 			}
@@ -164,7 +168,7 @@ func (s *WebServer) subscriptionRoutes() {
 		}
 		// A subscription that has never used third-party nodes keeps its original code path
 		// (and byte-identical output) until the administrator actually adds one.
-		if !sub.aggregate() && !hasRemote && !req.Dedupe && !req.AllowInsecure {
+		if !sub.aggregate() && !hasRemote && !req.Aggregate && !req.Dedupe && !req.AllowInsecure {
 			ids := req.NodeIDs
 			for _, it := range req.Items {
 				if it.Kind != itemLocal || it.Name != "" {
@@ -425,10 +429,10 @@ func (s *WebServer) sourceNodes(c *reqCtx, id string) (any, error) {
 		}
 		for _, n := range snap.Nodes {
 			nodes = append(nodes, SourceNodeView{ID: n.ID, Name: n.Name, Protocol: n.Protocol, Server: n.Server, Port: n.Port, Transport: n.Transport,
-				Security: n.Security, SNI: n.SNI, UDP: n.UDP, Enabled: !dis[n.ID], LinkOK: n.Link != "", LinkIssue: n.LinkIssue, FromClash: n.Clash != nil, Notes: n.Notes})
+				Security: n.Security, SNI: n.SNI, UDP: n.UDP, Enabled: !dis[n.ID], LinkOK: n.Link != "", LinkIssue: c.a.T(n.LinkIssue), FromClash: n.Clash != nil, Notes: c.a.translateAll(n.Notes)})
 		}
 		for _, is := range snap.Issues {
-			issues = append(issues, SourceIssueView{Level: is.Level, Line: is.Line, Name: is.Name, Protocol: is.Protocol, Reason: urlInText.ReplaceAllString(is.Reason, "…")})
+			issues = append(issues, SourceIssueView{Level: is.Level, Line: is.Line, Name: is.Name, Protocol: is.Protocol, Reason: urlInText.ReplaceAllString(c.a.T(is.Reason), "…")})
 		}
 	}
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Line < issues[j].Line })

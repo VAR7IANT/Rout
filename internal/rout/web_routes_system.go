@@ -330,7 +330,7 @@ func (s *WebServer) apiHTTPS(c *reqCtx) (any, error) {
 	var v HTTPSView
 	v.Domain, v.Installed, v.Running, v.LocalRunning = r.Domain, r.Installed, r.Running, r.LocalRunning
 	v.RouteFound, v.RouteOK, v.Conflict = r.Route.Found, r.Route.Correct, r.Route.Conflict
-	v.Ownership, v.Renewal, v.LastError = r.Ownership, r.Renewal, urlInText.ReplaceAllString(r.LastError, "…")
+	v.Ownership, v.Renewal, v.LastError = r.Ownership, r.Renewal, urlInText.ReplaceAllString(c.a.T(r.LastError), "…")
 	v.DNS.A, v.DNS.AAAA = append([]string{}, r.DNS.A...), append([]string{}, r.DNS.AAAA...)
 	v.DNS.Matched, v.DNS.Proxied, v.DNS.Unsure = r.DNS.Matched, r.DNS.Cloudflare, r.DNS.Uncertain
 	vf := r.Verification
@@ -339,10 +339,10 @@ func (s *WebServer) apiHTTPS(c *reqCtx) (any, error) {
 		t := vf.Expires
 		v.Verified.Expires = &t
 	}
-	v.Verified.Error = urlInText.ReplaceAllString(vf.Error, "…")
+	v.Verified.Error = urlInText.ReplaceAllString(c.a.T(vf.Error), "…")
 	v.Issues = []string{}
 	for _, is := range r.Issues {
-		v.Issues = append(v.Issues, urlInText.ReplaceAllString(is, "…"))
+		v.Issues = append(v.Issues, urlInText.ReplaceAllString(c.a.T(is), "…"))
 	}
 	return v, nil
 }

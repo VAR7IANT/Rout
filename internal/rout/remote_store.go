@@ -552,6 +552,7 @@ func (a *App) remoteView(src RemoteSource, snap *RemoteSnapshot, refs []string) 
 	if snap != nil {
 		v.Format, v.Status, v.Entries, v.Valid = snap.Format, snap.Status, snap.Entries, len(snap.Nodes)
 		v.Duplicates, v.UserInfo, v.Title = snap.Duplicates, snap.UserInfo, snap.Title
+		v.Status.LastError = a.T(v.Status.LastError)
 		dis := map[string]bool{}
 		for _, id := range src.DisabledNodes {
 			dis[id] = true

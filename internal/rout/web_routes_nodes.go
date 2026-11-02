@@ -216,7 +216,7 @@ func (s *WebServer) nodeRoutes() {
 		}
 		out := []ExitView{}
 		for _, ex := range st.Exits {
-			out = append(out, exitView(st, ex))
+			out = append(out, exitView(c.a, st, ex))
 		}
 		return map[string]any{"exits": out}, nil
 	})
@@ -237,7 +237,7 @@ func (s *WebServer) nodeRoutes() {
 		if e != nil {
 			return nil, e
 		}
-		return map[string]any{"exit": exitView(st, fresh)}, nil
+		return map[string]any{"exit": exitView(c.a, st, fresh)}, nil
 	})
 	s.handle("PATCH /api/exits/{id}", r, func(c *reqCtx) (any, error) {
 		id, e := c.pathID("id")

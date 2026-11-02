@@ -1006,3 +1006,62 @@ func TestWebActivityLogRecordsChanges(t *testing.T) {
 		t.Error("the audit log keeps request contents")
 	}
 }
+
+// Server-generated explanations follow the language the browser asks for, so the English
+// interface never shows Chinese diagnostics.
+func TestWebExplanationsFollowTheRequestedLanguage(t *testing.T) {
+	s := newAPIScene(t)
+	c := s.c
+	sub, _ := s.create(t, "lang", 0, 1)
+	if e := s.a.SetNodesEnabled([]string{s.nodes[1].ID}, false); e != nil {
+		t.Fatal(e)
+	}
+	find := func(lang string) string {
+		w := c.do("GET", "/api/subscriptions", nil, withHeader("X-Rout-Lang", lang))
+		mustOK(t, w.Code, w.Body.String())
+		for _, sv := range listOf(t, jsonOf(t, w), "subscriptions") {
+			if sv["id"] != sub.ID {
+				continue
+			}
+			for _, it := range listOf(t, sv, "items") {
+				if it["status"] == "skipped" {
+					return it["skipped"].(string)
+				}
+			}
+		}
+		t.Fatal("no skipped item")
+		return ""
+	}
+	if got := find("zh-CN"); got != "节点已停用" {
+		t.Errorf("zh-CN: %q", got)
+	}
+	if got := find("en"); got != "The node is disabled" {
+		t.Errorf("en: %q", got)
+	}
+}
+
+// An explicit aggregate flag lets a subscription of local nodes use custom names without
+// third-party nodes; without it, local-only edits keep the legacy (byte-identical) path.
+func TestWebAggregateFlagEnablesCustomNamesForLocalNodes(t *testing.T) {
+	s := newAPIScene(t)
+	c := s.c
+	plain, _ := s.create(t, "plain-flag", 0, 1)
+	named := []map[string]any{{"kind": "local", "node_id": s.nodes[0].ID, "name": "Front door"}, {"kind": "local", "node_id": s.nodes[1].ID}}
+	if w := c.do("PUT", "/api/subscriptions/"+plain.ID+"/items", map[string]any{"items": named}); w.Code < 400 || w.Code >= 500 {
+		t.Fatalf("custom names without the flag: %d %s", w.Code, w.Body.String())
+	}
+	w := c.do("PUT", "/api/subscriptions/"+plain.ID+"/items", map[string]any{"items": named, "aggregate": true})
+	mustOK(t, w.Code, w.Body.String())
+	st, _ := s.a.Load()
+	i, _ := findSubscription(st, plain.ID)
+	if !st.Subscriptions[i].aggregate() || st.Subscriptions[i].Items[0].Name != "Front door" {
+		t.Fatalf("not an aggregate: %+v", st.Subscriptions[i])
+	}
+	// Creating works the same way.
+	w = c.do("POST", "/api/subscriptions", map[string]any{"name": "fresh-agg", "aggregate": true, "items": []map[string]any{{"kind": "local", "node_id": s.nodes[2].ID}}})
+	mustOK(t, w.Code, w.Body.String())
+	sv := jsonOf(t, w)["subscription"].(map[string]any)
+	if sv["aggregate"] != true {
+		t.Fatalf("created view: %v", sv)
+	}
+}
