@@ -355,7 +355,7 @@ See [docs/AI_ROUTING.md](docs/AI_ROUTING.md) for reproducible real-network tests
 
 ## Development and releases
 
-Go 1.23+ (CI builds with the current stable Go), standard library only. Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy engines are separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their own licenses.
+Go 1.23+ (CI builds with the current stable Go); the only third-party Go dependency is `gopkg.in/yaml.v3`. The web panel (v0.5.0) is built with Node 22 from `web/` and embedded into the binary; see [docs/WEB.md](docs/WEB.md) and [docs/REMOTE_SUBSCRIPTIONS.md](docs/REMOTE_SUBSCRIPTIONS.md). Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy engines are separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their own licenses.
 
 ```sh
 go test -race ./... && go vet ./...

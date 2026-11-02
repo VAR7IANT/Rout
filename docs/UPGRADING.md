@@ -1,5 +1,11 @@
 # Upgrading and rollback safety
 
+## To v0.5.0: web panel and third-party subscriptions
+
+Back up first: `sudo rout backup --full` (a v0.5.0 backup includes sources, snapshots and aggregate items). Then `sudo rout update` (or install the build). Nothing restarts and nothing is migrated: nodes, relays, exits, subscriptions, tokens, `/s/TOKEN` URLs and the CLI are unchanged, and subscriptions without remote items return the same bytes as before. The panel is opt-in: `sudo rout web passwd --generate && sudo rout web install` (see [WEB.md](WEB.md)). New state files (`web.json`, `remote-sources.json`, source snapshots) are created on first use with mode 0600.
+
+Rollback: stop the panel (`sudo rout web uninstall`), restore the previous manager binary. An older manager ignores the new files. Aggregate subscriptions mirror their local items in the legacy node list, so v0.4.0 still serves those local nodes, but it drops the remote items on its next state write; restore the v0.5.0 `rout backup --full` taken before the upgrade if you need to return to v0.5.0 with aggregates intact. Source URLs/credentials live only in the new 0600 file and are not part of v0.4.0 backups.
+
 ## To v0.4.0: address families, native relays and Remote server exits
 
 No migration and nothing restarts: existing nodes, relays (they keep running on GOST with their old configuration), exits, subscriptions, tokens, share links, AI routing and traffic state are unchanged, and unchanged entries serialize exactly as before. New relays run on the native forwarder, which needs no download but is started from a copy of the manager (`<bin-dir>/rout-relay-v1`, refreshed by `rout apply`; `rout doctor` reports a missing copy). To get IPv6-only, dual-stack or outbound-policy control on an existing relay, use **Edit relay → Change network** (a preview is shown; port, destination and link stay the same).
