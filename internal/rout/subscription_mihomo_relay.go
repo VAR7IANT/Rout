@@ -19,6 +19,15 @@ func mihomoRelay(p Profile) (M, error) {
 	if e != nil {
 		return nil, errors.New("中转缺少可转换的目标分享链接，请使用 Base64 或补充目标链接")
 	}
+	return mihomoFromLink(raw, p.Networks(), p.Protocol, false, false)
+}
+
+// mihomoFromLink converts one share link to a Mihomo proxy, refusing anything it cannot
+// represent faithfully. imported selects the slightly wider vocabulary of third-party
+// links (parameters that exporters add but that do not change how the node connects);
+// everything else is identical. Unverified TLS (insecure=1 without a certificate pin) is
+// refused unless the administrator explicitly allowed it for imported nodes.
+func mihomoFromLink(raw string, networks []string, relayProtocol string, imported, allowInsecure bool) (M, error) {
 	u, e := url.Parse(raw)
 	if e != nil || u.User == nil {
 		return nil, errors.New("中转分享链接无效")
@@ -41,8 +50,14 @@ func mihomoRelay(p Profile) (M, error) {
 	switch u.Scheme {
 	case "vless":
 		allow("security sni peer type flow encryption pbk sid fp alpn host path serviceName authority allowInsecure insecure")
+		if imported {
+			allow("headerType packetEncoding mode spx")
+		}
 	case "trojan":
 		allow("security sni peer type fp alpn pbk sid host path serviceName authority allowInsecure insecure")
+		if imported {
+			allow("headerType mode spx")
+		}
 	case "anytls":
 		allow("security sni peer fp alpn allowInsecure insecure")
 	case "ss":
@@ -67,6 +82,17 @@ func mihomoRelay(p Profile) (M, error) {
 	}
 	if u.Path != "" && u.Path != "/" {
 		return nil, errors.New("中转链接路径无法安全转换，请使用 Base64")
+	}
+	if imported {
+		if v := q.Get("headerType"); v != "" && v != "none" {
+			return nil, errors.New("headerType 伪装头无法转换为 Mihomo，请使用 Base64")
+		}
+		if v := q.Get("mode"); v != "" && v != "gun" {
+			return nil, errors.New("gRPC 模式无法转换为 Mihomo，请使用 Base64")
+		}
+		if v := q.Get("packetEncoding"); v != "" && v != "xudp" && v != "packet" {
+			return nil, errors.New("packetEncoding 值无法转换为 Mihomo，请使用 Base64")
+		}
 	}
 	if q.Get("sni") != "" && q.Get("peer") != "" && q.Get("sni") != q.Get("peer") {
 		return nil, errors.New("中转 TLS 名称冲突，请检查 SNI 设置")
@@ -128,7 +154,7 @@ func mihomoRelay(p Profile) (M, error) {
 		}
 	}
 	insecure := q.Get("insecure") == "1" || q.Get("allowInsecure") == "1"
-	if insecure && pin == "" {
+	if insecure && pin == "" && !(imported && allowInsecure) {
 		return nil, errors.New("拒绝导出未验证的 TLS 节点，请提供有效证书或证书指纹")
 	}
 	copied := *u
@@ -197,8 +223,13 @@ func mihomoRelay(p Profile) (M, error) {
 	if e != nil {
 		return nil, e
 	}
+	if pe := q.Get("packetEncoding"); imported && pe != "" && u.Scheme == "vless" {
+		proxy["packet-encoding"] = pe
+	}
 	if pin != "" {
 		proxy["fingerprint"] = strings.ToLower(pin)
+	} else if insecure {
+		proxy["skip-cert-verify"] = true
 	}
 	if cc := q.Get("congestion_control"); cc != "" && cc != "bbr" && cc != "cubic" && cc != "new_reno" {
 		return nil, errors.New("中转拥塞控制参数尚未验证，请使用 Base64")
@@ -221,13 +252,13 @@ func mihomoRelay(p Profile) (M, error) {
 	// A TCP-only relay cannot carry a QUIC protocol; a UDP-only Shadowsocks
 	// entry cannot be represented as a general Mihomo TCP+UDP proxy.
 	kind := proxy["type"]
-	if (kind == "tuic" || kind == "hysteria2") && !sharesNetwork(p.Networks(), []string{"udp"}) {
+	if (kind == "tuic" || kind == "hysteria2") && !sharesNetwork(networks, []string{"udp"}) {
 		return nil, errors.New("中转网络不支持目标节点协议")
 	}
-	if kind == "ss" && p.Protocol == "udp" {
+	if kind == "ss" && relayProtocol == "udp" {
 		return nil, errors.New("仅 UDP 的 Shadowsocks 无法完整表示为 Mihomo 节点，请使用 Base64")
 	}
-	if kind == "ss" && !sharesNetwork(p.Networks(), []string{"udp"}) {
+	if kind == "ss" && !sharesNetwork(networks, []string{"udp"}) {
 		proxy["udp"] = false
 	}
 	return proxy, nil

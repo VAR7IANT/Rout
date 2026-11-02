@@ -38,6 +38,99 @@ type Subscription struct {
 	// Optional shared traffic allowance, reset day and expiry shown to clients.
 	// Absent for subscriptions that never configured one, so their output is unchanged.
 	Plan *SubscriptionPlan `json:"plan,omitempty"`
+	// Items makes this an aggregate subscription: an ordered mix of Rout's own nodes and
+	// nodes imported from third-party sources (see subscription_aggregate.go). Absent for
+	// every subscription created by earlier versions, which keep using NodeIDs alone and
+	// produce byte-identical output. For an aggregate, NodeIDs mirrors its local items so
+	// older versions and the traffic pool still see the right local nodes.
+	Items  []SubItem `json:"items,omitempty"`
+	Dedupe bool      `json:"dedupe,omitempty"`
+	// AllowInsecure lets an aggregate carry imported nodes whose provider disabled
+	// certificate verification (skip-cert-verify). Off by default: such nodes are listed in
+	// the compatibility report instead of being exported.
+	AllowInsecure bool `json:"allow_insecure,omitempty"`
+}
+
+// SubItem is one entry of an aggregate subscription. It references a node; it never copies
+// one, so the source data and the real node configuration are never modified.
+type SubItem struct {
+	Kind     string `json:"kind"` // "local" or "remote"
+	NodeID   string `json:"node_id,omitempty"`
+	SourceID string `json:"source_id,omitempty"`
+	RemoteID string `json:"remote_id,omitempty"`
+	// Loose is protocol|host|port, used to re-find a remote node whose credentials the
+	// provider rotated.
+	Loose string `json:"loose,omitempty"`
+	// Name overrides the display name in this subscription only.
+	Name string `json:"name,omitempty"`
+}
+
+const (
+	itemLocal  = "local"
+	itemRemote = "remote"
+	// maxSubscriptionItems bounds an aggregate; remote nodes do not count toward the 200
+	// local-node limit.
+	maxSubscriptionItems = 2000
+)
+
+func (s Subscription) aggregate() bool { return len(s.Items) > 0 }
+
+// localIDs lists the local nodes of the subscription in order.
+func (s Subscription) localIDs() []string {
+	if !s.aggregate() {
+		return s.NodeIDs
+	}
+	var ids []string
+	for _, it := range s.Items {
+		if it.Kind == itemLocal {
+			ids = append(ids, it.NodeID)
+		}
+	}
+	return ids
+}
+
+// syncNodeIDs keeps the legacy mirror in step with Items.
+func (s *Subscription) syncNodeIDs() {
+	if s.aggregate() {
+		s.NodeIDs = s.localIDs()
+		if s.NodeIDs == nil {
+			s.NodeIDs = []string{}
+		}
+	}
+}
+
+func checkItems(items []SubItem) error {
+	if len(items) > maxSubscriptionItems {
+		return errors.New("订阅包含的节点过多")
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		var key string
+		switch it.Kind {
+		case itemLocal:
+			if !idPattern.MatchString(it.NodeID) || it.SourceID != "" || it.RemoteID != "" {
+				return errors.New("订阅条目无效")
+			}
+			key = "l:" + it.NodeID
+		case itemRemote:
+			if !idPattern.MatchString(it.SourceID) || !idPattern.MatchString(it.RemoteID) || it.NodeID != "" || len(it.Loose) > 300 {
+				return errors.New("订阅条目无效")
+			}
+			key = "r:" + it.SourceID + ":" + it.RemoteID
+		default:
+			return errors.New("订阅条目类型无效")
+		}
+		if seen[key] {
+			return errors.New("订阅条目重复")
+		}
+		seen[key] = true
+		if it.Name != "" {
+			if e := validSubscriptionName(it.Name); e != nil {
+				return errors.New("订阅内节点名称无效（1–80 个字符，不含换行）")
+			}
+		}
+	}
+	return nil
 }
 
 var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
@@ -45,6 +138,9 @@ var tokenHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func (s Subscription) clone() Subscription {
 	s.NodeIDs = append([]string(nil), s.NodeIDs...)
+	if s.Items != nil {
+		s.Items = append([]SubItem(nil), s.Items...)
+	}
 	if s.Plan != nil {
 		plan := *s.Plan
 		s.Plan = &plan
@@ -112,6 +208,9 @@ func (s State) validateSubscriptions() error {
 				return errors.New("订阅节点列表无效或重复")
 			}
 			seen[id] = true
+		}
+		if e := checkItems(sub.Items); e != nil {
+			return e
 		}
 	}
 	return nil
@@ -205,6 +304,16 @@ func pruneSubscriptionNode(s State, id string) State {
 			}
 		}
 		s.Subscriptions[i].NodeIDs = kept
+		if len(sub.Items) > 0 {
+			items := make([]SubItem, 0, len(sub.Items))
+			for _, it := range sub.Items {
+				if it.Kind == itemLocal && it.NodeID == id {
+					continue
+				}
+				items = append(items, it)
+			}
+			s.Subscriptions[i].Items = items
+		}
 	}
 	return s
 }
@@ -358,6 +467,9 @@ func (a *App) RenameSubscription(id, name string) error {
 // SetSubscriptionNodes replaces the ordered selection (add, remove and reorder all use it).
 func (a *App) SetSubscriptionNodes(id string, nodeIDs []string) error {
 	return a.editSubscription(id, func(s *State, sub *Subscription) error {
+		if sub.aggregate() {
+			return errors.New("此订阅含有第三方来源节点，请在 Web 面板中编辑")
+		}
 		if e := checkSubscriptionNodes(*s, nodeIDs); e != nil {
 			return e
 		}

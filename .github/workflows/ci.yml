@@ -18,6 +18,17 @@ jobs:
           # Build and test with a currently supported Go release (go.mod keeps 1.23 as the minimum).
           go-version: 'stable'
           cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Web panel - install, typecheck, test and build
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
+          npm run check
+          # The build is embedded into the Go binary below; it must be reproducible from source.
+          test -f ../internal/webui/dist/index.html
       - name: Read release version
         id: version
         run: |

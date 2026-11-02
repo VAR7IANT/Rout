@@ -1,0 +1,134 @@
+/* Design tokens. White / light grey / dark grey with one amber accent; flat surfaces, hairline
+   borders, no gradients and no translucency effects. Dark mode follows the system unless the
+   panel sets data-theme. */
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --surface-2: #fafaf8;
+  --sunken: #efeeea;
+  --line: #e4e3de;
+  --line-strong: #cfcdc6;
+  --text: #1d1d1b;
+  --muted: #66655f;
+  --subtle: #a09f98; /* borders and disabled marks only, never body text */
+
+  --accent: #f0a020;
+  --accent-hover: #e39512;
+  --accent-press: #d08808;
+  --on-accent: #1d1d1b;
+  --accent-ink: #8f5400;
+  --accent-soft: #fdf1d9;
+  --accent-line: #f1c778;
+  --focus: #c27800;
+
+  --ok: #1c7448;
+  --ok-soft: #e1f2e8;
+  --ok-line: #a9d6bd;
+  --warn: #8f5400;
+  --warn-soft: #fdf1d9;
+  --warn-line: #f1c778;
+  --error: #b03527;
+  --error-soft: #fbe6e2;
+  --error-line: #eeb2a9;
+
+  --chart-a: #e08a00;
+  --chart-b: #6b6a64;
+  --chart-grid: #e4e3de;
+
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 2px rgba(29, 29, 27, 0.06);
+  --shadow-overlay: 0 12px 32px rgba(29, 29, 27, 0.22);
+  --scrim: rgba(29, 29, 27, 0.45);
+
+  --font: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'PingFang TC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans CJK TC', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --side-w: 236px;
+  --gap: 16px;
+  --gutter: 28px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #151514;
+  --surface: #1e1e1c;
+  --surface-2: #232321;
+  --sunken: #121211;
+  --line: #34332f;
+  --line-strong: #4a4944;
+  --text: #ecebe6;
+  --muted: #a4a39b;
+  --subtle: #6f6e68;
+
+  --accent: #f5a623;
+  --accent-hover: #f7b13e;
+  --accent-press: #f9bd5a;
+  --on-accent: #1a1a18;
+  --accent-ink: #f7b84e;
+  --accent-soft: #3a2c12;
+  --accent-line: #6b4d17;
+  --focus: #f5a623;
+
+  --ok: #62c78f;
+  --ok-soft: #17301f;
+  --ok-line: #2c6342;
+  --warn: #f7b84e;
+  --warn-soft: #3a2c12;
+  --warn-line: #6b4d17;
+  --error: #f28b7d;
+  --error-soft: #3b1d19;
+  --error-line: #7a362d;
+
+  --chart-a: #f5a623;
+  --chart-b: #a4a39b;
+  --chart-grid: #34332f;
+
+  --shadow: none;
+  --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #151514;
+    --surface: #1e1e1c;
+    --surface-2: #232321;
+    --sunken: #121211;
+    --line: #34332f;
+    --line-strong: #4a4944;
+    --text: #ecebe6;
+    --muted: #a4a39b;
+    --subtle: #6f6e68;
+
+    --accent: #f5a623;
+    --accent-hover: #f7b13e;
+    --accent-press: #f9bd5a;
+    --on-accent: #1a1a18;
+    --accent-ink: #f7b84e;
+    --accent-soft: #3a2c12;
+    --accent-line: #6b4d17;
+    --focus: #f5a623;
+
+    --ok: #62c78f;
+    --ok-soft: #17301f;
+    --ok-line: #2c6342;
+    --warn: #f7b84e;
+    --warn-soft: #3a2c12;
+    --warn-line: #6b4d17;
+    --error: #f28b7d;
+    --error-soft: #3b1d19;
+    --error-line: #7a362d;
+
+    --chart-a: #f5a623;
+    --chart-b: #a4a39b;
+    --chart-grid: #34332f;
+
+    --shadow: none;
+    --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.55);
+    --scrim: rgba(0, 0, 0, 0.6);
+  }
+}

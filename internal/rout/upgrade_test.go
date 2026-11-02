@@ -414,6 +414,9 @@ func TestAutomaticCertificateAndPin(t *testing.T) {
 }
 func TestEnglishCatalogCoversAllApplicationMessages(t *testing.T) {
 	paths, _ := filepath.Glob("*.go")
+	// The import package's messages are shown through the same catalog.
+	more, _ := filepath.Glob("../remote/*.go")
+	paths = append(paths, more...)
 	for _, path := range paths {
 		if strings.HasSuffix(path, "_test.go") {
 			continue

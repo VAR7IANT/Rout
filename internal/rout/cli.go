@@ -57,6 +57,8 @@ var helpLines = [][2]string{
 	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
 	{"rout relays", "端口转发（中转）管理"},
 	{"rout subscription [list|status|restart|https|logs|plan|serve]", "订阅管理：菜单、列表、服务状态、重启、流量与到期设置；serve 为订阅服务进程"},
+	{"rout web [passwd|install|status|logs|host|https]", "Web 管理面板：设置密码、安装服务、查看状态、允许域名、HTTPS 反向代理配置"},
+	{"rout remote [list|refresh|delete]", "第三方订阅源：列表、立即刷新、删除（添加与编辑请使用 Web 面板）"},
 	{"rout ai [status|test|apply]", "AI 智能分流：菜单、状态、测试配置或重新应用"},
 	{"rout outbounds", "出站代理管理（旧名称 exits 仍可用）"},
 	{"rout traffic", "全部节点流量"},
@@ -67,6 +69,7 @@ var helpLines = [][2]string{
 	{"rout cert renew ID", "重新生成自签证书（客户端需重新导入）"},
 	{"rout apply", "校验并重新应用全部节点"},
 	{"rout backup|restore FILE", "备份或恢复配置"},
+	{"rout backup --full FILE", "完整备份：配置加第三方订阅源（含订阅地址，文件权限 0600）"},
 	{"rout settings", "语言、服务器默认设置与备份保留数量"},
 	{"rout engines", "下载并校验固定版本内核"},
 	{"rout update", "更新 Rout（拒绝降级）"},
@@ -185,6 +188,10 @@ func Run(args []string) (result error) {
 		return u.aiCommand(args)
 	case "subscription", "subscriptions":
 		return u.subscriptionCommand(args)
+	case "web":
+		return u.webCommand(args)
+	case "remote":
+		return u.remoteCommand(args)
 	case "settings":
 		if e := u.initLanguage(false); e != nil {
 			return e
@@ -200,6 +207,9 @@ func Run(args []string) (result error) {
 		}
 		return nil
 	case "backup", "restore":
+		if cmd == "backup" && len(args) == 3 && args[1] == "--full" {
+			return a.WriteBackupBundle(args[2], time.Now())
+		}
 		if len(args) != 2 {
 			return errors.New("请指定备份文件路径")
 		}
@@ -406,6 +416,9 @@ func (a *App) Uninstall() error {
 	}
 	if m, er := a.serviceManager(); er == nil {
 		if e = a.removeSubscriptionService(m); e != nil {
+			return e
+		}
+		if e = a.RemoveWebService(); e != nil {
 			return e
 		}
 	}

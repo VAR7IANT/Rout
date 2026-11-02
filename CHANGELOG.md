@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (v0.5.0 development)
+
+Web management panel and third-party subscription import/aggregation. Not released; version constant unchanged. **Not validated on a real VPS or with real clients/providers.**
+
+- **Web panel** (`rout web ...`, separate loopback-only `rout-web` service on 127.0.0.1:8790): React + TypeScript + Vite single-page app embedded in the binary; Dashboard, Nodes, Relays & exits, Subscriptions, Sources and System pages; zh-CN / zh-TW / en; light and dark; responsive. See [docs/WEB.md](docs/WEB.md).
+- **Security:** CLI-only password (PBKDF2-HMAC-SHA256, 600000), server-side sessions, HttpOnly/SameSite cookies, CSRF + Origin checks, Host allow-list, login rate limit, re-authentication for dangerous operations, redacted API views, audit log, strict CSP.
+- **Third-party subscriptions:** import Base64, Mihomo/Clash YAML, single links and other Rout instances (VLESS, SS, Trojan, Hysteria2, TUIC, AnyTLS) as separate sources with scheduled/manual refresh, last-good snapshots, parse-issue reports; SSRF-safe fetcher; aggregate subscriptions mixing local and remote nodes with Base64 and Mihomo output and a compatibility report. See [docs/REMOTE_SUBSCRIPTIONS.md](docs/REMOTE_SUBSCRIPTIONS.md).
+- Full backup/restore now covers the new data, with dry-run, confirmation and permission verification.
+- Dependency: `gopkg.in/yaml.v3` (first non-stdlib Go dependency). CI builds, typechecks, tests and audits the web app.
+- Compatibility and rollback: see [Upgrading](docs/UPGRADING.md).
+
 ## v0.4.0
 
 Architecture-level feature release: independent IPv4/IPv6 control, a native TCP/UDP relay engine, Remote server exits and layered diagnostics. Existing nodes, relays, exits, subscriptions and settings keep working without migration. **Real VPS/NAT acceptance has not been done for this release; see "Verification status" at the end of this section before deploying it to a production host.**
