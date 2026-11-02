@@ -924,7 +924,7 @@ func TestWebSystemEndpoints(t *testing.T) {
 		t.Fatal("system view exposes the password hash")
 	}
 	upd := jsonOf(t, c.do("POST", "/api/system/update-check", nil))
-	if upd["latest"] != "v0.5.0" || upd["available"] != true || upd["current"] != Version {
+	if upd["latest"] != "v9.9.9" || upd["available"] != true || upd["current"] != Version {
 		t.Fatalf("update: %v", upd)
 	}
 	s.env.ws.fetchLatest = func(context.Context) (string, error) { return "", context.DeadlineExceeded }
