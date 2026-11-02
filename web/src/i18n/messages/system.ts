@@ -196,6 +196,22 @@ export const system = {
   'sys.rs.sources': ['订阅源', '訂閱源', 'Sources'],
   'sys.rs.noChange': ['无变化', '無變化', 'No change'],
   'sys.rs.warnings': ['注意', '注意', 'Heads-up'],
+  'sys.rs.warn.plain_state_backup': [
+    '这是普通状态备份，不含第三方订阅源数据。',
+    '這是一般狀態備份，不含第三方訂閱源資料。',
+    'This is a plain state backup without third-party source data.',
+  ],
+  'sys.rs.warn.sources_kept': ['当前的第三方订阅源将保持不变。', '目前的第三方訂閱源將保持不變。', 'Current third-party sources are kept unchanged.'],
+  'sys.rs.warn.aggregate_without_sources': [
+    '备份中的聚合订阅引用了第三方订阅源，但备份不含这些源。',
+    '備份中的聚合訂閱引用了第三方訂閱源，但備份不含這些源。',
+    'Aggregate subscriptions in this backup refer to third-party sources the backup does not contain.',
+  ],
+  'sys.rs.warn.snapshots_omitted': [
+    '备份因体积过大省略了已导入的节点列表；恢复后请刷新各订阅源。',
+    '備份因體積過大省略了已匯入的節點清單；還原後請重新整理各訂閱源。',
+    'The backup was too large and leaves out imported node lists; refresh each source after restoring.',
+  ],
   'sys.rs.apply': ['执行恢复', '執行還原', 'Restore now'],
   'sys.rs.applyTitle': ['恢复备份', '還原備份', 'Restore this backup'],
   'sys.rs.applyMsg': ['将用备份替换当前配置。', '將用備份取代目前設定。', 'The current configuration is replaced by the backup.'],

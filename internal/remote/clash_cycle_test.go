@@ -166,3 +166,44 @@ func TestParseContextCancelled(t *testing.T) {
 		t.Fatalf("uncancelled parse failed: %v", err)
 	}
 }
+
+func TestImportKeepsDistinctConnectionConfigurations(t *testing.T) {
+	uuid := "11111111-1111-4111-8111-111111111111"
+	a := "vless://" + uuid + "@a.example.org:443?security=tls&sni=a.example.org&type=ws&path=%2Fone#A"
+	b := "vless://" + uuid + "@a.example.org:443?security=tls&sni=a.example.org&type=ws&path=%2Ftwo#B"
+	exact := "vless://" + uuid + "@a.example.org:443?security=tls&sni=a.example.org&type=ws&path=%2Fone#Renamed"
+	p, err := Parse([]byte(a + "\n" + b + "\n" + exact + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Nodes) != 2 || p.Duplicates != 1 {
+		t.Fatalf("nodes=%d duplicates=%d", len(p.Nodes), p.Duplicates)
+	}
+	if p.Nodes[0].ID == p.Nodes[1].ID || p.Nodes[0].Fingerprint == p.Nodes[1].Fingerprint {
+		t.Fatal("variants must have their own identity")
+	}
+	// The first variant keeps the plain endpoint/credential identity (stable references).
+	plain := fingerprintOf("vless", "a.example.org", 443, uuid)
+	if p.Nodes[0].Fingerprint != plain {
+		t.Fatalf("first variant changed identity")
+	}
+	// Re-importing in the same order is deterministic.
+	q, _ := Parse([]byte(a + "\n" + b + "\n"))
+	if q.Nodes[1].ID != p.Nodes[1].ID {
+		t.Fatal("variant identity not deterministic")
+	}
+
+	y := `
+proxies:
+  - {name: x1, type: trojan, server: t.example.org, port: 443, password: pw, network: ws, ws-opts: {path: /one}, sni: t.example.org}
+  - {name: x2, type: trojan, server: t.example.org, port: 443, password: pw, network: ws, ws-opts: {path: /two}, sni: t.example.org}
+  - {name: x3, type: trojan, server: t.example.org, port: 443, password: pw, network: ws, ws-opts: {path: /one}, sni: t.example.org}
+`
+	c, err := Parse([]byte(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Nodes) != 2 || c.Duplicates != 1 || c.Nodes[0].ID == c.Nodes[1].ID {
+		t.Fatalf("clash: nodes=%d dup=%d", len(c.Nodes), c.Duplicates)
+	}
+}

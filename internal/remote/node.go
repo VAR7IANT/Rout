@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"net/url"
 	"strings"
@@ -209,4 +210,44 @@ func deepCopy(v any) any {
 		return out
 	}
 	return v
+}
+
+// connSig is the node's complete connection configuration without its display name: the
+// original Mihomo mapping, or the share link minus its #fragment. Two entries that share an
+// endpoint and credential but differ here (a WebSocket path, SNI, flow, ...) are different
+// connection choices and must both survive an import.
+func (n Node) connSig() string {
+	if n.Clash != nil {
+		m := make(map[string]any, len(n.Clash))
+		for k, v := range n.Clash {
+			if k != "name" {
+				m[k] = v
+			}
+		}
+		b, _ := json.Marshal(m) // map keys are sorted: canonical
+		return "c:" + string(b)
+	}
+	l, _, _ := strings.Cut(n.Link, "#")
+	return "l:" + l
+}
+
+// dedupeKey identifies an exact repeat: same endpoint, credential and connection settings.
+func (n Node) dedupeKey() string { return n.Fingerprint + "\x00" + n.connSig() }
+
+// separateVariants gives every entry after the first that shares an endpoint and credential
+// with an earlier, differently configured one its own identity, so aggregates can address and
+// de-duplicate the variants independently. The first keeps the plain identity, which keeps
+// existing references stable.
+func separateVariants(nodes []Node) {
+	first := map[string]bool{}
+	for i := range nodes {
+		fp := nodes[i].Fingerprint
+		if !first[fp] {
+			first[fp] = true
+			continue
+		}
+		h := sha256.Sum256([]byte(fp + "\x00" + nodes[i].connSig()))
+		nodes[i].Fingerprint = hex.EncodeToString(h[:])
+		nodes[i].ID = nodes[i].Fingerprint[:12]
+	}
 }

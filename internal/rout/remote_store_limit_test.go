@@ -382,3 +382,72 @@ func TestRemoteRefreshCancelledParseReleasesSlot(t *testing.T) {
 		t.Fatalf("%d slots held after cancellation", len(remoteSem))
 	}
 }
+
+func TestFullBackupStaysRestorable(t *testing.T) {
+	a := testApp(t)
+	fs := &fakeSource{}
+	a.remoteFetch = fs.fetch
+	// Several sources whose imported node lists are big: the snapshots alone exceed the limit.
+	for i := 0; i < 6; i++ {
+		src, e := a.AddRemoteSource(RemoteSourceSpec{Name: fmt.Sprintf("big%d", i), Enabled: true, Content: linkVless})
+		if e != nil {
+			t.Fatal(e)
+		}
+		snap, _ := a.loadRemoteSnapshot(src.ID)
+		for len(snap.Nodes) < 5 {
+			snap.Nodes = append(snap.Nodes, snap.Nodes[0])
+		}
+		for j := range snap.Nodes {
+			snap.Nodes[j].Notes = []string{strings.Repeat("n", 1<<20)} // 5 MiB per source in total
+		}
+		if e = a.saveRemoteSnapshot(snap); e != nil {
+			t.Fatal(e)
+		}
+	}
+	raw, e := a.EncodeBackup(time.Now())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(raw) > backupMaxSize {
+		t.Fatalf("backup is %d bytes, restore accepts %d", len(raw), backupMaxSize)
+	}
+	p, e := ParseBackup(raw)
+	if e != nil {
+		t.Fatalf("the backup we generated cannot be parsed: %v", e)
+	}
+	if !p.SnapshotsOmitted || len(p.Remote.Sources) != 6 || len(p.Snaps) != 0 {
+		t.Fatalf("omitted=%v sources=%d snaps=%d", p.SnapshotsOmitted, len(p.Remote.Sources), len(p.Snaps))
+	}
+	plan, e := a.PlanRestore(p)
+	if e != nil || !containsStr(plan.Warnings, "snapshots_omitted") {
+		t.Fatalf("plan=%v err=%v", plan.Warnings, e)
+	}
+	path := filepath.Join(t.TempDir(), "b.json")
+	if e = a.WriteBackupBundle(path, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	if st, _ := os.Stat(path); st.Size() > backupMaxSize || st.Mode().Perm() != 0600 {
+		t.Fatalf("file %d %v", st.Size(), st.Mode())
+	}
+}
+
+func TestSmallFullBackupKeepsSnapshots(t *testing.T) {
+	a, _, src := remoteScene(t, linkList(linkVless, linkTrojan))
+	raw, e := a.EncodeBackup(time.Now())
+	if e != nil {
+		t.Fatal(e)
+	}
+	p, e := ParseBackup(raw)
+	if e != nil || p.SnapshotsOmitted || p.Snaps[src.ID] == nil {
+		t.Fatalf("snapshots lost from a small backup: %v", e)
+	}
+}
+
+func containsStr(l []string, s string) bool {
+	for _, x := range l {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

@@ -53,7 +53,7 @@ Prefer the SSH tunnel. To publish it, put it behind a reverse proxy that you con
 
 ## Settings and backup
 
-System → Panel settings changes port (1024–65535), session idle and absolute lifetime. A restart is required for the port. System → Backup creates the same archive as `rout backup --full`, now including third-party sources, snapshots and aggregate items (never the web password hash). Restore shows a dry-run plan first, requires typing `RESTORE`, a recent re-authentication and fixes file permissions; maximum archive size 24 MiB.
+System → Panel settings changes port (1024–65535), session idle and absolute lifetime. A restart is required for the port. System → Backup creates the same archive as `rout backup --full`, now including third-party sources, snapshots and aggregate items (never the web password hash). Restore shows a dry-run plan first, requires typing `RESTORE`, a recent re-authentication and fixes file permissions; maximum archive size 24 MiB. A full backup is always generated within that limit: if the imported node lists would make it larger they are left out (the backup says so and the restore plan warns; refresh the sources afterwards), and if even the state and source definitions do not fit, the backup is refused with a message instead of producing a file no restore could read.
 
 ## Build from source
 

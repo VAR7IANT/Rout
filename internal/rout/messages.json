@@ -1358,6 +1358,7 @@
  "headerType 伪装头无法转换为 Mihomo，请使用 Base64":"headerType masquerading cannot be converted to Mihomo; use Base64",
  "gRPC 模式无法转换为 Mihomo，请使用 Base64":"This gRPC mode cannot be converted to Mihomo; use Base64",
  "packetEncoding 值无法转换为 Mihomo，请使用 Base64":"This packetEncoding value cannot be converted to Mihomo; use Base64",
+ "备份超过 %d MiB 的恢复上限，无法生成可恢复的备份；请先删除不用的订阅源":"The backup exceeds the %d MiB restore limit, so a restorable backup cannot be produced; delete unused sources first",
  "YAML 含有循环引用，已拒绝":"The YAML contains a circular reference and was rejected",
  "第三方订阅配置为 %d 字节，超过 %d 字节上限；请删除不用的订阅源或缩短粘贴内容（删除操作仍然可用）":"The third-party subscription configuration is %d bytes, over the %d byte limit; delete unused sources or shorten pasted content (deleting still works)",
  "第三方订阅配置文件异常过大，无法自动恢复，请手动检查 remote/sources.json":"The third-party subscription configuration file is abnormally large and cannot be recovered automatically; inspect remote/sources.json by hand",

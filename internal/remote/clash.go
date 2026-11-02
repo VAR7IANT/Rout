@@ -384,16 +384,17 @@ func ParseClashContext(ctx context.Context, data []byte) (Parsed, error) {
 			p.Issues = append(p.Issues, Issue{Level: level, Line: i + 1, Name: cleanName(asString(m["name"])), Protocol: truncate(strings.ToLower(asString(m["type"])), 20), Reason: err.Error()})
 			continue
 		}
-		if seen[n.ID] {
+		if seen[n.dedupeKey()] {
 			p.Duplicates++
 			continue
 		}
-		seen[n.ID] = true
+		seen[n.dedupeKey()] = true
 		p.Nodes = append(p.Nodes, n)
 		if len(p.Nodes) > MaxNodes {
 			return Parsed{}, fmt.Errorf("节点数量超过上限 %d", MaxNodes)
 		}
 	}
+	separateVariants(p.Nodes)
 	return p, nil
 }
 
