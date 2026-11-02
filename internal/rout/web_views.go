@@ -72,10 +72,43 @@ func (a *App) nodeTrafficFrom(db TrafficState, p Profile) TrafficView {
 type serviceCache struct {
 	mu    sync.Mutex
 	at    time.Time
+	gen   uint64
 	state map[string]string
 }
 
 var svcCache serviceCache
+
+// get returns the cached state for key, or runs lookup (without holding the lock) and caches
+// its answer. An invalidation that happens while lookup runs bumps gen: the answer is still
+// returned to this caller but is not stored, since it may predate the change.
+func (c *serviceCache) get(key string, lookup func() string) string {
+	c.mu.Lock()
+	if c.state == nil || time.Since(c.at) > 3*time.Second {
+		c.state, c.at = map[string]string{}, time.Now()
+	}
+	if v, ok := c.state[key]; ok {
+		c.mu.Unlock()
+		return v
+	}
+	gen := c.gen
+	c.mu.Unlock()
+
+	v := lookup()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen == gen && c.state != nil {
+		c.state[key] = v
+	}
+	return v
+}
+
+func (c *serviceCache) invalidate() {
+	c.mu.Lock()
+	c.gen++
+	c.state = nil
+	c.mu.Unlock()
+}
 
 // serviceStateOf returns running, stopped, disabled, unmanaged or unknown.
 func (a *App) serviceStateOf(p Profile) string {
@@ -89,32 +122,16 @@ func (a *App) serviceStateOf(p Profile) string {
 	if m == "none" {
 		return "unmanaged"
 	}
-	key := a.Home + "/" + p.ID
-	svcCache.mu.Lock()
-	if time.Since(svcCache.at) > 3*time.Second || svcCache.state == nil {
-		svcCache.state, svcCache.at = map[string]string{}, time.Now()
-	}
-	if v, ok := svcCache.state[key]; ok {
-		svcCache.mu.Unlock()
-		return v
-	}
-	svcCache.mu.Unlock()
-	v := "stopped"
-	if serviceActive(m, serviceName(p)) {
-		v = "running"
-	}
-	svcCache.mu.Lock()
-	svcCache.state[key] = v
-	svcCache.mu.Unlock()
-	return v
+	return svcCache.get(a.Home+"/"+p.ID, func() string {
+		if serviceActive(m, serviceName(p)) {
+			return "running"
+		}
+		return "stopped"
+	})
 }
 
 // invalidateServiceStates is called after a change so the next list is fresh.
-func invalidateServiceStates() {
-	svcCache.mu.Lock()
-	svcCache.state = nil
-	svcCache.mu.Unlock()
-}
+func invalidateServiceStates() { svcCache.invalidate() }
 
 type CertView struct {
 	Days       int  `json:"days"`

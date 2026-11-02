@@ -234,19 +234,20 @@ func (n Node) connSig() string {
 // dedupeKey identifies an exact repeat: same endpoint, credential and connection settings.
 func (n Node) dedupeKey() string { return n.Fingerprint + "\x00" + n.connSig() }
 
-// separateVariants gives every entry after the first that shares an endpoint and credential
-// with an earlier, differently configured one its own identity, so aggregates can address and
-// de-duplicate the variants independently. The first keeps the plain identity, which keeps
-// existing references stable.
+// separateVariants gives entries that share an endpoint and credential but differ in
+// connection settings identities derived from those settings, for every member of the group,
+// so the identity does not depend on the order the provider lists them in. Entries with a
+// unique endpoint keep the plain identity (stable across edits of their other settings).
 func separateVariants(nodes []Node) {
-	first := map[string]bool{}
+	count := map[string]int{}
 	for i := range nodes {
-		fp := nodes[i].Fingerprint
-		if !first[fp] {
-			first[fp] = true
+		count[nodes[i].Fingerprint]++
+	}
+	for i := range nodes {
+		if count[nodes[i].Fingerprint] < 2 {
 			continue
 		}
-		h := sha256.Sum256([]byte(fp + "\x00" + nodes[i].connSig()))
+		h := sha256.Sum256([]byte(nodes[i].Fingerprint + "\x00" + nodes[i].connSig()))
 		nodes[i].Fingerprint = hex.EncodeToString(h[:])
 		nodes[i].ID = nodes[i].Fingerprint[:12]
 	}

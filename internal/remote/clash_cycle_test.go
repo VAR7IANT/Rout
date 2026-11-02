@@ -182,15 +182,32 @@ func TestImportKeepsDistinctConnectionConfigurations(t *testing.T) {
 	if p.Nodes[0].ID == p.Nodes[1].ID || p.Nodes[0].Fingerprint == p.Nodes[1].Fingerprint {
 		t.Fatal("variants must have their own identity")
 	}
-	// The first variant keeps the plain endpoint/credential identity (stable references).
-	plain := fingerprintOf("vless", "a.example.org", 443, uuid)
-	if p.Nodes[0].Fingerprint != plain {
-		t.Fatalf("first variant changed identity")
+	// Identity depends on the connection settings, not on the order the provider lists them.
+	r, _ := Parse([]byte(b + "\n" + a + "\n"))
+	byPath := func(p Parsed) map[string]string {
+		m := map[string]string{}
+		for _, n := range p.Nodes {
+			if strings.Contains(n.Link, "%2Fone") {
+				m["one"] = n.ID
+			} else {
+				m["two"] = n.ID
+			}
+		}
+		return m
 	}
-	// Re-importing in the same order is deterministic.
-	q, _ := Parse([]byte(a + "\n" + b + "\n"))
-	if q.Nodes[1].ID != p.Nodes[1].ID {
-		t.Fatal("variant identity not deterministic")
+	if x, y := byPath(p), byPath(r); x["one"] != y["one"] || x["two"] != y["two"] || x["one"] == x["two"] {
+		t.Fatalf("identities changed with provider order: %v vs %v", x, y)
+	}
+	plain := fingerprintOf("vless", "a.example.org", 443, uuid)
+	for _, n := range p.Nodes {
+		if n.Fingerprint == plain {
+			t.Fatal("variants of one endpoint must not share the plain identity")
+		}
+	}
+	// A node with a unique endpoint keeps the plain identity whatever its settings.
+	u, _ := Parse([]byte(a + "\n"))
+	if u.Nodes[0].Fingerprint != plain {
+		t.Fatal("unique node lost its plain identity")
 	}
 
 	y := `
