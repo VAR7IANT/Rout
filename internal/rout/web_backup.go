@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/VAR7IANT/Rout/internal/remote"
 	"os"
 	"path/filepath"
 	"sort"
@@ -358,10 +359,15 @@ func (a *App) RestoreBackup(p *parsedBackup) error {
 		return e
 	}
 	for _, src := range p.Remote.Sources {
-		if snap := p.Snaps[src.ID]; snap != nil {
-			if e = a.saveRemoteSnapshot(snap); e != nil {
-				return e
-			}
+		snap := p.Snaps[src.ID]
+		if snap == nil {
+			// No imported data came with this source: drop whatever the current installation
+			// cached for the same ID (it may come from a URL the backup does not know), so
+			// nothing fetched from another definition is exported under the restored one.
+			snap = &RemoteSnapshot{SourceID: src.ID, Nodes: []remote.Node{}, Status: RemoteStatus{State: "never"}}
+		}
+		if e = a.saveRemoteSnapshot(snap); e != nil {
+			return e
 		}
 	}
 	// Snapshots of sources that no longer exist are removed on the next scheduler pass.

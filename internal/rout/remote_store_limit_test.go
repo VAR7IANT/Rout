@@ -451,3 +451,31 @@ func containsStr(l []string, s string) bool {
 	}
 	return false
 }
+
+// Restoring a backup that carries no node list for a source must not leave the list that the
+// installation cached for the same ID (possibly fetched from a newer URL).
+func TestRestoreWithoutSnapshotsResetsCachedSnapshots(t *testing.T) {
+	a, _, src := remoteScene(t, linkList(linkVless, linkTrojan))
+	if len(snapshotOf(t, a, src.ID).Nodes) == 0 {
+		t.Fatal("setup: no cached nodes")
+	}
+	st, e := a.Load()
+	if e != nil {
+		t.Fatal(e)
+	}
+	cfg, e := a.loadRemoteConfig()
+	if e != nil {
+		t.Fatal(e)
+	}
+	e = a.RestoreBackup(&parsedBackup{Full: true, SnapshotsOmitted: true, State: st, Remote: cfg, Snaps: map[string]*RemoteSnapshot{}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := snapshotOf(t, a, src.ID)
+	if len(got.Nodes) != 0 || got.Status.State != "never" {
+		t.Fatalf("stale snapshot survived the restore: %d nodes, state %q", len(got.Nodes), got.Status.State)
+	}
+	if _, e = a.RemoteSources(); e != nil {
+		t.Fatal(e)
+	}
+}
