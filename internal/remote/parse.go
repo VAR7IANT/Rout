@@ -2,6 +2,7 @@ package remote
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -18,16 +19,19 @@ var (
 // Parse reads a subscription body in any supported format: Clash/Mihomo YAML, a list of share
 // links, or either of those wrapped in Base64. The detected format is reported; unsupported
 // formats produce an explanatory error instead of an empty result.
-func Parse(body []byte) (Parsed, error) {
+func Parse(body []byte) (Parsed, error) { return ParseContext(context.Background(), body) }
+
+// ParseContext is Parse that stops promptly when ctx is cancelled or times out.
+func ParseContext(ctx context.Context, body []byte) (Parsed, error) {
 	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
 	text := strings.TrimSpace(string(body))
 	if text == "" {
 		return Parsed{}, errors.New("订阅内容为空")
 	}
-	return parseText(text, 0)
+	return parseText(ctx, text, 0)
 }
 
-func parseText(text string, depth int) (Parsed, error) {
+func parseText(ctx context.Context, text string, depth int) (Parsed, error) {
 	switch {
 	case singboxHint.MatchString(text):
 		return Parsed{}, errors.New("暂不支持导入 sing-box JSON 订阅，请使用 Base64 或 Clash/Mihomo 格式")
@@ -35,7 +39,7 @@ func parseText(text string, depth int) (Parsed, error) {
 		if providerHint.MatchString(text) && !regexp.MustCompile(`(?m)^proxies[ \t]*:`).MatchString(text) {
 			return Parsed{}, errors.New("配置只含 proxy-providers（远程节点集），请直接添加其中的订阅地址")
 		}
-		p, err := ParseClash([]byte(text))
+		p, err := ParseClashContext(ctx, []byte(text))
 		return p, err
 	case linkMarker.MatchString(text):
 		p, err := ParseLinks(text)
@@ -50,7 +54,7 @@ func parseText(text string, depth int) (Parsed, error) {
 	if depth == 0 && base64Body.MatchString(text) {
 		dec, err := decodeB64(strings.Join(strings.Fields(text), ""))
 		if err == nil && len(dec) > 0 {
-			p, perr := parseText(strings.TrimSpace(string(dec)), 1)
+			p, perr := parseText(ctx, strings.TrimSpace(string(dec)), 1)
 			if perr == nil && p.Format == "links" {
 				p.Format = "base64"
 			}

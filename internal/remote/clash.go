@@ -2,6 +2,7 @@ package remote
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -28,7 +29,10 @@ const (
 	maxProxyBytes = 32 << 10
 )
 
-var errTooComplex = errors.New("YAML 结构过于复杂，已拒绝")
+var (
+	errTooComplex = errors.New("YAML 结构过于复杂，已拒绝")
+	errYAMLCycle  = errors.New("YAML 含有循环引用，已拒绝")
+)
 
 var proxiesKey = regexp.MustCompile(`^proxies[ \t]*:`)
 
@@ -85,11 +89,52 @@ func checkYAMLShape(data []byte) error {
 	return nil
 }
 
-type converter struct{ visits int }
+// converter turns yaml nodes into plain values under one shared budget: every node visited,
+// alias followed and merge source expanded costs a visit, a node can never be entered while it
+// is still being converted (which rejects cyclic aliases and merge sequences), and the context
+// is polled so a cancelled or timed-out refresh stops promptly.
+type converter struct {
+	ctx    context.Context
+	visits int
+	active map[*yaml.Node]struct{}
+}
+
+func newConverter(ctx context.Context) *converter {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &converter{ctx: ctx, active: map[*yaml.Node]struct{}{}}
+}
+
+func (c *converter) tick() error {
+	c.visits++
+	if c.visits > maxYAMLVisits {
+		return errTooComplex
+	}
+	if c.visits&0x3ff == 0 {
+		if err := c.ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// enter marks a container as being converted; it fails if the node is already on the path.
+func (c *converter) enter(n *yaml.Node) error {
+	if _, busy := c.active[n]; busy {
+		return errYAMLCycle
+	}
+	c.active[n] = struct{}{}
+	return nil
+}
+
+func (c *converter) leave(n *yaml.Node) { delete(c.active, n) }
 
 func (c *converter) value(n *yaml.Node, depth int) (any, error) {
-	c.visits++
-	if c.visits > maxYAMLVisits || depth > maxYAMLDepth {
+	if err := c.tick(); err != nil {
+		return nil, err
+	}
+	if depth > maxYAMLDepth {
 		return nil, errTooComplex
 	}
 	switch n.Kind {
@@ -128,6 +173,10 @@ func (c *converter) value(n *yaml.Node, depth int) (any, error) {
 		}
 		return n.Value, nil
 	case yaml.SequenceNode:
+		if err := c.enter(n); err != nil {
+			return nil, err
+		}
+		defer c.leave(n)
 		out := make([]any, 0, len(n.Content))
 		for _, item := range n.Content {
 			v, err := c.value(item, depth+1)
@@ -157,12 +206,18 @@ func (c *converter) scalarKey(k *yaml.Node, depth int) (string, error) {
 }
 
 func (c *converter) mapping(n *yaml.Node, depth int) (map[string]any, error) {
+	if depth > maxYAMLDepth {
+		return nil, errTooComplex
+	}
+	if err := c.enter(n); err != nil {
+		return nil, err
+	}
+	defer c.leave(n)
 	out := map[string]any{}
 	var merges []*yaml.Node
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		c.visits++
-		if c.visits > maxYAMLVisits {
-			return nil, errTooComplex
+		if err := c.tick(); err != nil {
+			return nil, err
 		}
 		k, v := n.Content[i], n.Content[i+1]
 		if k.ShortTag() == "!!merge" {
@@ -186,37 +241,56 @@ func (c *converter) mapping(n *yaml.Node, depth int) (map[string]any, error) {
 		}
 	}
 	for _, m := range merges {
-		srcs := []*yaml.Node{m}
-		for len(srcs) > 0 {
-			s := srcs[0]
-			srcs = srcs[1:]
-			for s.Kind == yaml.AliasNode && s.Alias != nil {
-				c.visits++
-				s = s.Alias
-			}
-			switch s.Kind {
-			case yaml.MappingNode:
-				sub, err := c.mapping(s, depth+1)
-				if err != nil {
-					return nil, err
-				}
-				for k, v := range sub {
-					if _, has := out[k]; !has {
-						out[k] = v
-					}
-				}
-			case yaml.SequenceNode:
-				srcs = append(srcs, s.Content...)
-			default:
-				return nil, errors.New("YAML 合并键无效")
-			}
+		if err := c.mergeInto(out, m, depth+1); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
 }
 
+// mergeInto applies one `<<` value: a mapping, an alias to one, or a (possibly nested)
+// sequence of them. Earlier sources win over later ones and never over the node's own keys.
+func (c *converter) mergeInto(out map[string]any, s *yaml.Node, depth int) error {
+	if err := c.tick(); err != nil {
+		return err
+	}
+	if depth > maxYAMLDepth {
+		return errTooComplex
+	}
+	switch s.Kind {
+	case yaml.AliasNode:
+		if s.Alias == nil {
+			return errors.New("YAML 别名无效")
+		}
+		return c.mergeInto(out, s.Alias, depth+1)
+	case yaml.MappingNode:
+		sub, err := c.mapping(s, depth+1)
+		if err != nil {
+			return err
+		}
+		for k, v := range sub {
+			if _, has := out[k]; !has {
+				out[k] = v
+			}
+		}
+		return nil
+	case yaml.SequenceNode:
+		if err := c.enter(s); err != nil {
+			return err
+		}
+		defer c.leave(s)
+		for _, item := range s.Content {
+			if err := c.mergeInto(out, item, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return errors.New("YAML 合并键无效")
+}
+
 // clashProxies extracts the raw proxy mappings of a Clash/Mihomo document.
-func clashProxies(data []byte) ([]map[string]any, error) {
+func clashProxies(ctx context.Context, data []byte) ([]map[string]any, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if err := checkYAMLShape(data); err != nil {
 		return nil, err
@@ -251,7 +325,7 @@ func clashProxies(data []byte) ([]map[string]any, error) {
 	if seq == nil {
 		return nil, errors.New("配置中没有 proxies 列表")
 	}
-	c := &converter{}
+	c := newConverter(ctx)
 	for seq.Kind == yaml.AliasNode && seq.Alias != nil {
 		seq = seq.Alias
 	}
@@ -265,7 +339,10 @@ func clashProxies(data []byte) ([]map[string]any, error) {
 	for _, item := range seq.Content {
 		v, err := c.value(item, 0)
 		if err != nil {
-			if errors.Is(err, errTooComplex) {
+			if errors.Is(err, errTooComplex) || errors.Is(err, errYAMLCycle) || ctx.Err() != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				return nil, err
 			}
 			out = append(out, nil)
@@ -282,8 +359,11 @@ func clashProxies(data []byte) ([]map[string]any, error) {
 }
 
 // ParseClash reads a Clash/Mihomo YAML document.
-func ParseClash(data []byte) (Parsed, error) {
-	maps, err := clashProxies(data)
+func ParseClash(data []byte) (Parsed, error) { return ParseClashContext(context.Background(), data) }
+
+// ParseClashContext is ParseClash that stops when ctx ends.
+func ParseClashContext(ctx context.Context, data []byte) (Parsed, error) {
+	maps, err := clashProxies(ctx, data)
 	if err != nil {
 		return Parsed{}, err
 	}
