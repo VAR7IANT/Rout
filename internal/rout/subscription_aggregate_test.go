@@ -690,3 +690,36 @@ func TestAggregateDedupeIgnoresQueryParameterOrder(t *testing.T) {
 		t.Fatalf("the distinct configuration was collapsed: %v", lines)
 	}
 }
+
+func TestEmptyRealityBlockDoesNotExemptInsecureProxy(t *testing.T) {
+	base := func() map[string]any { return map[string]any{"type": "trojan", "skip-cert-verify": true} }
+	for name, opts := range map[string]any{"null": nil, "empty map": map[string]any{}, "blank key": map[string]any{"public-key": " "}, "not a map": "x"} {
+		m := base()
+		m["reality-opts"] = opts
+		if !clashInsecure(m) {
+			t.Errorf("%s: exempted without usable Reality settings", name)
+		}
+	}
+	m := base()
+	m["reality-opts"] = map[string]any{"public-key": "abc", "short-id": "01"}
+	if clashInsecure(m) {
+		t.Error("a Reality node with a public key must not be treated as unverified TLS")
+	}
+}
+
+func TestLinkInsecureNeedsRealPinOrRealityKey(t *testing.T) {
+	good := strings.Repeat("cd", 32)
+	for link, want := range map[string]bool{
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1":                   true,
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1&pinSHA256=":        true,
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1&pinSHA256=zz":      true,
+		"trojan://p@h.example.org:443?security=tls&allowInsecure=1&pinSHA256=" + good: false,
+		"vless://u@h.example.org:443?security=reality&insecure=1":                     true,
+		"vless://u@h.example.org:443?security=reality&insecure=1&pbk=AAAA":            false,
+		"trojan://p@h.example.org:443?security=tls":                                   false,
+	} {
+		if got := linkInsecure(link); got != want {
+			t.Errorf("%s: got %v want %v", link, got, want)
+		}
+	}
+}

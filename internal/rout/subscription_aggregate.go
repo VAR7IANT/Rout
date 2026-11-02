@@ -357,7 +357,10 @@ func linkInsecure(raw string) bool {
 	if q.Get("insecure") != "1" && q.Get("allowInsecure") != "1" {
 		return false
 	}
-	return q.Get("pinSHA256") == "" && q.Get("security") != "reality"
+	if !pinnedCertificate(q.Get("pinSHA256")) && !(q.Get("security") == "reality" && strings.TrimSpace(q.Get("pbk")) != "") {
+		return true
+	}
+	return false
 }
 
 // pinnedCertificate accepts a usable SHA-256 certificate pin (64 hex digits, optionally
@@ -385,8 +388,12 @@ func clashInsecure(m map[string]any) bool {
 	if pinnedCertificate(m["fingerprint"]) {
 		return false
 	}
-	if _, reality := m["reality-opts"]; reality {
-		return false
+	if opts, ok := m["reality-opts"].(map[string]any); ok {
+		// Reality replaces certificate verification only with a real key; an empty or null
+		// block is ordinary TLS with verification turned off.
+		if pk, _ := opts["public-key"].(string); strings.TrimSpace(pk) != "" {
+			return false
+		}
 	}
 	return true
 }
