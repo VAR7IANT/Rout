@@ -1,6 +1,6 @@
 # Upgrading and rollback safety
 
-## Unreleased: address families, native relays and Remote server exits
+## To v0.4.0: address families, native relays and Remote server exits
 
 No migration and nothing restarts: existing nodes, relays (they keep running on GOST with their old configuration), exits, subscriptions, tokens, share links, AI routing and traffic state are unchanged, and unchanged entries serialize exactly as before. New relays run on the native forwarder, which needs no download but is started from a copy of the manager (`<bin-dir>/rout-relay-v1`, refreshed by `rout apply`; `rout doctor` reports a missing copy). To get IPv6-only, dual-stack or outbound-policy control on an existing relay, use **Edit relay → Change network** (a preview is shown; port, destination and link stay the same).
 
