@@ -1,15 +1,17 @@
 # Changelog
 
-## Unreleased (v0.5.0 development)
+## v0.5.0
 
-Web management panel and third-party subscription import/aggregation. Not released; version constant unchanged. **Not validated on a real VPS or with real clients/providers.**
+Web management panel and third-party subscription import/aggregation. Existing nodes, relays, exits, subscriptions, tokens, `/s/TOKEN` URLs and the CLI keep working without migration; subscriptions without remote items return byte-identical output. **Back up before upgrading (`sudo rout backup --full`), and note that a v0.4.0 manager cannot restore v0.5.0 aggregate data; see [Upgrading](docs/UPGRADING.md). Real VPS/provider/client acceptance has not been done; see "Verification status".**
 
 - **Web panel** (`rout web ...`, separate loopback-only `rout-web` service on 127.0.0.1:8790): React + TypeScript + Vite single-page app embedded in the binary; Dashboard, Nodes, Relays & exits, Subscriptions, Sources and System pages; zh-CN / zh-TW / en; light and dark; responsive. See [docs/WEB.md](docs/WEB.md).
-- **Security:** CLI-only password (PBKDF2-HMAC-SHA256, 600000), server-side sessions, HttpOnly/SameSite cookies, CSRF + Origin checks, Host allow-list, login rate limit, re-authentication for dangerous operations, redacted API views, audit log, strict CSP.
-- **Third-party subscriptions:** import Base64, Mihomo/Clash YAML, single links and other Rout instances (VLESS, SS, Trojan, Hysteria2, TUIC, AnyTLS) as separate sources with scheduled/manual refresh, last-good snapshots, parse-issue reports; SSRF-safe fetcher; aggregate subscriptions mixing local and remote nodes with Base64 and Mihomo output and a compatibility report. See [docs/REMOTE_SUBSCRIPTIONS.md](docs/REMOTE_SUBSCRIPTIONS.md).
-- Full backup/restore now covers the new data, with dry-run, confirmation and permission verification.
-- Dependency: `gopkg.in/yaml.v3` (first non-stdlib Go dependency). CI builds, typechecks, tests and audits the web app.
-- Compatibility and rollback: see [Upgrading](docs/UPGRADING.md).
+- **Panel security:** CLI-only password (PBKDF2-HMAC-SHA256, 600000), server-side sessions, HttpOnly/SameSite cookies, CSRF + Origin checks, Host allow-list, login rate limit, re-authentication for dangerous operations, redacted API views, audit log, strict CSP. Panel HTTPS is a documented reverse-proxy snippet (`rout web https`); Rout does not install or configure it.
+- **Third-party subscriptions:** import Base64, Mihomo/Clash YAML, single links and other Rout instances (VLESS, SS, Trojan, Hysteria2, TUIC, AnyTLS) as separate sources with scheduled/manual refresh, last-good snapshots and parse-issue reports; SSRF-safe fetcher (validated connect address, revalidated redirects); aggregate subscriptions mixing local and remote nodes with Base64 and Mihomo output and a compatibility report. Unsupported protocols (VMess, SSR, Hysteria v1, WireGuard, SOCKS/HTTP, sing-box JSON) are reported, never guessed. See [docs/REMOTE_SUBSCRIPTIONS.md](docs/REMOTE_SUBSCRIPTIONS.md).
+- **Hardening found in review before release:** cyclic YAML aliases/merge sequences (`proxies: [{<<: &loop [*loop]}]`) no longer hang the parser — expansion has cycle detection, one shared complexity budget, and honours the refresh timeout so a malicious source cannot hold a refresh slot; the `remote/sources.json` size limit (8 MiB) is now enforced on every write (previously several valid sources could add up to a file that could no longer be read), with an atomic replace, a restore pre-check and a way to shrink an already oversized file. Both have regression tests that fail on the earlier code.
+- Full backup/restore (`rout backup --full`, panel System → Backup) covers sources, snapshots and aggregate items, with dry-run, `RESTORE` confirmation and permission verification.
+- Dependency: `gopkg.in/yaml.v3` (first non-stdlib Go dependency). CI builds, typechecks, tests and audits the web app, and the release build refuses to run without the embedded panel.
+- Upgrading and rollback: see [Upgrading](docs/UPGRADING.md).
+- **Verification status.** Automated: Go unit, race and vet checks, govulncheck, API integration tests (auth, CSRF, redaction, backup/restore), SSRF/DNS-rebinding/redirect tests with injected resolvers and loopback servers, malicious/oversized YAML, concurrent refresh, frontend typecheck, 62 component/unit tests, production build and `npm audit`; the `verify` workflow passed on GitHub-hosted Ubuntu. Browser checks of all pages in three languages, light/dark and desktop/phone widths were made against a real `rout web serve` on loopback. **Not done:** acceptance on a real VPS (systemd service, nftables, real IPv6/NAT), a real Caddy in front of the panel (the snippet is unvalidated), real third-party providers and real Shadowrocket/Clash/Mihomo clients. Simulated and loopback tests are not a substitute for those.
 
 ## v0.4.0
 
