@@ -296,6 +296,18 @@ func (a *App) RestoreBackup(p *parsedBackup) error {
 		}
 	}
 	if p.Full {
+		// Refuse before anything is committed if the sources could not be written back and
+		// read again, so a restore never leaves the state and the sources out of step.
+		rc := p.Remote
+		rc.Schema = remoteSchema
+		if er := rc.validate(); er != nil {
+			return er
+		}
+		if _, er := encodeRemoteConfig(rc, 0); er != nil {
+			return er
+		}
+	}
+	if p.Full {
 		// Keep the current sources next to the restore so it can be undone by hand.
 		if cur, er := os.ReadFile(a.remoteConfigPath()); er == nil {
 			_ = AtomicWrite(a.remotePath("sources.json.pre-restore"), cur, 0600)

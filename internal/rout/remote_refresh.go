@@ -172,7 +172,7 @@ func (a *App) downloadAndParse(ctx context.Context, src RemoteSource) (remote.Pa
 		}
 		body, ui, title = res.Body, res.UserInfo, res.Title
 	}
-	p, e := remote.Parse(body)
+	p, e := remote.ParseContext(ctx, body)
 	if e != nil {
 		return remote.Parsed{}, nil, "", errors.New(redactError(e))
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,9 +33,15 @@ const (
 	remoteDefaultInterval = 6 * 60
 	maxRemoteIssues       = 100
 	maxRemoteContent      = 2 << 20
-	remoteLockWait        = 10 * time.Second
-	sourceKindURL         = "url"
-	sourceKindStatic      = "static"
+	// maxRemoteConfigBytes bounds the serialized sources.json. The same limit gates every
+	// write and every normal read, so an accepted change can always be read back.
+	maxRemoteConfigBytes = 8 << 20
+	// remoteRecoverBytes is the most mutateRemote will parse from a file that is already over
+	// the limit (written by an earlier build), so that deleting or shortening sources works.
+	remoteRecoverBytes = 64 << 20
+	remoteLockWait     = 10 * time.Second
+	sourceKindURL      = "url"
+	sourceKindStatic   = "static"
 )
 
 // RemoteSource is the stored definition of one source. URL and Content are secrets: a
@@ -176,16 +183,32 @@ func (c remoteConfig) find(id string) (int, bool) {
 	return -1, false
 }
 
-func (a *App) loadRemoteConfig() (remoteConfig, error) {
-	b, e := os.ReadFile(a.remoteConfigPath())
+func mib(n int) string { return fmt.Sprintf("%.2f MiB (%d 字节)", float64(n)/(1<<20), n) }
+
+// errRemoteConfigTooLarge explains the limit and the way out.
+func errRemoteConfigTooLarge(n int) error {
+	return fmt.Errorf("第三方订阅配置为 %s，超过 %s 上限；请删除不用的订阅源或缩短粘贴内容（删除操作仍然可用）", mib(n), mib(maxRemoteConfigBytes))
+}
+
+// readRemoteConfig parses sources.json, refusing files above limit bytes.
+func (a *App) readRemoteConfig(limit int) (remoteConfig, error) {
+	f, e := os.Open(a.remoteConfigPath())
 	if os.IsNotExist(e) {
 		return remoteConfig{Schema: remoteSchema, Sources: []RemoteSource{}}, nil
 	}
 	if e != nil {
 		return remoteConfig{}, e
 	}
-	if len(b) > 8<<20 {
-		return remoteConfig{}, errors.New("第三方订阅配置文件过大")
+	defer f.Close()
+	b, e := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if e != nil {
+		return remoteConfig{}, e
+	}
+	if len(b) > limit {
+		if limit >= remoteRecoverBytes {
+			return remoteConfig{}, errors.New("第三方订阅配置文件异常过大，无法自动恢复，请手动检查 remote/sources.json")
+		}
+		return remoteConfig{}, errRemoteConfigTooLarge(len(b))
 	}
 	var c remoteConfig
 	if e = json.Unmarshal(b, &c); e != nil {
@@ -197,16 +220,42 @@ func (a *App) loadRemoteConfig() (remoteConfig, error) {
 	return c, nil
 }
 
+func (a *App) loadRemoteConfig() (remoteConfig, error) {
+	return a.readRemoteConfig(maxRemoteConfigBytes)
+}
+
+// encodeRemoteConfig serializes c and refuses a result that loadRemoteConfig could not read.
+// shrinkingFrom is the size of an already oversized file being replaced (0 otherwise): a
+// change that makes such a file smaller is accepted as a step towards the limit, so a
+// configuration left over the limit by an earlier build can always be reduced.
+func encodeRemoteConfig(c remoteConfig, shrinkingFrom int) ([]byte, error) {
+	b, e := JSON(c)
+	if e != nil {
+		return nil, e
+	}
+	if len(b) > maxRemoteConfigBytes && !(shrinkingFrom > maxRemoteConfigBytes && len(b) < shrinkingFrom) {
+		return nil, errRemoteConfigTooLarge(len(b))
+	}
+	return b, nil
+}
+
 // mutateRemote applies one change under the remote lock to a freshly loaded configuration.
+// The result is validated and size-checked before anything is written, and written atomically,
+// so a refused or failed change leaves the previous file untouched. A file that an earlier
+// build left over the limit can still be loaded here, so the change that shrinks it works.
 func (a *App) mutateRemote(change func(*remoteConfig) error) error {
 	unlock, e := lockFile(a.remotePath(".lock"), remoteLockWait)
 	if e != nil {
 		return e
 	}
 	defer unlock()
-	c, e := a.loadRemoteConfig()
+	c, e := a.readRemoteConfig(remoteRecoverBytes)
 	if e != nil {
 		return e
+	}
+	current := 0
+	if st, er := os.Stat(a.remoteConfigPath()); er == nil {
+		current = int(st.Size())
 	}
 	if e = change(&c); e != nil {
 		return e
@@ -214,7 +263,7 @@ func (a *App) mutateRemote(change func(*remoteConfig) error) error {
 	if e = c.validate(); e != nil {
 		return e
 	}
-	b, e := JSON(c)
+	b, e := encodeRemoteConfig(c, current)
 	if e != nil {
 		return e
 	}
