@@ -15,7 +15,7 @@ import (
 // caddySnippet is the reverse-proxy site for the panel. Caddy obtains the certificate, sets
 // X-Forwarded-For and X-Forwarded-Proto itself, and the panel only ever sees 127.0.0.1.
 func caddySnippet(domain string, port int) string {
-	return fmt.Sprintf("%s {\n\tencode zstd gzip\n\theader -Server\n\treverse_proxy 127.0.0.1:%d {\n\t\theader_up X-Forwarded-Proto {scheme}\n\t}\n}\n", domain, port)
+	return fmt.Sprintf("%s {\n\tencode zstd gzip\n\theader {\n\t\t-Server\n\t\tStrict-Transport-Security \"max-age=31536000\"\n\t}\n\trequest_body {\n\t\tmax_size 26MB\n\t}\n\treverse_proxy 127.0.0.1:%d {\n\t\theader_up X-Forwarded-Proto {scheme}\n\t}\n}\n", domain, port)
 }
 
 func (u *UI) webCommand(args []string) error {

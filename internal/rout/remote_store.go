@@ -183,11 +183,9 @@ func (c remoteConfig) find(id string) (int, bool) {
 	return -1, false
 }
 
-func mib(n int) string { return fmt.Sprintf("%.2f MiB (%d 字节)", float64(n)/(1<<20), n) }
-
 // errRemoteConfigTooLarge explains the limit and the way out.
 func errRemoteConfigTooLarge(n int) error {
-	return fmt.Errorf("第三方订阅配置为 %s，超过 %s 上限；请删除不用的订阅源或缩短粘贴内容（删除操作仍然可用）", mib(n), mib(maxRemoteConfigBytes))
+	return fmt.Errorf("第三方订阅配置为 %d 字节，超过 %d 字节上限；请删除不用的订阅源或缩短粘贴内容（删除操作仍然可用）", n, maxRemoteConfigBytes)
 }
 
 // readRemoteConfig parses sources.json, refusing files above limit bytes.

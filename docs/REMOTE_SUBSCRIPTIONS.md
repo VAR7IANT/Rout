@@ -19,6 +19,10 @@ Each source has a name, note, tags, URL (stored in a 0600 file, redacted everywh
 
 Limits: response ≤ 8 MiB by default (hard cap 32 MiB), YAML ≤ 3 MiB with node-count and nesting checks, at most 2000 nodes per source, 30 s timeout, at most 3 concurrent refreshes, never two jobs for the same source. Scheduled refresh runs per source on its configured interval (with a stable jitter) inside `rout-web` and resumes after a restart using persisted status. Refreshing never restarts proxies.
 
+YAML is parsed under one complexity budget: aliases and merge keys (`<<`) are expanded with cycle detection (a self-referencing alias or merge sequence is rejected with a readable diagnostic), every visited node counts against a fixed limit, nesting depth is capped, and the refresh context is polled so a timed-out or cancelled refresh stops and frees its concurrency slot. Ordinary anchors, aliases and merges keep working.
+
+The source definitions file (`remote/sources.json`) is limited to 8 MiB serialized. Every change (add, edit, delete, import, restore) is size-checked before an atomic replace and refused with an explanatory message if the result could not be read back; a refused change leaves the file untouched. A file that an earlier build left over the limit can still be shrunk by deleting or editing sources, but never grown.
+
 ## Fetch safety (SSRF)
 
 Only `http`/`https` URLs. The fetcher resolves the hostname, rejects loopback, private, link-local, multicast, unspecified and cloud-metadata ranges (IPv4 and IPv6, including IPv4-mapped), connects only to the validated address (defeats DNS rebinding), and revalidates every redirect (maximum 5) the same way. Content is treated as untrusted data: it is parsed, never executed, and echoed only after sanitising.

@@ -49,7 +49,7 @@ Interface languages: 简体中文, 繁體中文, English. Light and dark theme f
 
 ## HTTPS for the panel
 
-Prefer the SSH tunnel. To publish it, put it behind a reverse proxy that you control and restrict by IP or an additional authentication layer. `rout web https panel.example.com` prints a Caddy snippet that proxies to `127.0.0.1:8790` and sets `X-Forwarded-Proto`; add the domain with `rout web host panel.example.com`, paste the snippet into your Caddyfile and reload Caddy. Rout does not install or edit Caddy for the panel. (The existing `rout subscription https` is separate and only concerns subscription URLs.) The snippet was reviewed but not run against a real Caddy in this release.
+Prefer the SSH tunnel. To publish it, put it behind a reverse proxy that you control and restrict by IP or an additional authentication layer. `rout web https panel.example.com` prints a Caddy snippet that proxies to `127.0.0.1:8790` and sets `X-Forwarded-Proto`, adds HSTS and caps request bodies at 26 MB (the restore limit is 24 MiB); add the domain with `rout web host panel.example.com`, paste the snippet into your Caddyfile and reload Caddy. Rout does not install or edit Caddy for the panel. (The existing `rout subscription https` is separate and only concerns subscription URLs.) The snippet has not been validated with a real Caddy binary (none was available in the build environment); run `caddy validate` before reloading. The snippet adds TLS only, not authentication: the panel's own login is the only credential unless you add IP restrictions or another layer in front.
 
 ## Settings and backup
 

@@ -254,7 +254,7 @@ func TestRemoteConfigAlreadyOversizedDiagnosedAndRecoverable(t *testing.T) {
 	a := testApp(t)
 	fillTo(t, a, maxRemoteConfigBytes+3<<20) // as an earlier build could have written it
 	_, e := a.loadRemoteConfig()
-	if e == nil || !strings.Contains(e.Error(), "上限") || !strings.Contains(e.Error(), "MiB") {
+	if e == nil || !strings.Contains(e.Error(), "上限") || !strings.Contains(e.Error(), "字节") {
 		t.Fatalf("diagnosis must state size and limit, got %v", e)
 	}
 	if _, e = a.RemoteSources(); e == nil {
