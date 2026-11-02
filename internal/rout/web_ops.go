@@ -675,11 +675,7 @@ func buildExit(spec ExitSpec) (Exit, error) {
 	var e Exit
 	switch spec.Protocol {
 	case "socks5", "http", "https":
-		in, er := proxyInput(spec)
-		if er != nil {
-			return e, er
-		}
-		p, er := ParseProxy(spec.Protocol, in)
+		p, er := proxyFromSpec(spec.Protocol, spec)
 		if er != nil {
 			return e, er
 		}
@@ -704,11 +700,7 @@ func buildExit(spec ExitSpec) (Exit, error) {
 			default:
 				return e, errors.New("请粘贴远程节点的分享链接，或选择代理协议并填写账号密码")
 			}
-			in, er := proxyInput(spec)
-			if er != nil {
-				return e, er
-			}
-			p, er := ParseProxy(spec.ProxyProtocol, in)
+			p, er := proxyFromSpec(spec.ProxyProtocol, spec)
 			if er != nil {
 				return e, er
 			}
@@ -720,18 +712,27 @@ func buildExit(spec ExitSpec) (Exit, error) {
 	return e, nil
 }
 
-// proxyInput builds the colon-delimited input ParseProxy reads. A ':' in the user name would
-// silently move part of it into the password, so the outbound would authenticate with other
-// credentials than the ones entered: refuse it instead.
-func proxyInput(spec ExitSpec) (string, error) {
+// proxyFromSpec builds the proxy from the structured fields exactly as entered. Going through
+// the colon-delimited input of ParseProxy would trim the password's trailing blanks and move
+// anything after a ':' in the user name into the password, so the outbound would authenticate
+// with other credentials than the ones given; invalid values are refused instead.
+func proxyFromSpec(protocol string, spec ExitSpec) (*Proxy, error) {
+	if protocol != "socks5" && protocol != "http" && protocol != "https" {
+		return nil, errors.New("请选择 SOCKS5、HTTP 或 HTTPS")
+	}
 	if strings.Contains(spec.Username, ":") {
-		return "", errors.New("用户名不能包含冒号")
+		return nil, errors.New("用户名不能包含冒号")
 	}
 	host := strings.TrimSpace(spec.Host)
-	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
-		host = "[" + host + "]"
+	if !validPort(spec.Port) || !validHost(host) || spec.Username == "" || spec.Password == "" {
+		return nil, errors.New("地址、端口、用户名或密码无效")
 	}
-	return fmt.Sprintf("%s:%d:%s:%s", host, spec.Port, spec.Username, spec.Password), nil
+	for _, v := range []string{host, spec.Username, spec.Password} {
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return nil, errors.New("输入包含无效字符")
+		}
+	}
+	return &Proxy{Protocol: protocol, Host: host, Port: spec.Port, Username: spec.Username, Password: spec.Password}, nil
 }
 
 // CreateExit stores a new outbound after checking it cannot loop back to this server.
@@ -816,11 +817,7 @@ func (a *App) UpdateExit(id string, patch ExitPatch) error {
 			if patch.Password != nil && *patch.Password != "" {
 				spec.Password = *patch.Password
 			}
-			in, er := proxyInput(spec)
-			if er != nil {
-				return old, er
-			}
-			p, er := ParseProxy(spec.Protocol, in)
+			p, er := proxyFromSpec(spec.Protocol, spec)
 			if er != nil {
 				return old, er
 			}

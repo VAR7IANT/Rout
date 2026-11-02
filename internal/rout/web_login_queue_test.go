@@ -108,3 +108,38 @@ func TestExitEditCannotIntroduceAColonInTheUsername(t *testing.T) {
 		t.Fatalf("edit accepted: %s", w.Body.String())
 	}
 }
+
+func TestExitCredentialsAreStoredExactly(t *testing.T) {
+	env := newWebEnv(t)
+	c := env.login()
+	w := c.do("POST", "/api/exits", map[string]any{"name": "spaces", "protocol": "socks5", "host": "198.51.100.9", "port": 1080, "username": "alice", "password": "secret "})
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	id := jsonOf(t, w)["exit"].(map[string]any)["id"].(string)
+	st, _ := env.a.Load()
+	var got string
+	for _, x := range st.Exits {
+		if x.ID == id {
+			got = x.Proxy.Password
+		}
+	}
+	if got != "secret " {
+		t.Fatalf("password stored as %q", got)
+	}
+	// Editing only the host must not touch the password.
+	if w = c.do("PATCH", "/api/exits/"+id, map[string]any{"host": "198.51.100.10"}); w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	st, _ = env.a.Load()
+	for _, x := range st.Exits {
+		if x.ID == id && x.Proxy.Password != "secret " {
+			t.Fatalf("host edit changed the password to %q", x.Proxy.Password)
+		}
+	}
+	// IPv6 hosts and passwords with colons still work.
+	w = c.do("POST", "/api/exits", map[string]any{"name": "v6", "protocol": "http", "host": "2001:db8::10", "port": 8080, "username": "bob", "password": "a:b:c"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("ipv6/colon password: %d %s", w.Code, w.Body.String())
+	}
+}
