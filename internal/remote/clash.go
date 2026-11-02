@@ -376,6 +376,9 @@ func ParseClashContext(ctx context.Context, data []byte) (Parsed, error) {
 			continue
 		}
 		n, err := nodeFromClash(m)
+		if err == nil {
+			n.deriveIdentity()
+		}
 		if err != nil {
 			level := "error"
 			if IsPlaceholder(err) {
@@ -394,7 +397,6 @@ func ParseClashContext(ctx context.Context, data []byte) (Parsed, error) {
 			return Parsed{}, fmt.Errorf("节点数量超过上限 %d", MaxNodes)
 		}
 	}
-	separateVariants(p.Nodes)
 	return p, nil
 }
 
@@ -843,7 +845,7 @@ func base64RawURL(b []byte) string {
 // and account; a conversion that does not is reported instead of being published.
 func finishLink(link string, n Node) string {
 	link = SetName(link, n.Name)
-	back, err := ParseLink(link)
+	back, err := parseLinkNode(link)
 	if err != nil || back.Fingerprint != n.Fingerprint {
 		return ""
 	}

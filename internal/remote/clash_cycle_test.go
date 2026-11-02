@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -198,16 +199,16 @@ func TestImportKeepsDistinctConnectionConfigurations(t *testing.T) {
 	if x, y := byPath(p), byPath(r); x["one"] != y["one"] || x["two"] != y["two"] || x["one"] == x["two"] {
 		t.Fatalf("identities changed with provider order: %v vs %v", x, y)
 	}
-	plain := fingerprintOf("vless", "a.example.org", 443, uuid)
-	for _, n := range p.Nodes {
-		if n.Fingerprint == plain {
-			t.Fatal("variants of one endpoint must not share the plain identity")
-		}
+	// Adding a sibling configuration must not change the identity of an existing one.
+	alone, _ := Parse([]byte(a + "\n"))
+	both, _ := Parse([]byte(a + "\n" + b + "\n"))
+	if alone.Nodes[0].ID != both.Nodes[0].ID || alone.Nodes[0].Fingerprint != both.Nodes[0].Fingerprint {
+		t.Fatal("adding a sibling variant changed the existing node's identity")
 	}
-	// A node with a unique endpoint keeps the plain identity whatever its settings.
-	u, _ := Parse([]byte(a + "\n"))
-	if u.Nodes[0].Fingerprint != plain {
-		t.Fatal("unique node lost its plain identity")
+	// A rename is not a different configuration.
+	renamed, _ := Parse([]byte(strings.Replace(a, "#A", "#Other", 1) + "\n"))
+	if renamed.Nodes[0].ID != alone.Nodes[0].ID {
+		t.Fatal("a rename changed the identity")
 	}
 
 	y := `
@@ -222,5 +223,21 @@ proxies:
 	}
 	if len(c.Nodes) != 2 || c.Duplicates != 1 || c.Nodes[0].ID == c.Nodes[1].ID {
 		t.Fatalf("clash: nodes=%d dup=%d", len(c.Nodes), c.Duplicates)
+	}
+}
+
+func TestLegacyShadowsocksPasswordMayContainAt(t *testing.T) {
+	raw := "aes-128-gcm:p@ss@proxy.example.org:443"
+	link := "ss://" + base64.RawURLEncoding.EncodeToString([]byte(raw)) + "#legacy"
+	p, err := Parse([]byte(link + "\n"))
+	if err != nil || len(p.Nodes) != 1 {
+		t.Fatalf("err=%v nodes=%d issues=%+v", err, len(p.Nodes), p.Issues)
+	}
+	n := p.Nodes[0]
+	if n.Server != "proxy.example.org" || n.Port != 443 {
+		t.Fatalf("host/port split wrongly: %s:%d", n.Server, n.Port)
+	}
+	if n.Fingerprint == "" {
+		t.Fatal("no identity")
 	}
 }

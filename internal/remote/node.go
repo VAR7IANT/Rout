@@ -212,11 +212,32 @@ func deepCopy(v any) any {
 	return v
 }
 
-// connSig is the node's complete connection configuration without its display name: the
-// original Mihomo mapping, or the share link minus its #fragment. Two entries that share an
-// endpoint and credential but differ here (a WebSocket path, SNI, flow, ...) are different
-// connection choices and must both survive an import.
+// connSig is the node's complete connection configuration without its display name. It is
+// the share link in canonical form (query sorted, no #fragment), so the same account written
+// as a link or as a Clash mapping gets the same signature; only when no link can be written
+// does it fall back to the original Mihomo mapping.
 func (n Node) connSig() string {
+	if n.Link != "" {
+		if u, err := url.Parse(n.Link); err == nil {
+			u.Fragment = ""
+			u.User = nil // the credential is already part of the base identity
+			q := u.Query()
+			if q.Get("type") == "tcp" || q.Get("type") == "" {
+				q.Del("type") // the default transport is written explicitly by some producers
+			}
+			if q.Get("headerType") == "none" {
+				q.Del("headerType")
+			}
+			u.RawQuery = q.Encode()
+			u.Host = strings.ToLower(u.Host)
+			if u.Path == "/" {
+				u.Path = ""
+			}
+			return "l:" + u.String()
+		}
+		l, _, _ := strings.Cut(n.Link, "#")
+		return "l:" + l
+	}
 	if n.Clash != nil {
 		m := make(map[string]any, len(n.Clash))
 		for k, v := range n.Clash {
@@ -227,28 +248,20 @@ func (n Node) connSig() string {
 		b, _ := json.Marshal(m) // map keys are sorted: canonical
 		return "c:" + string(b)
 	}
-	l, _, _ := strings.Cut(n.Link, "#")
-	return "l:" + l
+	return "-"
 }
 
 // dedupeKey identifies an exact repeat: same endpoint, credential and connection settings.
 func (n Node) dedupeKey() string { return n.Fingerprint + "\x00" + n.connSig() }
 
-// separateVariants gives entries that share an endpoint and credential but differ in
-// connection settings identities derived from those settings, for every member of the group,
-// so the identity does not depend on the order the provider lists them in. Entries with a
-// unique endpoint keep the plain identity (stable across edits of their other settings).
-func separateVariants(nodes []Node) {
-	count := map[string]int{}
-	for i := range nodes {
-		count[nodes[i].Fingerprint]++
-	}
-	for i := range nodes {
-		if count[nodes[i].Fingerprint] < 2 {
-			continue
-		}
-		h := sha256.Sum256([]byte(nodes[i].Fingerprint + "\x00" + nodes[i].connSig()))
-		nodes[i].Fingerprint = hex.EncodeToString(h[:])
-		nodes[i].ID = nodes[i].Fingerprint[:12]
-	}
+// deriveIdentity sets the node's identity from its endpoint, credential AND complete connection
+// settings. The identity therefore depends only on the node itself: not on the order the
+// provider lists it in, and not on whether siblings with the same endpoint and credential
+// exist, so adding or removing a sibling never changes another node's ID. When a provider edits
+// a node's own settings its ID changes; saved references to a node whose endpoint is still
+// unique are re-found by the loose (protocol, host, port) lookup.
+func (n *Node) deriveIdentity() {
+	h := sha256.Sum256([]byte(n.Fingerprint + "\x00" + n.connSig()))
+	n.Fingerprint = hex.EncodeToString(h[:])
+	n.ID = n.Fingerprint[:12]
 }
