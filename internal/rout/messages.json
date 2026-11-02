@@ -1360,6 +1360,7 @@
  "packetEncoding 值无法转换为 Mihomo，请使用 Base64":"This packetEncoding value cannot be converted to Mihomo; use Base64",
  "备份超过 %d MiB 的恢复上限，无法生成可恢复的备份；请先删除不用的订阅源":"The backup exceeds the %d MiB restore limit, so a restorable backup cannot be produced; delete unused sources first",
  "节点关闭了证书验证（allowInsecure），默认不导出；可在订阅设置中允许":"This node turns off certificate verification (allowInsecure) and is not exported by default; allow it in the subscription settings",
+ "管理密码刚刚被更改，请重新输入":"The admin password was just changed; enter it again",
  "YAML 含有循环引用，已拒绝":"The YAML contains a circular reference and was rejected",
  "第三方订阅配置为 %d 字节，超过 %d 字节上限；请删除不用的订阅源或缩短粘贴内容（删除操作仍然可用）":"The third-party subscription configuration is %d bytes, over the %d byte limit; delete unused sources or shorten pasted content (deleting still works)",
  "第三方订阅配置文件异常过大，无法自动恢复，请手动检查 remote/sources.json":"The third-party subscription configuration file is abnormally large and cannot be recovered automatically; inspect remote/sources.json by hand",

@@ -44,3 +44,39 @@ func TestLoginQueuedRequestsRespectLockoutEstablishedWhileWaiting(t *testing.T) 
 		}
 	}
 }
+
+// A login that was waiting for a hashing slot while `rout web passwd` ran must not end with a
+// session for the password that was just replaced.
+func TestLoginDoesNotOutliveAPasswordChange(t *testing.T) {
+	env := newWebEnv(t)
+	env.ws.loginSem = make(chan struct{}, 1)
+	env.ws.loginSem <- struct{}{}
+
+	type result struct {
+		code   int
+		cookie string
+	}
+	done := make(chan result, 1)
+	go func() {
+		w := env.anon().do("POST", "/api/login", map[string]string{"password": webTestPassword}, withPeer("203.0.113.5:1"))
+		done <- result{w.Code, w.Header().Get("Set-Cookie")}
+	}()
+	time.Sleep(300 * time.Millisecond) // the request has read the old configuration and waits
+	env.clock.advance(time.Second)
+	if e := env.a.SetWebPassword("a-brand-new-password-123"); e != nil {
+		t.Fatal(e)
+	}
+	env.ws.invalidateConfig()
+	<-env.ws.loginSem
+	r := <-done
+	if r.code == http.StatusOK || r.cookie != "" {
+		t.Fatalf("a session was issued for the replaced password: status %d cookie %q", r.code, r.cookie)
+	}
+	if n := len(env.ws.sessions.list()); n != 0 {
+		t.Fatalf("%d sessions exist", n)
+	}
+	// The new password works.
+	if w := env.anon().do("POST", "/api/login", map[string]string{"password": "a-brand-new-password-123"}); w.Code != http.StatusOK {
+		t.Fatalf("new password refused: %d", w.Code)
+	}
+}
