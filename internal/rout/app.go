@@ -25,6 +25,9 @@ type App struct {
 	bootID                    func() (string, error)
 	poolRunning               func(Profile) bool
 	subscriptionHTTPS         *subscriptionHTTPSRuntime
+	// remoteFetch downloads a third-party subscription; tests replace it. Nil means the
+	// SSRF-guarded fetcher.
+	remoteFetch remoteFetchFunc
 	// Only the running monitor reopens sealed checkpoints.
 	monitorMode bool
 }

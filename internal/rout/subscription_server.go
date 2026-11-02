@@ -64,6 +64,7 @@ type subscriptionHandler struct {
 	load           func() (State, error)
 	mihomoSettings func() (SubscriptionSettings, error)
 	plan           func(Subscription, time.Time) (planView, bool)
+	remote         remoteLookup // third-party sources for aggregate subscriptions
 	lang           func() string
 	now            func() time.Time
 	logf           func(format string, args ...any)
@@ -137,7 +138,14 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		}
-		proxies, warnings := s.exportMihomo(sub)
+		var proxies []M
+		var warnings []string
+		if sub.aggregate() {
+			agg := s.exportAggregate(sub, h.remote)
+			proxies, warnings = agg.Proxies, agg.Warnings
+		} else {
+			proxies, warnings = s.exportMihomo(sub)
+		}
 		for i := range warnings {
 			warnings[i] = Translate("en", warnings[i])
 		}
@@ -151,7 +159,13 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		contentType = "application/yaml; charset=utf-8"
 		w.Header().Set("X-Rout-Skipped-Nodes", strconv.Itoa(len(warnings)))
 	} else {
-		exp := s.exportSubscription(sub)
+		var exp SubscriptionExport
+		if sub.aggregate() {
+			agg := s.exportAggregate(sub, h.remote)
+			exp = SubscriptionExport{URIs: agg.URIs, Warnings: agg.Warnings}
+		} else {
+			exp = s.exportSubscription(sub)
+		}
 		h.report(sub, exp)
 		if len(exp.URIs) == 0 {
 			w.Header().Set("Retry-After", "300")
@@ -346,6 +360,7 @@ func (a *App) subscriptionHTTPHandler(load func() (State, error), logf func(stri
 	normal := newSubscriptionHandler(load, logf)
 	normal.mihomoSettings = a.subscriptionSettings
 	normal.plan = a.SubscriptionUsage
+	normal.remote = newRemoteCache(a).lookup
 	normal.lang = func() string { return a.Language }
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == subscriptionProbePath {
