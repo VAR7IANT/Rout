@@ -2,6 +2,7 @@ package rout
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,5 +79,32 @@ func TestLoginDoesNotOutliveAPasswordChange(t *testing.T) {
 	// The new password works.
 	if w := env.anon().do("POST", "/api/login", map[string]string{"password": "a-brand-new-password-123"}); w.Code != http.StatusOK {
 		t.Fatalf("new password refused: %d", w.Code)
+	}
+}
+
+// A ':' in the user name used to shift part of it into the password silently.
+func TestExitUsernameWithColonIsRejected(t *testing.T) {
+	env := newWebEnv(t)
+	c := env.login()
+	w := c.do("POST", "/api/exits", map[string]any{"name": "colon", "protocol": "socks5", "host": "198.51.100.9", "port": 1080, "username": "alice:team", "password": "secret"})
+	if w.Code != http.StatusBadRequest && w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	w = c.do("GET", "/api/exits", nil)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "colon") {
+		t.Fatalf("the exit was stored: %s", w.Body.String())
+	}
+}
+
+func TestExitEditCannotIntroduceAColonInTheUsername(t *testing.T) {
+	env := newWebEnv(t)
+	c := env.login()
+	w := c.do("POST", "/api/exits", map[string]any{"name": "ok", "protocol": "socks5", "host": "198.51.100.9", "port": 1080, "username": "alice", "password": "secret"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("setup: %d %s", w.Code, w.Body.String())
+	}
+	id := jsonOf(t, w)["exit"].(map[string]any)["id"].(string)
+	if w = c.do("PATCH", "/api/exits/"+id, map[string]any{"username": "alice:team"}); w.Code != http.StatusBadRequest && w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("edit accepted: %s", w.Body.String())
 	}
 }

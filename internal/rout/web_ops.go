@@ -675,7 +675,11 @@ func buildExit(spec ExitSpec) (Exit, error) {
 	var e Exit
 	switch spec.Protocol {
 	case "socks5", "http", "https":
-		p, er := ParseProxy(spec.Protocol, proxyInput(spec))
+		in, er := proxyInput(spec)
+		if er != nil {
+			return e, er
+		}
+		p, er := ParseProxy(spec.Protocol, in)
 		if er != nil {
 			return e, er
 		}
@@ -700,7 +704,11 @@ func buildExit(spec ExitSpec) (Exit, error) {
 			default:
 				return e, errors.New("请粘贴远程节点的分享链接，或选择代理协议并填写账号密码")
 			}
-			p, er := ParseProxy(spec.ProxyProtocol, proxyInput(spec))
+			in, er := proxyInput(spec)
+			if er != nil {
+				return e, er
+			}
+			p, er := ParseProxy(spec.ProxyProtocol, in)
 			if er != nil {
 				return e, er
 			}
@@ -712,12 +720,18 @@ func buildExit(spec ExitSpec) (Exit, error) {
 	return e, nil
 }
 
-func proxyInput(spec ExitSpec) string {
+// proxyInput builds the colon-delimited input ParseProxy reads. A ':' in the user name would
+// silently move part of it into the password, so the outbound would authenticate with other
+// credentials than the ones entered: refuse it instead.
+func proxyInput(spec ExitSpec) (string, error) {
+	if strings.Contains(spec.Username, ":") {
+		return "", errors.New("用户名不能包含冒号")
+	}
 	host := strings.TrimSpace(spec.Host)
 	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
 		host = "[" + host + "]"
 	}
-	return fmt.Sprintf("%s:%d:%s:%s", host, spec.Port, spec.Username, spec.Password)
+	return fmt.Sprintf("%s:%d:%s:%s", host, spec.Port, spec.Username, spec.Password), nil
 }
 
 // CreateExit stores a new outbound after checking it cannot loop back to this server.
@@ -802,7 +816,11 @@ func (a *App) UpdateExit(id string, patch ExitPatch) error {
 			if patch.Password != nil && *patch.Password != "" {
 				spec.Password = *patch.Password
 			}
-			p, er := ParseProxy(spec.Protocol, proxyInput(spec))
+			in, er := proxyInput(spec)
+			if er != nil {
+				return old, er
+			}
+			p, er := ParseProxy(spec.Protocol, in)
 			if er != nil {
 				return old, er
 			}
