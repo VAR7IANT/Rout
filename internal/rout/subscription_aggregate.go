@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -366,6 +367,21 @@ func linkInsecure(raw string) bool {
 	return q.Get("pinSHA256") == "" && q.Get("security") != "reality"
 }
 
+// pinnedCertificate accepts a usable SHA-256 certificate pin (64 hex digits, optionally
+// colon-separated); an empty or malformed value pins nothing.
+func pinnedCertificate(v any) bool {
+	str, ok := v.(string)
+	if !ok {
+		return false
+	}
+	str = strings.ReplaceAll(strings.TrimSpace(str), ":", "")
+	if len(str) != 64 {
+		return false
+	}
+	_, e := hex.DecodeString(str)
+	return e == nil
+}
+
 // clashInsecure reports a proxy that turns certificate verification off without pinning the
 // certificate. Reality does not use certificate verification, so it is not affected.
 func clashInsecure(m map[string]any) bool {
@@ -373,7 +389,7 @@ func clashInsecure(m map[string]any) bool {
 	if !skip {
 		return false
 	}
-	if _, pinned := m["fingerprint"]; pinned {
+	if pinnedCertificate(m["fingerprint"]) {
 		return false
 	}
 	if _, reality := m["reality-opts"]; reality {

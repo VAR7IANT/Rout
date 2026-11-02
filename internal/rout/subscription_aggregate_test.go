@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/VAR7IANT/Rout/internal/remote"
 	"gopkg.in/yaml.v3"
@@ -598,5 +599,57 @@ func TestAggregateDisabledNodeStaysDisabledAfterCredentialRotation(t *testing.T)
 	_, body := sc.fetchFormat(t, h, token, "")
 	if lines := decodeBody(t, body); len(lines) != 1 || strings.Contains(lines[0], "newpassword") {
 		t.Fatalf("credential rotation re-enabled an excluded node: %v", lines)
+	}
+}
+
+func TestEmptyOrMalformedFingerprintIsNotACertificatePin(t *testing.T) {
+	good := strings.Repeat("ab", 32)
+	for _, tc := range []struct {
+		fp     any
+		insec  bool
+		reason string
+	}{
+		{"", true, "empty"}, {"zz", true, "short"}, {strings.Repeat("g", 64), true, "not hex"}, {nil, true, "missing"}, {123, true, "not a string"},
+		{good, false, "plain sha256"}, {strings.ToUpper(good), false, "upper case"},
+	} {
+		m := map[string]any{"type": "hysteria2", "skip-cert-verify": true}
+		if tc.fp != nil {
+			m["fingerprint"] = tc.fp
+		}
+		if clashInsecure(m) != tc.insec {
+			t.Errorf("%s: insecure=%v want %v", tc.reason, !tc.insec, tc.insec)
+		}
+	}
+}
+
+// The editor sends the node IDs it was given back on save; after a credential rotation they must
+// be the IDs of the nodes the entries resolved to, or the save is rejected.
+func TestSubscriptionViewReturnsResolvedRemoteIDsAndSaveWorks(t *testing.T) {
+	sc := newAggScene(t)
+	old := sc.rnode(t, sc.links, "JP Trojan")
+	sub, _, e := sc.a.CreateAggregateSubscription("Rotate", AggregateSpec{Items: []SubItem{old, sc.local(0)}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	rotated := strings.Replace(linkTrojan, "trojanpw", "newpassword", 1)
+	sc.fsLinks.set(linkList(rotated, linkHy2), nil)
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), sc.links.ID); e != nil {
+		t.Fatal(e)
+	}
+	st := sc.state(t)
+	v := sc.a.subscriptionView(st, st.Subscriptions[0], time.Now(), nil)
+	if len(v.Items) != 2 || v.Items[0].Status != "ok" || v.Items[0].NodeID == old.RemoteID {
+		t.Fatalf("view still carries the obsolete id: %+v", v.Items[0])
+	}
+	var items []SubItem
+	for _, iv := range v.Items {
+		if iv.Kind == itemRemote {
+			items = append(items, SubItem{Kind: itemRemote, SourceID: iv.SourceID, RemoteID: iv.NodeID})
+		} else {
+			items = append(items, SubItem{Kind: itemLocal, NodeID: iv.NodeID})
+		}
+	}
+	if e = sc.a.SetSubscriptionItems(sub.ID, AggregateSpec{Items: items}); e != nil {
+		t.Fatalf("saving the items the view returned failed: %v", e)
 	}
 }

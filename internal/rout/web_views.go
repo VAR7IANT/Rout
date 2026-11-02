@@ -350,7 +350,12 @@ func (a *App) subscriptionView(s State, sub Subscription, now time.Time, tokens 
 			iv := SubItemView{Kind: n.Kind, NodeID: it.NodeID, SourceID: it.SourceID, Source: n.Source, Name: n.Name, Custom: it.Name, Protocol: n.Protocol,
 				Status: "ok", Skipped: a.T(n.Skipped), Base64OK: n.Base64OK, Base64Why: a.T(n.Base64Why), MihomoOK: n.MihomoOK, MihomoWhy: a.T(n.MihomoWhy), Notes: a.translateAll(n.Notes)}
 			if it.Kind == itemRemote {
+				// Return the node the entry resolved to: after a credential rotation the saved
+				// ID is obsolete, and the editor sends this ID back when it saves.
 				iv.NodeID = it.RemoteID
+				if n.NodeID != "" {
+					iv.NodeID = n.NodeID
+				}
 			}
 			if n.Skipped != "" {
 				iv.Status = "skipped"
