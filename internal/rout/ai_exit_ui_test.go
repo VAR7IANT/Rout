@@ -142,7 +142,6 @@ func TestAIExitThroughAUDPOnlyRelayFromTheMenu(t *testing.T) {
 	}
 }
 
-
 func TestChainGeneratedNamesBoundedAndStable(t *testing.T) {
 	host := "ca-" + strings.Repeat("x", 48) + ".example.net"
 	spec := ChainSpec{
