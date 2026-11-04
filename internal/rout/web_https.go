@@ -274,6 +274,14 @@ func panelHealth(client *http.Client, base, host string) (int, *tls.ConnectionSt
 // the login page itself is served. Nothing logs in and no credential is sent.
 func verifyPanelHTTPS(domain string, port int) panelVerification {
 	out := panelVerification{}
+	if domain == "" {
+		// Loopback service only (used before a domain exists).
+		plain := &http.Client{Timeout: 4 * time.Second, Transport: &http.Transport{Proxy: nil}}
+		if code, _, e := panelHealth(plain, "http://"+net.JoinHostPort("127.0.0.1", itoa(port)), ""); e == nil && code == 200 {
+			out.LocalService, out.HostAllowed = true, true
+		}
+		return out
+	}
 	plain := &http.Client{Timeout: 4 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	base := "http://" + net.JoinHostPort("127.0.0.1", itoa(port))
 	if code, _, e := panelHealth(plain, base, ""); e == nil && code == 200 {
@@ -404,7 +412,7 @@ func (a *App) DeployWebHTTPS(domain string, opts WebHTTPSOptions) (res WebHTTPSR
 	}
 	port := cfg.port()
 	r := a.httpsRuntime()
-	if !r.panelVerify(domain, port).LocalService {
+	if !r.panelVerify("", port).LocalService { // loopback only: no domain, no TLS probes yet
 		return res, errors.New("本机的管理面板服务没有响应：请先运行 rout web install（或 rout web restart）")
 	}
 	previous, e := a.loadWebHTTPSState()
