@@ -1765,5 +1765,12 @@
  "面板服务已卸载":"Panel service uninstalled",
  "面板服务日志（最近 40 行）":"Panel service log (last 40 lines)",
  "面板服务没有在 127.0.0.1:%d 响应：请运行 rout web restart":"The panel service does not answer on 127.0.0.1:%d: run rout web restart",
- "面板诊断":"Panel diagnosis"
+ "面板诊断":"Panel diagnosis",
+ "AI 出口不可用时，AI 域名的连接会失败，不会改走原有出口":"When the AI exit is unavailable, connections to AI domains fail instead of taking the original exit",
+ "AI 出口只转发 TCP：针对 AI 域名的 UDP（含 QUIC/HTTP3）会被拒绝，客户端可回退到 TCP":"The AI exit carries TCP only: UDP to AI domains (including QUIC/HTTP3) is rejected, so clients fall back to TCP",
+ "ECH、纯 IP 且无嗅探信息的连接以及隐藏目标的应用无法识别，会走原有路由；这不是零泄漏保证":"ECH, IP-only connections without sniffable names and applications that hide their destination cannot be identified and take the original route; this is not a zero-leak guarantee",
+ "SOCKS5 与 HTTP CONNECT 的认证和连接本身不加密；跨公网时请使用 HTTPS CONNECT、远程节点或 SSH 隧道":"SOCKS5 and HTTP CONNECT do not encrypt their authentication or the connection; across the Internet use HTTPS CONNECT, a remote node or an SSH tunnel",
+ "不劫持 DNS：客户端 DNS 查询保持原有路径":"DNS is not hijacked: client DNS queries keep their original path",
+ "只有勾选的入站节点参与 AI 分流；未绑定的节点完全不受影响":"Only the checked inbound nodes take part in AI routing; unbound nodes are not affected at all",
+ "按域名识别：优先匹配客户端提交的域名，IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才能识别":"Identification is by domain: the domain the client sends is matched first; an IP destination is identified only when TLS SNI, HTTP Host or supported QUIC reveals the name"
 }

@@ -221,11 +221,19 @@ type RelayView struct {
 	TargetNetwork  string   `json:"target_network,omitempty"`
 	TargetNode     string   `json:"target_node,omitempty"` // name of the managed local node, when it is one
 	Path           []string `json:"path"`
+	// ChainExits names the relay-chain exits that dial through this relay (delete and
+	// retarget protection); AIChain says one of them is the AI exit.
+	ChainExits []string `json:"chain_exits"`
+	AIChain    bool     `json:"ai_chain"`
 }
 
 func (a *App) relayView(s State, p Profile, now time.Time) RelayView {
 	v := RelayView{NodeView: a.nodeView(s, p, now, nil), Mode: p.relayMode(), Target: p.Target, Transport: p.Protocol,
-		OutboundPolicy: p.OutboundPolicy, Engine: p.Engine, TargetNetwork: p.TargetNetwork}
+		OutboundPolicy: p.OutboundPolicy, Engine: p.Engine, TargetNetwork: p.TargetNetwork, ChainExits: []string{}}
+	for _, ex := range relayChainUsers(s, p.ID) {
+		v.ChainExits = append(v.ChainExits, ex.Name)
+		v.AIChain = v.AIChain || (s.AI != nil && s.AI.AIOutboundID == ex.ID)
+	}
 	if v.Engine == "" {
 		v.Engine = "gost"
 	}
