@@ -32,7 +32,7 @@ func (u *UI) webAccess(st WebStatus) string {
 	if st.HTTPSDomain != "" {
 		return "https://" + st.HTTPSDomain
 	}
-	return fmt.Sprintf("ssh -L %d:127.0.0.1:%d user@server → http://127.0.0.1:%d/", st.Port, st.Port, st.Port)
+	return fmt.Sprintf("ssh -L %d:127.0.0.1:%d user@server\nhttp://127.0.0.1:%d/", st.Port, st.Port, st.Port)
 }
 
 func (u *UI) webStatusLines(st WebStatus) {
@@ -71,6 +71,13 @@ func (u *UI) kvRows(fill func(add func(label, value string))) {
 		}
 	}
 	for i, l := range labels {
+		if strings.Contains(values[i], "\n") {
+			fmt.Fprintf(u.writer(), "  %s\n", l)
+			for _, line := range strings.Split(values[i], "\n") {
+				fmt.Fprintf(u.writer(), "      %s\n", line)
+			}
+			continue
+		}
 		if 2+w+2+displayWidth(values[i]) > u.width()-1 && w+4 < u.width() {
 			fmt.Fprintf(u.writer(), "  %s\n      %s\n", l, values[i])
 			continue

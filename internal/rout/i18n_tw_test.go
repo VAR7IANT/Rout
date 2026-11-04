@@ -67,3 +67,19 @@ func TestTraditionalChineseMenusAndCompatibleSettings(t *testing.T) {
 		t.Fatal("helper processes must not receive zh-TW")
 	}
 }
+
+// Regression: the command line must start in the saved Traditional Chinese, not fall back
+// to the backward-compatible "zh-CN" stored next to the variant.
+func TestSavedTraditionalChineseIsUsedByCommands(t *testing.T) {
+	home := t.TempDir()
+	a := &App{Home: home}
+	s := Settings{}
+	s.setLang("zh-TW")
+	if e := a.SaveSettings(s); e != nil {
+		t.Fatal(e)
+	}
+	e := Run([]string{"--home", home, "--service", "none", "definitely-not-a-command"})
+	if e == nil || !strings.Contains(e.Error(), "錯誤") {
+		t.Fatalf("error not in Traditional Chinese: %v", e)
+	}
+}

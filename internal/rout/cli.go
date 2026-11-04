@@ -150,7 +150,7 @@ func Run(args []string) (result error) {
 	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		if settings, er := a.LoadSettings(); er == nil && language == "" {
-			a.Language = settings.Language
+			a.Language = settings.lang()
 		}
 		a.help()
 		return nil
@@ -159,7 +159,7 @@ func Run(args []string) (result error) {
 	if e != nil {
 		return e
 	}
-	a.Language = settings.Language
+	a.Language = settings.lang()
 	a.BackupKeep = settings.BackupKeep
 	if language != "" {
 		a.Language = language

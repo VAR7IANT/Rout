@@ -32,6 +32,8 @@ OVERRIDES = {
     "籤名": "簽名",
     "引數": "參數",
     "天后": "天後",
+    "箇中": "個中",
+    "訪問": "存取",
 }
 # Single-character fallback corrections (used only for text outside the catalog).
 CHAR_OVERRIDES = {"签": "簽"}
