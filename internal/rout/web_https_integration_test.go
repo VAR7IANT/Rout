@@ -28,7 +28,9 @@ func TestIntegrationPanelCaddyDeployment(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	ready := make(chan net.Addr, 1)
-	go func() { done <- a.serveWeb(ctx, net.JoinHostPort("127.0.0.1", itoa(port)), func(string, ...any) {}, func(n net.Addr) { ready <- n }) }()
+	go func() {
+		done <- a.serveWeb(ctx, net.JoinHostPort("127.0.0.1", itoa(port)), func(string, ...any) {}, func(n net.Addr) { ready <- n })
+	}()
 	select {
 	case <-ready:
 	case e := <-done:
