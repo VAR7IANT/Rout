@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
+import { api } from '../lib/api'
 import { useResource } from '../lib/hooks'
 import { Link } from '../lib/router'
 import { formatBytes, formatDate, formatPercent, formatRate, formatUptime } from '../lib/format'
-import type { Alert, Overview } from '../lib/types'
+import type { AIView, Alert, Overview, PanelHTTPSReport } from '../lib/types'
+import { loadPanelReport, panelHealth } from './PanelHTTPS'
 import { LineChart } from '../components/chart'
 import { Badge, Button, Card, EmptyState, Meter, Notice, PageHead, Spinner, Stat, type Tone } from '../components/ui'
 
@@ -84,6 +87,11 @@ export function Dashboard() {
         <Stat label={t('dash.subs')} value={c.subscriptions} sub={c.aggregates > 0 ? t('dash.aggregatesN', { n: c.aggregates }) : undefined} />
         <Stat label={t('dash.sources')} value={c.sources} sub={c.sources > 0 ? `${t('dash.sourcesOk', { ok: c.sources_ok, bad: c.sources_failed })} · ${t('dash.remoteNodes', { n: c.remote_nodes })}` : undefined} tone={c.sources_failed > 0 ? 'warn' : undefined} />
         <Stat label={t('dash.subServer')} value={<Badge tone={serverTone}>{serverText}</Badge>} />
+      </div>
+
+      <div className="tile-row">
+        <AITile />
+        <WebTile />
       </div>
 
       <div className="grid-2">
@@ -249,5 +257,58 @@ function NetRow({ family, ip, local, checking }: { family: string; ip: string; l
       </div>
       <Badge tone={tone}>{text}</Badge>
     </div>
+  )
+}
+
+/** Runs `load` once, after the first paint, so the dashboard itself stays quick. */
+function useLate<T>(load: () => Promise<T>): { data: T | null; failed: boolean } {
+  const [state, setState] = useState<{ data: T | null; failed: boolean }>({ data: null, failed: false })
+  useEffect(() => {
+    let alive = true
+    const id = window.setTimeout(() => {
+      load().then(
+        (data) => alive && setState({ data, failed: false }),
+        () => alive && setState({ data: null, failed: true }),
+      )
+    }, 250)
+    return () => {
+      alive = false
+      window.clearTimeout(id)
+    }
+  }, [])
+  return state
+}
+
+function AITile() {
+  const { t } = useI18n()
+  const { data, failed } = useLate(() => api.get<AIView>('/api/ai'))
+  const bound = data ? data.nodes.filter((n) => n.bound).length : 0
+  const tone: Tone = !data ? 'neutral' : data.problems.length > 0 ? 'warn' : data.enabled ? 'ok' : 'neutral'
+  return (
+    <Link to="/ai" className="tile">
+      <span className="tile-label">{t('dash.ai')}</span>
+      <span className="tile-value">
+        {data ? <Badge tone={tone}>{data.enabled ? t('dash.aiOn', { n: bound }) : t('dash.aiOff')}</Badge> : failed ? <Badge>{t('dash.webFailed')}</Badge> : <span className="muted small">{t('common.loading')}</span>}
+      </span>
+      <span className="tile-sub">
+        {data?.exit ? t('dash.aiExit', { name: data.exit.name }) : data ? t('ai.noExit') : ''}
+        {data && data.problems.length > 0 ? ` · ${t('dash.aiProblems', { n: data.problems.length })}` : ''}
+      </span>
+      <span className="tile-go" aria-hidden="true">→</span>
+    </Link>
+  )
+}
+
+function WebTile() {
+  const { t } = useI18n()
+  const { data, failed } = useLate<PanelHTTPSReport>(() => loadPanelReport())
+  const h = data ? panelHealth(data) : null
+  return (
+    <Link to="/system?tab=network" className="tile">
+      <span className="tile-label">{t('dash.web')}</span>
+      <span className="tile-value">{h ? <Badge tone={h.tone}>{t(h.key)}</Badge> : failed ? <Badge>{t('dash.webFailed')}</Badge> : <span className="muted small">{t('dash.webChecking')}</span>}</span>
+      <span className="tile-sub mono">{data?.url ?? data?.domain ?? ''}</span>
+      <span className="tile-go" aria-hidden="true">→</span>
+    </Link>
   )
 }

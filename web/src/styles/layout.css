@@ -268,7 +268,7 @@
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
 .login {
   align-content: center;
@@ -323,7 +323,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 12px 6px 16px;
+    padding: 6px max(12px, env(safe-area-inset-right)) 6px max(16px, env(safe-area-inset-left));
     padding-top: max(6px, env(safe-area-inset-top));
     background: var(--surface);
     border-bottom: 1px solid var(--line);
@@ -336,7 +336,8 @@
   }
   .tabbar {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     position: fixed;
     left: 0;
     right: 0;
@@ -345,6 +346,8 @@
     background: var(--surface);
     border-top: 1px solid var(--line);
     padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
   .tabbar a {
     display: flex;
@@ -361,6 +364,14 @@
     border-top: 3px solid transparent;
     margin-top: -1px;
     text-align: center;
+    min-width: 0;
+  }
+  .tabbar .tab-label {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .tabbar a.on {
     color: var(--text);
@@ -374,6 +385,26 @@
   }
   h1 {
     font-size: 21px;
+  }
+  /* iOS Safari zooms into any field under 16px */
+  .input,
+  .search input,
+  select.input {
+    font-size: 16px;
+  }
+  .btn {
+    min-height: 40px;
+  }
+  .btn-sm {
+    min-height: 36px;
+  }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+  .icon-btn-sm {
+    width: 36px;
+    height: 36px;
   }
   .grid-2 {
     grid-template-columns: 1fr;
@@ -494,5 +525,11 @@
   .table-wrap .table:not(.table-keep) td.col-actions .row-nowrap {
     justify-content: flex-end;
     flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 420px) {
+  .login-card {
+    padding: 22px 18px 18px;
   }
 }

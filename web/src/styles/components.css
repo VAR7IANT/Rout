@@ -984,3 +984,30 @@
   fill: var(--chart-b);
   opacity: 0.08;
 }
+
+/* Long unbroken values (IPv6 addresses, domains, links) wrap instead of widening the page. */
+.card-body,
+.notice-text,
+.sheet-body,
+.sheet-head,
+.alert-text,
+.stat-sub,
+.toast,
+.hint,
+.err,
+.page-head {
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+.notice {
+  flex-wrap: wrap;
+}
+.notice-text {
+  flex: 1 1 180px;
+}
+/* A larger hit area for the switch without changing how it looks. */
+.switch::after {
+  content: '';
+  position: absolute;
+  inset: -9px -4px;
+}

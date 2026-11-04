@@ -6,20 +6,23 @@ import { useTheme, type ThemeChoice } from './lib/theme'
 import { Icon, type IconName } from './components/icons'
 import { Overlay } from './components/overlay'
 import { Button, IconButton, Notice, Segmented } from './components/ui'
+import type { MessageKey } from './i18n/catalog'
 
 interface NavItem {
   to: string
   match: string[]
   icon: IconName
-  label: 'nav.dashboard' | 'nav.nodes' | 'nav.relays' | 'nav.subscriptions' | 'nav.system'
-  short?: 'nav.relaysShort'
+  label: MessageKey
+  /** A shorter label for the phone tab bar (six items share 320px). */
+  short?: MessageKey
 }
 
 export const navItems: NavItem[] = [
-  { to: '/', match: ['/'], icon: 'dashboard', label: 'nav.dashboard' },
+  { to: '/', match: ['/'], icon: 'dashboard', label: 'nav.dashboard', short: 'nav.dashboardShort' },
   { to: '/nodes', match: ['/nodes'], icon: 'nodes', label: 'nav.nodes' },
   { to: '/relays', match: ['/relays', '/exits'], icon: 'relay', label: 'nav.relays', short: 'nav.relaysShort' },
-  { to: '/subscriptions', match: ['/subscriptions', '/sources'], icon: 'sub', label: 'nav.subscriptions' },
+  { to: '/ai', match: ['/ai'], icon: 'ai', label: 'nav.ai', short: 'nav.aiShort' },
+  { to: '/subscriptions', match: ['/subscriptions', '/sources'], icon: 'sub', label: 'nav.subscriptions', short: 'nav.subscriptionsShort' },
   { to: '/system', match: ['/system'], icon: 'system', label: 'nav.system' },
 ]
 
@@ -117,7 +120,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {navItems.map((n) => (
           <Link key={n.to} to={n.to} className={active(n) ? 'on' : ''} aria-current={active(n) ? 'page' : undefined}>
             <Icon name={n.icon} size={20} />
-            <span>{t(n.short ?? n.label)}</span>
+            <span className="tab-label">{t(n.short ?? n.label)}</span>
           </Link>
         ))}
       </nav>

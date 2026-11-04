@@ -11,6 +11,7 @@ import { NodesPage } from './pages/Nodes'
 import { RelaysPage } from './pages/Relays'
 import { SubscriptionsPage } from './pages/Subscriptions'
 import { SystemPage } from './pages/System'
+import { AIPage } from './pages/AI'
 import { Button, EmptyState, Spinner } from './components/ui'
 
 function Routes() {
@@ -25,6 +26,8 @@ function Routes() {
       return <RelaysPage tab="relays" />
     case '/exits':
       return <RelaysPage tab="exits" />
+    case '/ai':
+      return <AIPage />
     case '/subscriptions':
       return <SubscriptionsPage tab="subscriptions" />
     case '/sources':

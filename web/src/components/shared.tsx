@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n'
 import { api } from '../lib/api'
 import { formatBytes, formatDate, formatPercent } from '../lib/format'
@@ -59,7 +59,39 @@ export function TrafficCell({ traffic }: { traffic?: TrafficView }) {
 
 // ---- layered connection test -----------------------------------------------------------
 
-export function DiagResultView({ result }: { result: DiagResult }) {
+/** Finds the IP addresses written in a piece of text (used to pick out an observed exit IP). */
+export function findIPs(text: string): string[] {
+  const out: string[] = []
+  for (const raw of text.split(/[\s，、；;,()（）\[\]：]+/)) {
+    const tok = raw.replace(/^[^0-9a-fA-F:]+|[^0-9a-fA-F:.]+$/g, '').replace(/\.$/, '')
+    if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(tok) && tok.split('.').every((n) => Number(n) <= 255)) out.push(tok)
+    else if (/^[0-9a-f:]+$/i.test(tok) && (tok.match(/:/g)?.length ?? 0) >= 2 && /[0-9a-f]/i.test(tok) && (tok.includes('::') || tok.split(':').length === 8)) out.push(tok)
+  }
+  return [...new Set(out)]
+}
+
+/** Renders text with the given strings emphasised. */
+export function Marked({ text, marks }: { text: string; marks?: string[] }) {
+  const list = (marks ?? []).filter(Boolean)
+  if (list.length === 0) return <>{text}</>
+  const esc = list.map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length)
+  const parts = text.split(new RegExp(`(${esc.join('|')})`, 'g'))
+  return (
+    <>
+      {parts.map((p, i) =>
+        list.includes(p) ? (
+          <mark key={i} className="ip-mark mono">
+            {p}
+          </mark>
+        ) : (
+          <Fragment key={i}>{p}</Fragment>
+        ),
+      )}
+    </>
+  )
+}
+
+export function DiagResultView({ result, marks }: { result: DiagResult; marks?: string[] }) {
   const { t } = useI18n()
   const layers: number[] = []
   for (const s of result.steps) if (!layers.includes(s.layer)) layers.push(s.layer)
@@ -77,7 +109,9 @@ export function DiagResultView({ result }: { result: DiagResult }) {
               {steps.map((s, i) => (
                 <li key={i} className={`diag-${s.level}`}>
                   <Icon name={s.level === 'ok' ? 'check' : s.level === 'fail' ? 'close' : s.level === 'warn' ? 'warn' : 'pulse'} size={15} />
-                  <span>{s.text}</span>
+                  <span>
+                    <Marked text={s.text} marks={marks} />
+                  </span>
                 </li>
               ))}
             </ul>
@@ -86,6 +120,33 @@ export function DiagResultView({ result }: { result: DiagResult }) {
       })}
     </div>
   )
+}
+
+// ---- traffic paths ---------------------------------------------------------------------
+
+export type HopKind = 'entry' | 'relay' | 'target' | 'exit' | 'client' | 'net'
+
+/** The route a connection takes: entry → relay → target. */
+export function PathChain({ items, vertical }: { items: { label: ReactNode; kind: HopKind }[]; vertical?: boolean }) {
+  return (
+    <ol className={`path ${vertical ? 'path-stack' : ''}`}>
+      {items.map((it, i) => (
+        <Fragment key={i}>
+          {i > 0 ? (
+            <li className="path-arrow" aria-hidden="true">
+              <Icon name="arrow" size={14} />
+            </li>
+          ) : null}
+          <li className={`path-chip path-${it.kind}`}>{it.label}</li>
+        </Fragment>
+      ))}
+    </ol>
+  )
+}
+
+/** An exit's hop-by-hop path as the server words it (first hop: this server, last: the Internet). */
+export function HopPath({ hops, vertical }: { hops: string[]; vertical?: boolean }) {
+  return <PathChain vertical={vertical} items={hops.map((h, i) => ({ label: h, kind: i === 0 ? 'entry' : i === hops.length - 1 ? 'net' : i === hops.length - 2 ? 'exit' : 'relay' }))} />
 }
 
 /** Runs the layered test of a node, relay or exit and shows the result. */
