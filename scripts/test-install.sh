@@ -12,7 +12,6 @@
 # "Installer against the published release" and the real tag run do.
 set -eu
 [ "$#" = 1 ] || { echo 'Usage: test-install.sh DIST_DIR' >&2; exit 1; }
-[ "$(id -u)" = 0 ] || { echo 'install.sh needs root; run with sudo' >&2; exit 1; }
 here=$(cd "$(dirname "$0")" && pwd)
 dist=$(cd "$1" && pwd)
 repo_root=$(dirname "$here")
@@ -21,6 +20,7 @@ default=$(sed -n 's/^VERSION=\${ROUT_VERSION:-\(v[0-9][0-9A-Za-z._-]*\)}$/\1/p' 
 [ "$default" = "$tag" ] || { echo "install.sh default $default is not the built version $tag" >&2; exit 1; }
 case "$(uname -m)" in x86_64|amd64) host=amd64; other=arm64 ;; aarch64|arm64) host=arm64; other=amd64 ;; *) echo "unsupported host" >&2; exit 1 ;; esac
 real_uname=$(command -v uname)
+real_id=$(command -v id)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
@@ -64,7 +64,12 @@ cat > "$work/bin/uname" <<FAKE
 [ "\${FAKE_ARCH:-}" ] && [ "\$1" = -m ] && { echo "\$FAKE_ARCH"; exit 0; }
 exec $real_uname "\$@"
 FAKE
-chmod +x "$work/bin/curl" "$work/bin/uname"
+cat > "$work/bin/id" <<FAKE
+#!/bin/sh
+[ "\$1" = -u ] && { echo 0; exit 0; }
+exec $real_id "\$@"
+FAKE
+chmod +x "$work/bin/curl" "$work/bin/uname" "$work/bin/id"
 
 publish() { # publish TAG: both binaries, version.txt and checksums.txt from dist
     mkdir -p "$work/rel/$1"
