@@ -252,7 +252,7 @@ func (a *App) relayView(s State, p Profile, now time.Time) RelayView {
 type ExitView struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name"`
-	Kind          string   `json:"kind"` // classic or remote
+	Kind          string   `json:"kind"` // classic, remote or chain
 	Protocol      string   `json:"protocol"`
 	Label         string   `json:"label"`
 	Host          string   `json:"host"`
@@ -265,6 +265,14 @@ type ExitView struct {
 	AI            bool     `json:"ai"`
 	Refs          int      `json:"refs"`
 	Warning       string   `json:"warning,omitempty"`
+	// Relay chains: the hop (a relay of this server, or another server's address), the full
+	// path for display and the reason it cannot be used, if any. Never any credential.
+	ViaRelay     string   `json:"via_relay,omitempty"`
+	ViaRelayName string   `json:"via_relay_name,omitempty"`
+	ViaAddress   string   `json:"via_address,omitempty"`
+	Path         []string `json:"path"`
+	AIUsable     bool     `json:"ai_usable"`
+	AIProblem    string   `json:"ai_problem,omitempty"`
 }
 
 func exitView(a *App, s State, e Exit) ExitView {
@@ -273,6 +281,18 @@ func exitView(a *App, s State, e Exit) ExitView {
 		Nodes: []string{}, NodeIDs: []string{}}
 	if e.Kind == exitRemote {
 		v.Kind = "remote"
+	}
+	if e.isChain() {
+		v.Kind, v.ViaRelay, v.ViaAddress = "chain", e.ViaRelay, e.ViaAddress
+		if r, er := chainRelay(s, e); er == nil {
+			v.ViaRelayName = r.Name
+		}
+	}
+	v.Path = chainPath(a, s, e)
+	if _, er := aiExitProxy(s, e, localIPs()); er != nil {
+		v.AIProblem = a.Error(er)
+	} else {
+		v.AIUsable = true
 	}
 	if e.Proxy.Protocol == proxyNode {
 		v.Protocol = linkScheme(e.Proxy.Link)

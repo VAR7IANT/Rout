@@ -39,6 +39,9 @@ type Proxy struct {
 	// (VLESS Reality, AnyTLS, Trojan, Shadowsocks, ...). Its credentials live in the link,
 	// so it is as sensitive as a password and is never printed.
 	Link string `json:"link,omitempty"`
+	// TLSName is never stored: when a relay chain dials an HTTPS proxy through a hop, the
+	// certificate is still verified against the real proxy host (see exit_chain.go).
+	TLSName string `json:"-"`
 }
 
 // proxyNode is the protocol of an outbound that speaks a node protocol to a remote

@@ -32,7 +32,11 @@ func proxyConfig(p Proxy) M {
 	if p.Protocol == "https" {
 		// Explicit opt-in only. System trust roots and the configured host (or IP SAN)
 		// are verified. Never retry with TLS disabled after a handshake failure.
-		out["tls"] = M{"enabled": true, "server_name": p.Host, "min_version": "1.2"}
+		name := p.Host
+		if p.TLSName != "" {
+			name = p.TLSName
+		}
+		out["tls"] = M{"enabled": true, "server_name": name, "min_version": "1.2"}
 	}
 	if t == "socks" {
 		out["version"] = "5"

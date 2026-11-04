@@ -908,10 +908,19 @@ func (a *App) diagnoseProxy(ctx context.Context, e Exit, env diagEnv, opts diagO
 	var rep diagReport
 	d := diagger{a: a, rep: &rep}
 	p := e.Proxy
+	if e.isChain() {
+		dial, ok := a.diagChainHop(ctx, d, e, env)
+		if !ok {
+			return rep
+		}
+		p = dial
+	}
 	host, port := p.Host, p.Port
 	dialer := env.newDialer(outAuto)
 	// layer 2: the proxy's address
-	if _, er := netip.ParseAddr(host); er != nil {
+	if e.isChain() && e.ViaRelay != "" {
+		// The hop is this server's own relay entry, an explicit internal reference.
+	} else if _, er := netip.ParseAddr(host); er != nil {
 		res, er := dialer.Resolver.Resolve(ctx, host, true, true)
 		if er != nil {
 			d.dialFailure(2, er, DialReport{})
@@ -993,15 +1002,32 @@ func (a *App) diagnoseProxy(ctx context.Context, e Exit, env diagEnv, opts diagO
 		d.add(6, diagFail, "无法启动本地检测客户端：%s", a.Error(res.ClientErr))
 		return rep
 	}
-	d.layerExit(res)
+	if d.layerExit(res) {
+		d.sameAsThisHost(env, res)
+	}
 	return rep
+}
+
+// sameAsThisHost warns when the observed exit address is one of this server's own: the
+// chain then does not leave from the remote side as intended.
+func (d diagger) sameAsThisHost(env diagEnv, res fullProbe) {
+	local := env.local()
+	for _, ip := range []string{res.V4, res.V6} {
+		if ip != "" && local[ip] {
+			d.add(6, diagWarn, "实际出口 IP %s 是本机地址：流量没有从远端出口离开，请检查链路末端的代理", ip)
+		}
+	}
 }
 
 // proxyAuthCheck wraps TLS for HTTPS proxies (certificate verified), then runs the handshake.
 func (a *App) proxyAuthCheck(ctx context.Context, conn net.Conn, p Proxy) (proxyHandshakeResult, error) {
 	defer conn.Close()
 	if p.Protocol == "https" {
-		tc := tls.Client(conn, &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12})
+		name := p.Host
+		if p.TLSName != "" {
+			name = p.TLSName
+		}
+		tc := tls.Client(conn, &tls.Config{ServerName: name, MinVersion: tls.VersionTLS12})
 		hctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 		defer cancel()
 		if e := tc.HandshakeContext(hctx); e != nil {

@@ -412,7 +412,7 @@ func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 func TestAIMenuFullFlow(t *testing.T) {
 	sc := newAIScene(t)
 	// Select exit #1 · confirm · bind nodes 1 and 2 · save · confirm · enable · confirm · back
-	u, out := aiUI(sc, "3\n1\n\n2\n1 2\ns\n\n1\n\n0\n")
+	u, out := aiUI(sc, "3\n1\n1\n\n2\n1 2\ns\n\n1\n\n0\n")
 	if e := u.aiMenu(); e != nil {
 		t.Fatal(e)
 	}
@@ -517,7 +517,7 @@ func TestAISelectExitRefusesUnusableAndWarnsWhenUnreachable(t *testing.T) {
 	sc := newAIScene(t)
 	loop := aiTestExit(t, sc.a, "Loop", "127.0.0.1", sc.reality.Port)
 	// Exits are listed in order: Canada (1), Loop (2). The looping one is marked and refused.
-	u, out := aiUI(sc, "3\n2\n0\n")
+	u, out := aiUI(sc, "3\n1\n2\n0\n")
 	if e := u.aiMenu(); e != nil {
 		t.Fatal(e)
 	}
@@ -528,7 +528,7 @@ func TestAISelectExitRefusesUnusableAndWarnsWhenUnreachable(t *testing.T) {
 		t.Fatal("selected a looping exit")
 	}
 	// An unreachable exit needs an explicit second confirmation (default: no).
-	u, out = aiUI(sc, "3\n1\n\n0\n")
+	u, out = aiUI(sc, "3\n1\n1\n\n0\n0\n")
 	u.probeProxy = func(Proxy) (string, error) { return "", os.ErrDeadlineExceeded }
 	_ = u.aiMenu()
 	if s, _ := sc.a.Load(); s.AI != nil && s.AI.AIOutboundID != "" {

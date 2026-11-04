@@ -94,7 +94,12 @@ func (e Exit) remoteCompatibility() error {
 }
 
 func (e Exit) validateKind() error {
+	if er := e.validateChainShape(); er != nil {
+		return er
+	}
 	switch e.Kind {
+	case exitChain:
+		return nil
 	case "":
 		if e.RemoteNetwork != "" || e.Proxy.Protocol == proxyNode {
 			return errors.New("远程服务器出口必须标记为远程服务器")
@@ -114,6 +119,9 @@ func (e Exit) validateKind() error {
 // KindLabel names the exit type for lists ("SOCKS5", "HTTP", "VLESS", ...).
 func (e Exit) KindLabel() string {
 	label := strings.ToUpper(e.Proxy.Kind())
+	if e.Kind == exitChain {
+		return "CHAIN·" + label
+	}
 	if e.Kind == exitRemote {
 		return "REMOTE·" + label
 	}
