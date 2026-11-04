@@ -110,4 +110,18 @@ func TestIntegrationPanelCaddyDeployment(t *testing.T) {
 	if code, _ := f.request(t, "sub.rout.test", "/"); code != 404 {
 		t.Fatal("removal damaged the subscription site")
 	}
+	// Redeploy over Rout's own removed placeholder (real Caddy, real reload).
+	res, e = a.DeployWebHTTPS("panel.sub.rout.test", WebHTTPSOptions{})
+	if e != nil || !res.Verification.ok() {
+		t.Fatalf("redeploy after removal: %+v %v", res.Verification, e)
+	}
+	if code, _ := f.request(t, "unrelated.rout.test", "/"); code != 200 {
+		t.Fatal("redeploy damaged another site")
+	}
+	if code, _ := f.request(t, "sub.rout.test", "/"); code != 404 {
+		t.Fatal("redeploy damaged the subscription site")
+	}
+	if main, _ = os.ReadFile(a.httpsMain()); strings.Count(string(main), "import ") != 1 {
+		t.Fatalf("Caddyfile after redeploy:\n%s", main)
+	}
 }

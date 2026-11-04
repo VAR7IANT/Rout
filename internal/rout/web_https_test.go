@@ -500,3 +500,267 @@ func TestWebMenuSuggestsSubdomainWhenTheSubscriptionUsesTheDomain(t *testing.T) 
 		}
 	}
 }
+
+// ---- remove and redeploy (Codex P2: the removed placeholder must stay Rout's) -----------------
+
+func (p *panelFake) deploy(t *testing.T, domain string) {
+	t.Helper()
+	if _, e := p.sc.a.DeployWebHTTPS(domain, WebHTTPSOptions{}); e != nil {
+		t.Fatalf("deploy %s: %v", domain, e)
+	}
+}
+
+// subscriptionSnapshot captures what the subscription site must never lose.
+type subscriptionSnapshot struct {
+	fragment, state string
+	publicURL       string
+}
+
+func (p *panelFake) subscriptionSnapshot(t *testing.T) subscriptionSnapshot {
+	t.Helper()
+	a := p.sc.a
+	cfg, _ := a.subscriptionSettings()
+	return subscriptionSnapshot{fragment: p.read(t, a.httpsFile()), state: p.read(t, filepath.Join(a.Home, "state.json")), publicURL: cfg.PublicURL}
+}
+
+func (p *panelFake) assertSubscriptionIntact(t *testing.T, before subscriptionSnapshot, token string) {
+	t.Helper()
+	after := p.subscriptionSnapshot(t)
+	if after != before {
+		t.Fatal("the panel changed the subscription site, its URL or the stored state")
+	}
+	assertSubscriptionStorage(t, p.sc.a, []byte(before.state), token)
+	if !inspectCaddyDomain(p.activeJSON, "hk.oioio.uk", 8787).Correct {
+		t.Fatal("the subscription site is no longer served by Caddy")
+	}
+}
+
+func TestPanelHTTPSDeployRemoveDeploySucceedsAndKeepsTheSubscription(t *testing.T) {
+	p := newPanelFake(t)
+	a := p.sc.a
+	_, token := p.sc.create(t, "Shadowrocket", 2, 0)
+	if e := a.DeploySubscriptionHTTPS("hk.oioio.uk", false); e != nil {
+		t.Fatal(e)
+	}
+	before := p.subscriptionSnapshot(t)
+	p.deploy(t, "panel.hk.oioio.uk")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	placeholder := p.read(t, a.webHTTPSFile())
+	if strings.Contains(placeholder, "reverse_proxy") || inspectCaddyDomain(p.activeJSON, "panel.hk.oioio.uk", 8790).Found {
+		t.Fatalf("removal left the site behind:\n%s", placeholder)
+	}
+	st, _ := a.loadWebHTTPSState()
+	if !st.Removed || st.Ownership != "managed" || st.Digest != hashToken(placeholder) {
+		t.Fatalf("state after removal %+v", st)
+	}
+	p.assertSubscriptionIntact(t, before, token)
+	// Redeploy over Rout's own, digest-verified placeholder.
+	res, e := a.DeployWebHTTPS("panel.hk.oioio.uk", WebHTTPSOptions{})
+	if e != nil || !res.Verification.ok() {
+		t.Fatalf("redeploy after removal: %+v %v", res, e)
+	}
+	site := p.read(t, a.webHTTPSFile())
+	if !strings.Contains(site, "panel.hk.oioio.uk {") || !strings.Contains(site, "reverse_proxy 127.0.0.1:8790") {
+		t.Fatalf("fragment:\n%s", site)
+	}
+	st, _ = a.loadWebHTTPSState()
+	if st.Removed || st.Pending || st.Ownership != "managed" || st.Domain != "panel.hk.oioio.uk" || st.Digest != hashToken(site) {
+		t.Fatalf("state after redeploy %+v", st)
+	}
+	if strings.Count(p.read(t, a.httpsMain()), "import ") != 1 {
+		t.Fatal("redeploy added a second import line")
+	}
+	if !inspectCaddyDomain(p.activeJSON, "panel.hk.oioio.uk", 8790).Correct {
+		t.Fatal("the panel site is not active after redeploy")
+	}
+	p.assertSubscriptionIntact(t, before, token)
+	// The cycle can be repeated, and each step is idempotent.
+	if e = a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	reloads := p.calledWith("systemctl reload caddy")
+	if e = a.RemoveWebHTTPS(); e != nil || p.calledWith("systemctl reload caddy") != reloads {
+		t.Fatalf("a second removal was not a no-op: %v", e)
+	}
+	p.deploy(t, "panel.hk.oioio.uk")
+	reloads = p.calledWith("systemctl reload caddy")
+	if res, e = a.DeployWebHTTPS("panel.hk.oioio.uk", WebHTTPSOptions{}); e != nil || !res.Unchanged || p.calledWith("systemctl reload caddy") != reloads {
+		t.Fatalf("a repeated deploy was not a no-op: %+v %v", res, e)
+	}
+	p.assertSubscriptionIntact(t, before, token)
+}
+
+// Repair resumes a site that exists; after an explicit removal there is nothing to resume, so
+// it says how to deploy again instead of resurrecting a site the administrator removed.
+func TestPanelHTTPSRepairAfterRemovalAsksForADomainAndChangesNothing(t *testing.T) {
+	p := newPanelFake(t)
+	a := p.sc.a
+	p.deploy(t, "panel.example.com")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	files := p.read(t, a.webHTTPSFile()) + p.read(t, a.httpsMain()) + p.read(t, a.webHTTPSStatePath())
+	reloads := p.calledWith("systemctl reload caddy")
+	_, e := a.RepairWebHTTPS(WebHTTPSOptions{})
+	if e == nil || !strings.Contains(Translate("en", e.Error()), "rout web https deploy DOMAIN") {
+		t.Fatalf("repair after removal: %v", e)
+	}
+	if p.read(t, a.webHTTPSFile())+p.read(t, a.httpsMain())+p.read(t, a.webHTTPSStatePath()) != files || p.calledWith("systemctl reload caddy") != reloads {
+		t.Fatal("a refused repair changed something")
+	}
+	// Deploying with the explicit domain works, and a later repair is then the normal one.
+	p.deploy(t, "panel.example.com")
+	if res, e := a.RepairWebHTTPS(WebHTTPSOptions{}); e != nil || !res.Unchanged {
+		t.Fatalf("repair after redeploy: %+v %v", res, e)
+	}
+}
+
+func TestPanelHTTPSRemovalLeavesNoStaleHostOrCookiePolicy(t *testing.T) {
+	p := newPanelFake(t)
+	a := p.sc.a
+	p.deploy(t, "panel.example.com")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	cfg, _ := a.LoadWebConfig()
+	if contains(cfg.AllowedHosts, "panel.example.com") || cfg.HTTPSDomain != "" || cfg.SecureCookie {
+		t.Fatalf("web.json after removal: %+v", cfg)
+	}
+	// A host the administrator added by hand is theirs and stays, with its cookie policy.
+	if e := a.mutateWebConfig(func(c *WebConfig) error { c.AllowedHosts = append(c.AllowedHosts, "manual.example.org"); return nil }); e != nil {
+		t.Fatal(e)
+	}
+	p.deploy(t, "panel.example.com")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	cfg, _ = a.LoadWebConfig()
+	if !contains(cfg.AllowedHosts, "manual.example.org") || contains(cfg.AllowedHosts, "panel.example.com") || !cfg.SecureCookie {
+		t.Fatalf("a manually allowed host was disturbed: %+v", cfg)
+	}
+}
+
+func TestPanelHTTPSEditedPlaceholderIsNeverOverwritten(t *testing.T) {
+	p := newPanelFake(t)
+	a := p.sc.a
+	p.deploy(t, "panel.example.com")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	edited := "# placeholder edited by the administrator\nadmin.example.org {\n respond \"hand written\" 200\n}\n"
+	if e := os.WriteFile(a.webHTTPSFile(), []byte(edited), 0644); e != nil {
+		t.Fatal(e)
+	}
+	p.activeJSON = p.adapt(a.httpsMain()) // the administrator reloaded Caddy after editing
+	main := p.read(t, a.httpsMain())
+	reloads := p.calledWith("systemctl reload caddy")
+	_, e := a.DeployWebHTTPS("panel.example.com", WebHTTPSOptions{})
+	if e == nil || !strings.Contains(Translate("en", e.Error()), "changed externally") {
+		t.Fatalf("an edited placeholder was not refused: %v", e)
+	}
+	if p.read(t, a.webHTTPSFile()) != edited || p.read(t, a.httpsMain()) != main || p.calledWith("systemctl reload caddy") != reloads {
+		t.Fatal("the edited file or Caddy was touched")
+	}
+	// The same protection for a domain change, and for removal being repeated.
+	if _, e = a.DeployWebHTTPS("other.example.com", WebHTTPSOptions{}); e == nil || p.read(t, a.webHTTPSFile()) != edited {
+		t.Fatalf("edited placeholder overwritten by a new domain: %v", e)
+	}
+	if e = a.RemoveWebHTTPS(); e != nil || p.read(t, a.webHTTPSFile()) != edited {
+		t.Fatalf("removal touched an edited placeholder: %v", e)
+	}
+}
+
+func TestPanelHTTPSDeletedPlaceholderIsRecreated(t *testing.T) {
+	p := newPanelFake(t)
+	a := p.sc.a
+	p.deploy(t, "panel.example.com")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Remove(a.webHTTPSFile()); e != nil { // for example /etc/caddy was purged
+		t.Fatal(e)
+	}
+	p.deploy(t, "panel.example.com")
+	if !strings.Contains(p.read(t, a.webHTTPSFile()), "reverse_proxy 127.0.0.1:8790") {
+		t.Fatal("site not recreated")
+	}
+}
+
+func TestPanelHTTPSDomainChangeAfterRemovalAndOnALiveSite(t *testing.T) {
+	p := newPanelFake(t)
+	a := p.sc.a
+	_, token := p.sc.create(t, "Shadowrocket", 2, 0)
+	if e := a.DeploySubscriptionHTTPS("hk.oioio.uk", false); e != nil {
+		t.Fatal(e)
+	}
+	before := p.subscriptionSnapshot(t)
+	p.deploy(t, "one.example.com")
+	if e := a.RemoveWebHTTPS(); e != nil {
+		t.Fatal(e)
+	}
+	p.deploy(t, "two.example.com") // a different domain over the removed placeholder
+	if inspectCaddyDomain(p.activeJSON, "one.example.com", 8790).Found || !inspectCaddyDomain(p.activeJSON, "two.example.com", 8790).Correct {
+		t.Fatal("wrong domain served after a change over the placeholder")
+	}
+	cfg, _ := a.LoadWebConfig()
+	if cfg.HTTPSDomain != "two.example.com" || contains(cfg.AllowedHosts, "one.example.com") {
+		t.Fatalf("web.json %+v", cfg)
+	}
+	// A live site can be moved to another domain without a removal in between.
+	p.deploy(t, "three.example.com")
+	if inspectCaddyDomain(p.activeJSON, "two.example.com", 8790).Found || !inspectCaddyDomain(p.activeJSON, "three.example.com", 8790).Correct {
+		t.Fatal("wrong domain served after moving a live site")
+	}
+	if cfg, _ = a.LoadWebConfig(); cfg.HTTPSDomain != "three.example.com" || contains(cfg.AllowedHosts, "two.example.com") || strings.Count(p.read(t, a.httpsMain()), "import ") != 1 {
+		t.Fatalf("web.json %+v", cfg)
+	}
+	p.assertSubscriptionIntact(t, before, token)
+}
+
+func TestPanelHTTPSFailedRedeployAfterRemovalRollsBackAndCanBeRetried(t *testing.T) {
+	for _, fail := range []string{"systemctl reload caddy", "caddy validate --config {main}"} {
+		t.Run(fail, func(t *testing.T) {
+			p := newPanelFake(t)
+			a := p.sc.a
+			_, token := p.sc.create(t, "Shadowrocket", 2, 0)
+			if e := a.DeploySubscriptionHTTPS("hk.oioio.uk", false); e != nil {
+				t.Fatal(e)
+			}
+			before := p.subscriptionSnapshot(t)
+			p.deploy(t, "panel.hk.oioio.uk")
+			if e := a.RemoveWebHTTPS(); e != nil {
+				t.Fatal(e)
+			}
+			placeholder, main := p.read(t, a.webHTTPSFile()), p.read(t, a.httpsMain())
+			web, _ := os.ReadFile(a.webConfigPath())
+			active := append([]byte(nil), p.activeJSON...)
+			p.fail = strings.ReplaceAll(fail, "{main}", a.httpsMain())
+			_, e := a.DeployWebHTTPS("panel.hk.oioio.uk", WebHTTPSOptions{})
+			if e == nil || errors.Is(e, ErrPanelHTTPSPending) || !strings.Contains(e.Error(), "previous configuration restored and verified") {
+				t.Fatalf("got %v", e)
+			}
+			if p.read(t, a.webHTTPSFile()) != placeholder || p.read(t, a.httpsMain()) != main {
+				t.Fatal("files not restored byte for byte")
+			}
+			if now, _ := os.ReadFile(a.webConfigPath()); string(now) != string(web) {
+				t.Fatal("web.json not restored")
+			}
+			if !caddyConfigEqual(p.activeJSON, active) {
+				t.Fatal("the previous active Caddy configuration was not restored")
+			}
+			st, _ := a.loadWebHTTPSState()
+			if !st.Removed || st.Digest != hashToken(placeholder) || st.LastError == "" {
+				t.Fatalf("state must stay consistent with the restored placeholder: %+v", st)
+			}
+			p.assertSubscriptionIntact(t, before, token)
+			// The failure left nothing that blocks the next attempt.
+			p.deploy(t, "panel.hk.oioio.uk")
+			if !inspectCaddyDomain(p.activeJSON, "panel.hk.oioio.uk", 8790).Correct {
+				t.Fatal("retry did not deploy")
+			}
+			p.assertSubscriptionIntact(t, before, token)
+		})
+	}
+}

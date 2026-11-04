@@ -479,7 +479,11 @@ func (a *App) DeployWebHTTPS(domain string, opts WebHTTPSOptions) (res WebHTTPSR
 	if !caddyAutomaticHTTPS(active) {
 		return res, errors.New("Caddy automatic certificate management is disabled in the existing configuration; no global TLS policy will be changed")
 	}
-	owned := previous.Ownership == "managed" && !previous.Removed
+	// Rout owns the fragment while the recorded digest matches it. That includes the
+	// placeholder RemoveWebHTTPS leaves behind (Removed): it is Rout's own file, verified by
+	// the digest recorded for it, and may be replaced by a redeployment. A fragment whose
+	// bytes differ from the record was edited by someone else and is never touched.
+	owned := previous.Ownership == "managed"
 	file := a.webHTTPSFile()
 	if owned {
 		f, er := a.ownedPanelFragment(previous)
@@ -493,7 +497,8 @@ func (a *App) DeployWebHTTPS(domain string, opts WebHTTPSOptions) (res WebHTTPSR
 		}
 	}
 	route := inspectCaddyDomain(active, domain, port)
-	ownDomain := owned && previous.Domain == domain
+	// A removed site is no longer served, so a route for the domain is somebody else's.
+	ownDomain := owned && !previous.Removed && previous.Domain == domain
 	if !ownDomain && (route.Found || route.Conflict) {
 		return res, errors.New("该域名在 Caddy 中已有站点配置，不会覆盖；请换用其他域名（例如独立的子域名）")
 	}
@@ -800,9 +805,20 @@ func (a *App) RemoveWebHTTPS() (err error) {
 	if e = a.saveWebHTTPSState(previous); e != nil {
 		return e
 	}
+	// Forget what the deployment added to web.json: the domain no longer reaches the panel,
+	// and the Secure-cookie policy it forced would stop an SSH-tunnel login over plain HTTP
+	// (Safari refuses Secure cookies there). Hosts the administrator allowed by hand stay.
 	return a.mutateWebConfig(func(c *WebConfig) error {
+		hosts := []string{}
+		for _, h := range c.AllowedHosts {
+			if h != previous.Domain {
+				hosts = append(hosts, h)
+			}
+		}
+		c.AllowedHosts = hosts
 		if c.HTTPSDomain == previous.Domain {
 			c.HTTPSDomain = ""
+			c.SecureCookie = len(hosts) > 0
 		}
 		return nil
 	})
