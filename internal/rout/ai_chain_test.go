@@ -121,6 +121,39 @@ func canadaSOCKS(t *testing.T, origin, user, password string) (Proxy, *atomic.In
 	return Proxy{Protocol: "socks5", Host: h, Port: p, Username: user, Password: password}, count, stop
 }
 
+// distinctFreePort is freePort that never returns one of the ports already taken.
+func distinctFreePort(t *testing.T, taken ...int) int {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		port, e := freePort()
+		if e != nil {
+			t.Fatal(e)
+		}
+		clash := false
+		for _, other := range taken {
+			clash = clash || other == port
+		}
+		if !clash {
+			return port
+		}
+	}
+	t.Fatal("no distinct free port")
+	return 0
+}
+
+// chainRelayProfileIn is chainRelayProfile with a port that no profile of s already uses.
+func chainRelayProfileIn(t *testing.T, s State, target string) Profile {
+	t.Helper()
+	var taken []int
+	for _, p := range s.Profiles {
+		taken = append(taken, p.Port)
+	}
+	r := chainRelayProfile(t, target)
+	r.Port = distinctFreePort(t, taken...)
+	r.PublicPort = r.Port
+	return r
+}
+
 func chainRelayProfile(t *testing.T, target string) Profile {
 	t.Helper()
 	port, e := freePort()
@@ -152,8 +185,11 @@ func newChainSceneProto(t *testing.T, a *App, proxy Proxy, protocol string) chai
 	sc.relay.Protocol = protocol
 	sc.nodeA, sc.node = fixture(t, "ss"), fixture(t, "ss")
 	sc.nodeA.Name, sc.node.Name = "US-A", "US-B"
-	sc.nodeA.Port, _ = freePort()
-	sc.node.Port, _ = freePort()
+	// freePort closes its probe socket before returning, so the kernel can hand the same port
+	// out again: the relay and the two nodes must be given distinct ports explicitly, or
+	// State.Validate rightly refuses "same udp/tcp port" now and then.
+	sc.nodeA.Port = distinctFreePort(t, sc.relay.Port)
+	sc.node.Port = distinctFreePort(t, sc.relay.Port, sc.nodeA.Port)
 	sc.nodeA.PublicPort, sc.node.PublicPort = sc.nodeA.Port, sc.node.Port
 	sc.exit = Exit{ID: RandomHex(6), Name: "CA-chain", Kind: exitChain, ViaRelay: sc.relay.ID, Proxy: proxy}
 	if exitTransport(proxy) == "udp" {

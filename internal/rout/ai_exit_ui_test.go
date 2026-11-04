@@ -18,8 +18,8 @@ func saveTestServer(t *testing.T, a *App) {
 
 func TestAIExitThroughExistingRelayFromTheMenu(t *testing.T) {
 	sc := newAIScene(t)
-	relay := chainRelayProfile(t, "198.51.100.20:1080")
 	old, _ := sc.a.Load()
+	relay := chainRelayProfileIn(t, old, "198.51.100.20:1080")
 	if e := sc.a.Commit(old, replace(old, relay), false); e != nil {
 		t.Fatal(e)
 	}
@@ -107,9 +107,9 @@ func TestAIExitFromARemoteNodeLink(t *testing.T) {
 func TestAIExitThroughAUDPOnlyRelayFromTheMenu(t *testing.T) {
 	sc := newAIScene(t)
 	node := quicNode(t, "hy2", "hy2.example.net", 8443)
-	relay := chainRelayProfile(t, node.hostPort())
-	relay.Protocol = "udp"
 	old, _ := sc.a.Load()
+	relay := chainRelayProfileIn(t, old, node.hostPort())
+	relay.Protocol = "udp"
 	if e := sc.a.Commit(old, replace(old, relay), false); e != nil {
 		t.Fatal(e)
 	}
