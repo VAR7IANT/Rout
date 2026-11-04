@@ -22,16 +22,17 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 ASSET=rout-linux-$ARCH
 BASE=https://github.com/$REPO/releases/download/$VERSION
-# fetch URL FILE MAX-SECONDS: HTTPS only, and anything but HTTP 200 is a failure. A missing
-# release is reported as such and never answered by installing another version: the pinned
-# version is the one that was verified together with this script.
+# fetch URL FILE MAX-SECONDS: HTTPS only; `curl -f` makes every HTTP error a failure, exactly
+# as before. The status code is read only to EXPLAIN the failure: a missing release is named
+# as such, and it is never answered by installing another version (the pinned version is the
+# one that was verified together with this script).
 fetch() {
-    status=$(curl --proto '=https' --tlsv1.2 -sSL --retry 2 --connect-timeout 15 --max-time "$3" -o "$2" -w '%{http_code}' "$1") ||
-        fail "下载失败，未做任何更改 / Download failed; nothing was changed: $1"
+    rc=0
+    status=$(curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --connect-timeout 15 --max-time "$3" -w '%{http_code}' -o "$2" "$1") || rc=$?
+    [ "$rc" = 0 ] && return 0
     case "$status" in
-    200) ;;
     404) fail "Rout $VERSION 尚未发布（HTTP 404），未做任何更改。请稍后再试，或在 https://github.com/$REPO/releases 选择已发布的版本并显式安装：ROUT_VERSION=vX.Y.Z / Rout $VERSION is not published yet (HTTP 404); nothing was changed. Try again later, or pick a published version at https://github.com/$REPO/releases and install it explicitly: ROUT_VERSION=vX.Y.Z" ;;
-    *) fail "下载返回 HTTP $status，未做任何更改 / Download returned HTTP $status; nothing was changed: $1" ;;
+    *) fail "下载失败（curl 退出码 $rc，HTTP ${status:-?}），未做任何更改 / Download failed (curl exit $rc, HTTP ${status:-?}); nothing was changed: $1" ;;
     esac
 }
 printf '%s\n' "下载 / Downloading Rout $VERSION ($ARCH)..."

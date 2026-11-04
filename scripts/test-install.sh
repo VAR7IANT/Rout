@@ -32,12 +32,15 @@ bad() { printf 'FAIL %s\n' "$1" >&2; fails=$((fails + 1)); }
 cat > "$work/bin/curl" <<'FAKE'
 #!/bin/sh
 # Subset of curl used by install.sh and check-install-release.sh.
-out=; want=0; url=
+out=; want=0; url=; failhttp=0
 while [ $# -gt 0 ]; do
     case "$1" in
     -o) out=$2; shift ;;
     -w) want=1; shift ;;
     --proto|--retry|--connect-timeout|--max-time) shift ;;
+    --fail) failhttp=1 ;;
+    --*) ;;
+    -*f*) failhttp=1 ;;   # -fsSL: fail on HTTP errors, like the real curl
     -*) ;;
     *) url=$1 ;;
     esac
@@ -52,6 +55,8 @@ esac
 file=$FAKE_RELEASES/${url#"$prefix"}
 if [ -f "$file" ]; then code=200; [ "$out" = /dev/null ] || cp "$file" "$out"; else code=404; [ "$out" = /dev/null ] || echo 'Not Found' > "$out"; fi
 [ "$want" = 0 ] || printf '%s' "$code"
+# Like curl -f: an HTTP error is exit status 22 (the -w output has been written already).
+[ "$failhttp" = 1 ] && [ "$code" -ge 400 ] && { echo "curl: (22) The requested URL returned error: $code" >&2; exit 22; }
 exit 0
 FAKE
 cat > "$work/bin/uname" <<FAKE
