@@ -2,12 +2,14 @@ package rout
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Relay-chain exits ("转发出口").
@@ -312,7 +314,21 @@ func chainDefaultName(s State, e Exit) string {
 	if r, er := chainRelay(s, e); er == nil {
 		via = r.Name
 	}
-	return "Chain-" + via + "-" + e.Proxy.Host
+	return boundedChainName("Chain", via, e.Proxy.Host)
+}
+
+// boundedChainName preserves the old names for short endpoints. For longer generated names,
+// keep a readable prefix and a stable content-derived suffix so similar long hostnames do
+// not all collapse to the same name. The display-name validator counts Unicode code points.
+func boundedChainName(parts ...string) string {
+	name := strings.Join(parts, "-")
+	const limit = 60
+	if utf8.RuneCountInString(name) <= limit {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	suffix := fmt.Sprintf("-%x", sum[:4])
+	return string([]rune(name)[:limit-len(suffix)]) + suffix
 }
 
 // CreateChainExit stores a relay-chain exit after the strict check.

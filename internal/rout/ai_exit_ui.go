@@ -367,7 +367,7 @@ func (u *UI) aiNewChain() error {
 	if u.err != nil {
 		return u.err
 	}
-	relay, e := u.a.CreateRelay(RelaySpec{Mode: relayRemote, Target: target, Protocol: network, Outbound: policy, Loopback: true, Name: "AI-hop-" + spec.Host})
+	relay, e := u.a.CreateRelay(RelaySpec{Mode: relayRemote, Target: target, Protocol: network, Outbound: policy, Loopback: true, Name: boundedChainName("AI-hop", spec.Host)})
 	if e != nil {
 		return e
 	}
