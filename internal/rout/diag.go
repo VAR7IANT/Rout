@@ -373,13 +373,20 @@ func (d diagger) layerUDPTarget(ctx context.Context, env diagEnv, p Profile, dia
 		d.add(3, diagWarn, "UDP 没有连接握手，无法用连通性测试验证；请用实际客户端确认")
 		return
 	}
-	// Hysteria2 and TUIC are QUIC: any QUIC endpoint answers a long-header packet of an
-	// unknown version with a Version Negotiation packet (RFC 9000 §6), which is a real
-	// UDP round trip that needs no credentials.
-	conn, rep, e := dialer.DialUDP(ctx, p.Target)
+	d.layerQUICTarget(ctx, env, dialer, p.Target)
+}
+
+// layerQUICTarget is the UDP reachability test shared by relay destinations and relay-chain
+// hops. Hysteria2 and TUIC are QUIC: any QUIC endpoint answers a long-header packet of an
+// unknown version with a Version Negotiation packet (RFC 9000 §6), which is a real UDP round
+// trip that needs no credentials. It reports whether a definite failure was found (the
+// destination cannot be dialed, or it answered with ICMP port unreachable); silence is only
+// inconclusive, because filtering and obfuscation look the same.
+func (d diagger) layerQUICTarget(ctx context.Context, env diagEnv, dialer *PolicyDialer, target string) (failed bool) {
+	conn, rep, e := dialer.DialUDP(ctx, target)
 	if e != nil {
 		d.dialFailure(3, e, rep)
-		return
+		return true
 	}
 	addr := conn.RemoteAddr().String()
 	network := "udp4"
@@ -392,11 +399,13 @@ func (d diagger) layerUDPTarget(ctx context.Context, env diagEnv, p Profile, dia
 		d.add(3, diagOK, "UDP 目标响应了 QUIC 版本协商（%s %s，QUIC 服务在线）", ipFamilyLabel(rep.Used.Addr()), addr)
 	case errors.Is(er, syscall.ECONNREFUSED):
 		d.add(3, diagFail, "UDP 端口无服务（收到 ICMP 端口不可达）：%s", addr)
+		return true
 	case errors.Is(er, errNoQUICAnswer):
 		d.add(3, diagWarn, "目标没有响应 QUIC 探测（UDP 被过滤、服务未运行，或启用了混淆）；无法确认 UDP 是否可达")
 	default:
 		d.add(3, diagWarn, "QUIC 探测出错：%s", er.Error())
 	}
+	return false
 }
 
 // ---- layer 4: through the relay ------------------------------------------------------
@@ -951,6 +960,9 @@ func (a *App) diagnoseProxy(ctx context.Context, e Exit, env diagEnv, opts diagO
 			d.add(3, diagOK, "远程服务器的 UDP 端口响应了 QUIC 版本协商（%s）", addr)
 		case errors.Is(qe, errNoQUICAnswer):
 			d.add(3, diagWarn, "远程服务器没有响应 QUIC 探测（UDP 被过滤，或 NAT 没有映射 UDP）；无法确认")
+		case e.isChain() && e.ViaRelay != "" && errors.Is(qe, syscall.ECONNREFUSED):
+			d.add(3, diagFail, "中转入口 %s 没有接收 UDP（收到 ICMP 端口不可达）：请确认中转转发 UDP 且服务在运行", addr)
+			return rep
 		default:
 			d.add(3, diagFail, "远程服务器 UDP 探测失败：%s", qe.Error())
 			return rep

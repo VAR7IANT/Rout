@@ -379,10 +379,21 @@ func (a *App) diagChainHop(ctx context.Context, d diagger, e Exit, env diagEnv) 
 		return Proxy{}, false
 	}
 	d.add(4, diagOK, "中转 %s 已启用：%s → %s", r.Name, net.JoinHostPort(dial.Host, itoa(dial.Port)), r.Target)
-	// The relay dials the proxy from this server, so the same connection is tested here
-	// with the relay's own address-family policy.
+	// The relay dials the end of the chain from this server, so the same destination is
+	// tested here with the relay's own address-family policy, using the transport the end
+	// actually needs: TCP for SOCKS5/HTTP(S) and TCP node protocols, a QUIC probe for
+	// Hysteria2/TUIC. A refused TCP connection says nothing about a UDP exit, so a UDP end is
+	// never tested with TCP.
+	hop := env.newDialer(r.outboundPolicy())
+	if exitTransport(dial) == "udp" {
+		d.add(4, diagInfo, "出口是 UDP/QUIC 协议（%s）：中转必须转发 UDP，下面用 QUIC 探测验证目标和经由中转的往返", strings.ToUpper(dial.Kind()))
+		if d.layerQUICTarget(ctx, env, hop, r.Target) {
+			return Proxy{}, false
+		}
+		return dial, true
+	}
 	start := time.Now()
-	conn, rep, er := env.newDialer(r.outboundPolicy()).DialContext(ctx, r.Target)
+	conn, rep, er := hop.DialContext(ctx, r.Target)
 	if er != nil {
 		d.dialFailure(3, er, rep)
 		return Proxy{}, false

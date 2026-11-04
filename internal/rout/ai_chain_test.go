@@ -140,15 +140,25 @@ type chainScene struct {
 }
 
 func newChainScene(t *testing.T, a *App, proxy Proxy) chainScene {
+	return newChainSceneProto(t, a, proxy, "tcp")
+}
+
+// newChainSceneProto is newChainScene with the transport the relay forwards ("udp" for a
+// Hysteria2/TUIC end).
+func newChainSceneProto(t *testing.T, a *App, proxy Proxy, protocol string) chainScene {
 	t.Helper()
 	sc := chainScene{a: a}
 	sc.relay = chainRelayProfile(t, proxy.hostPort())
+	sc.relay.Protocol = protocol
 	sc.nodeA, sc.node = fixture(t, "ss"), fixture(t, "ss")
 	sc.nodeA.Name, sc.node.Name = "US-A", "US-B"
 	sc.nodeA.Port, _ = freePort()
 	sc.node.Port, _ = freePort()
 	sc.nodeA.PublicPort, sc.node.PublicPort = sc.nodeA.Port, sc.node.Port
 	sc.exit = Exit{ID: RandomHex(6), Name: "CA-chain", Kind: exitChain, ViaRelay: sc.relay.ID, Proxy: proxy}
+	if exitTransport(proxy) == "udp" {
+		sc.exit.RemoteNetwork = "both"
+	}
 	old, e := a.Load()
 	if e != nil {
 		t.Fatal(e)
