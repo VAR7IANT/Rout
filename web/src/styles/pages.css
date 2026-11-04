@@ -905,3 +905,16 @@
     max-width: 100%;
   }
 }
+
+/* A long status badge (for example "has an address, but the outbound probe failed") wraps
+   inside the row instead of widening a 320px page. */
+.net-row > div {
+  min-width: 0;
+}
+.net-row > .badge {
+  white-space: normal;
+  text-align: right;
+  min-width: 0;
+  max-width: 60%;
+  border-radius: var(--radius-sm);
+}
