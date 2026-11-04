@@ -150,7 +150,8 @@ jobs:
           tag=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" | jq -r .tag_name)
           case "$tag" in v[0-9]*) ;; *) echo "cannot determine the latest release: $tag" >&2; exit 1 ;; esac
           sudo env ROUT_VERSION="$tag" ROUT_INSTALL_DIR="$RUNNER_TEMP/published-install" sh install.sh
-          test "$("$RUNNER_TEMP/published-install/rout" version)" = "rout ${tag#v}"
+          # install.sh ran as root with umask 077: the directory is private to root by design.
+          test "$(sudo "$RUNNER_TEMP/published-install/rout" version)" = "rout ${tag#v}"
       - name: Verify updater artifact contract and source provenance
         env:
           ROUT_VERSION: ${{ steps.version.outputs.version }}
