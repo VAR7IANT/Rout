@@ -1768,7 +1768,9 @@
 "SOCKS5 与 HTTP CONNECT 的认证和连接本身不加密；跨公网时请使用 HTTPS CONNECT、远程节点或 SSH 隧道": "SOCKS5 與 HTTP CONNECT 的認證和連線本身不加密；跨公網時請使用 HTTPS CONNECT、遠端節點或 SSH 隧道",
 "不劫持 DNS：客户端 DNS 查询保持原有路径": "不劫持 DNS：客戶端 DNS 查詢保持原有路徑",
 "只有勾选的入站节点参与 AI 分流；未绑定的节点完全不受影响": "只有勾選的入站節點參與 AI 分流；未繫結的節點完全不受影響",
-"按域名识别：优先匹配客户端提交的域名，IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才能识别": "按域名識別：優先匹配客戶端提交的域名，IP 目標僅在 TLS SNI、HTTP Host 或受支援的 QUIC 中暴露域名時才能識別"
+"按域名识别：优先匹配客户端提交的域名，IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才能识别": "按域名識別：優先匹配客戶端提交的域名，IP 目標僅在 TLS SNI、HTTP Host 或受支援的 QUIC 中暴露域名時才能識別",
+"Web 管理面板一键安装：服务、管理密码、域名与 HTTPS": "Web 管理面板一鍵安裝：服務、管理密碼、域名與 HTTPS",
+"部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）": "部署、修復、診斷或移除面板的 HTTPS 站點（Caddy）"
 },
 "chars": {
 "与": "與",

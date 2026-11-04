@@ -57,6 +57,8 @@ var helpLines = [][2]string{
 	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
 	{"rout relays", "端口转发（中转）管理"},
 	{"rout subscription [list|status|restart|https|logs|plan|serve]", "订阅管理：菜单、列表、服务状态、重启、流量与到期设置；serve 为订阅服务进程"},
+	{"rout web setup", "Web 管理面板一键安装：服务、管理密码、域名与 HTTPS"},
+	{"rout web https deploy|repair|status|remove", "部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）"},
 	{"rout web [passwd|install|status|logs|host|https]", "Web 管理面板：设置密码、安装服务、查看状态、允许域名、HTTPS 反向代理配置"},
 	{"rout remote [list|refresh|delete]", "第三方订阅源：列表、立即刷新、删除（添加与编辑请使用 Web 面板）"},
 	{"rout ai [status|test|apply]", "AI 智能分流：菜单、状态、测试配置或重新应用"},

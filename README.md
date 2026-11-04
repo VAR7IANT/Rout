@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.5.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings, or use `--lang en` / `--lang zh-CN` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.5.1`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -30,7 +30,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.5.0
+Rout 0.5.1
   ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   ! Tokyo-HY2 certificate expires in 12 days
 
@@ -45,6 +45,7 @@ Rout 0.5.0
   Services
    6  Service & system       → services · diagnostics · updates · settings (language, server address, backups, uninstall)
    7  Subscriptions      2   → selected-node subscriptions · HTTPS deployment · diagnostics
+   8  Web management panel panel.example.com → one-click install · HTTPS deployment/repair · password · diagnostics
    0  Quit
 ```
 
@@ -52,7 +53,9 @@ The entries are grouped under small section titles, and the dim badge to the rig
 
 Menu headings show where you are (`Rout › Manage nodes › Tokyo-VLESS`), shortened from the left on narrow terminals. The full key hint is printed once per session and then shortened to `0 Back · q Quit`. On a colour terminal node status gets a coloured dot (● running, ○ disabled, red when stopped) and limited nodes a usage bar such as `▓▓▓▓▓░░░ 62%`; both are glyph-only additions to the existing text, so plain output, pipes and `NO_COLOR` are unchanged.
 
-Earlier releases had eight top-level entries. *Traffic and limits* moved into Manage nodes (`t`); *Services*, *Diagnostics*, *Updates* and *Settings* moved under **Service & system**; the separate *view*, *edit*, *delete*, *restart* and *connection links* pickers of Manage nodes became one list where you choose a node first. Nothing was removed, and every `rout` command works as before.
+Entry **8, Web management panel** (v0.5.1) installs and manages the browser panel without editing any file: *One-click install / initialize*, *Start / stop / restart*, *Status and address*, *Set / change admin domain*, *Set / reset admin password*, *HTTPS deployment and repair*, *Logs / diagnostics* and *Uninstall*. Every action returns to that page. See [Web management panel](#web-management-panel).
+
+Releases before v0.3.8 had eight different top-level entries. *Traffic and limits* moved into Manage nodes (`t`); *Services*, *Diagnostics*, *Updates* and *Settings* moved under **Service & system**; the separate *view*, *edit*, *delete*, *restart* and *connection links* pickers of Manage nodes became one list where you choose a node first. Nothing was removed, and every `rout` command works as before.
 
 The interactive menu opens with a ROUT banner once per session: the logo in a blue gradient on 256-colour terminals, with "Support by VAR7IANT" and the running version centered beneath it, or a two-line title on terminals narrower than 39 columns or shorter than 30 rows. It is never printed for commands, pipes or scripts, and `NO_COLOR` or `TERM=dumb` disables all colour.
 
@@ -208,9 +211,20 @@ Client → US VPS · Rout inbound ──┬─ AI domains ──→ AI exit (out
                                  └─ everything else → the node's original exit
 ```
 
-Main menu → **AI Smart Routing**: *Enable / Disable*, *Select inbound nodes*, *Select AI exit*, *View AI rules*, *Test configuration*, *Status and diagnostics*, *Apply changes*. Also `rout ai [status|test|apply]`.
+Main menu → **AI Smart Routing** (also the panel's *AI Routing* page): *Enable / Disable*, *Select inbound nodes*, *Select AI exit*, *View AI rules*, *Test configuration*, *Status and diagnostics*, *Apply changes*. Also `rout ai [status|test|apply]`.
 
-- **The AI exit is an existing outbound proxy** (Outbound proxies menu; SOCKS5, HTTP or HTTPS). No address is hard-coded. An exit that points back at a node on this server is refused as a routing loop, and an exit used for AI cannot be deleted.
+- **Choosing the AI exit** (*Select AI exit*) offers four ways, all ending in something that really carries the traffic out:
+  1. **an existing outbound proxy**: SOCKS5, HTTP or HTTPS CONNECT, a Remote server, or a relay chain;
+  2. **through an existing port forward** (v0.5.1): AI traffic → a Rout relay on this server → the SOCKS5 / HTTP(S) proxy or node at the relay's target → Internet. The relay is referenced by its stable ID; a bare forward is never treated as an exit (the end must be a real proxy, and its credentials are asked for);
+  3. **a remote node share link** (VLESS Reality, AnyTLS, Trojan, Shadowsocks, Hysteria2, TUIC; the existing Remote server exit);
+  4. **a new exit chain**: creates a loopback-only relay on this server (with its own outbound IPv4/IPv6 policy) or uses a forwarder port on another server, plus the proxy at its end, in one flow.
+
+  Whatever is chosen is tested layer by layer (inbound nodes, relay, relay target, proxy handshake, authentication, a real request) and the **observed exit IP** is shown. No address is hard-coded. An exit or relay chain that points back at a Rout entry on this server is refused as a routing loop; an exit, or a relay that an exit chain uses, cannot be deleted, disabled or retargeted while in use (the message names the dependant).
+
+```text
+Client → US VPS · Rout inbound ──┬─ everything else → the node's original exit (US IP)
+                                 └─ AI domains → Rout relay (TCP) → Canada SOCKS5 → Internet (Canada IP)
+```
 - **Inbound binding is explicit and isolated.** Nothing is selected by default and an empty selection binds nothing (never "all"). Rout runs one sing-box process per node, so only the configuration files of bound nodes receive AI rules; an unbound node's file is not rewritten and its service is not restarted. Bindings use the node's stable ID and every rule also matches the node's own inbound. Deleting a node removes it from the binding; a stale ID found in `state.json` is reported and ignored, never widened.
 - **Disabling** restores each bound node's original configuration byte-for-byte and keeps the exit and bindings. Enabling needs a selected exit.
 - **Rules** (`internal/rout/ai_rules.go`, versioned; `rule_set_version` is saved) cover OpenAI/ChatGPT, Claude/Anthropic, Gemini, Google AI Studio, Hugging Face, GitHub Copilot and Cursor, as domain suffixes dedicated to those products. Whole-company domains (google.com, github.com, googleapis.com…) are deliberately absent. **View AI rules** lists them.
@@ -219,6 +233,15 @@ Main menu → **AI Smart Routing**: *Enable / Disable*, *Select inbound nodes*, 
 - **Safe changes:** every change goes through the same transaction as node edits: validation of references, `sing-box check` of each changed configuration in a staging directory, an automatic backup of `state.json`, atomic writes, a health check of every restarted service, and automatic rollback of files, state and services on failure. Only the bound nodes whose effective routing changes are restarted.
 
 Limits (also shown in the menu): matching is by domain. DNS is not hijacked or forced through Canada; client DNS/DoH/DoT keeps its behavior. Sniffing is limited to one second and supported protocols. Connections that expose no domain (IP-only without sniffable TLS/HTTP/QUIC data, ECH-encrypted handshakes) take the original route. The AI exit is TCP-only, so identified AI QUIC is rejected; TCP fallback depends on the client. Unrecognized QUIC may take the original route. This does not guarantee zero leakage. The Copilot token endpoint `api.github.com` is not routed, to avoid sending ordinary GitHub traffic to the AI exit. A domain list cannot guarantee complete coverage; new AI products need a rule-set update followed by *Apply changes*. *Test configuration* validates the configuration and probes the exit; its routing simulation evaluates rules and makes no real request.
+
+## Web management panel
+
+```sh
+sudo rout            # 8 → 1 One-click install / initialize panel
+sudo rout web setup  # the same wizard as a command
+```
+
+The wizard detects the distribution, architecture, init system and the public IPv4/IPv6 addresses (IPv6-only and NAT hosts are recognized), sets the admin password (generated and shown **once**, or typed twice and never echoed), installs the loopback-only `rout-web` service on `127.0.0.1:8790` and checks that it answers. If you enter an admin domain it then deploys HTTPS without any manual Caddyfile edit: it checks the A/AAAA records against this server (an IPv6-only server needs only AAAA), asks before installing Caddy or starting a stopped one, writes a separate Rout-owned site file next to the subscription site, validates it with `caddy validate`, reloads Caddy, and verifies the local service, the Host allow-list, the certificate, the public HTTPS endpoint and the login page. Failures of validation or reload are rolled back; a certificate that is still being issued keeps the valid configuration and `rout web https repair` (or menu 8 → 6) resumes. The subscription domain is never reused: for `hk.example.com` the wizard suggests `panel.hk.example.com`. Without a domain the panel stays reachable through an SSH tunnel. See [docs/WEB.md](docs/WEB.md).
 
 ## Subscriptions
 
@@ -294,7 +317,11 @@ rout test ID                  # layered test: listening → resolution → conne
 rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
 rout relays | outbounds | settings   # `exits` still works as an alias
-rout ai [status|test|apply]   # AI Smart Routing menu | status | check configuration | re-apply
+rout ai [status|test|apply]   # AI Smart Routing menu | status | check configuration + end-to-end exit test | re-apply
+rout web setup                # one-click panel install: service, password, domain, Caddy HTTPS
+rout web https deploy DOMAIN [--install-caddy] [--start-caddy] [--accept-nat]
+rout web https repair|status|remove   # resume / diagnose / remove the panel's HTTPS site
+rout web [install|start|stop|restart|status|logs|uninstall|passwd|host]
 rout subscription [list|status|restart|https|logs|plan|serve]   # subscriptions menu | list | server status | HTTPS deployment/diagnostics/removal, sanitized logs and restart | data allowance and expiry | server process
 rout traffic                  # usage of all nodes
 rout traffic show|manage|recover ID
@@ -305,7 +332,7 @@ rout backup FILE | restore FILE
 rout engines | update | uninstall | version | help
 ```
 
-Global options work before or after the command: `--lang en|zh-CN`, `--home DIR`, `--bin-dir DIR`. `--service none` is for development only.
+Global options work before or after the command: `--lang en|zh-CN|zh-TW`, `--home DIR`, `--bin-dir DIR`. `--service none` is for development only.
 
 ## Files, services and security
 
@@ -355,7 +382,7 @@ See [docs/AI_ROUTING.md](docs/AI_ROUTING.md) for reproducible real-network tests
 
 ## Development and releases
 
-Go 1.23+ (CI builds with the current stable Go); the only third-party Go dependency is `gopkg.in/yaml.v3`. The web panel (v0.5.0) is built with Node 22 from `web/` and embedded into the binary; see [docs/WEB.md](docs/WEB.md) and [docs/REMOTE_SUBSCRIPTIONS.md](docs/REMOTE_SUBSCRIPTIONS.md). Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy engines are separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their own licenses.
+Go 1.23+ (CI builds with the current stable Go); the only third-party Go dependency is `gopkg.in/yaml.v3`. The web panel is built with Node 22 from `web/` and embedded into the binary; see [docs/WEB.md](docs/WEB.md) and [docs/REMOTE_SUBSCRIPTIONS.md](docs/REMOTE_SUBSCRIPTIONS.md). Rout is original code, with workflow inspiration from [singbox-deploy](https://github.com/caigouzi121380/singbox-deploy). Forwarding and proxy engines are separately downloaded [GOST](https://github.com/go-gost/gost) and [sing-box](https://github.com/SagerNet/sing-box), under their own licenses.
 
 ```sh
 go test -race ./... && go vet ./...
@@ -372,6 +399,6 @@ CI runs everything above plus `govulncheck` and cross-compilation on every push.
 
 ```sh
 # Only after exact-commit CI and real VPS acceptance (do not execute for preparation):
-git tag -a v0.5.0 -m 'Rout v0.5.0'
-git push origin v0.5.0
+git tag -a v0.5.1 -m 'Rout v0.5.1'
+git push origin v0.5.1
 ```

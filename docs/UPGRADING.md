@@ -1,5 +1,15 @@
 # Upgrading and rollback safety
 
+## To v0.5.1: one-click panel HTTPS, zh-TW CLI and AI exits through relays
+
+Back up first: `sudo rout backup --full`. Then `sudo rout update`. Nothing restarts and nothing is migrated: nodes, relays, exits, AI routing, subscriptions, tokens, `/s/TOKEN` URLs, the subscription HTTPS site and the panel keep working unchanged. The main menu gains entry **8** (the numbers 1–7 are unchanged). Existing AI routing keeps its exit and bindings; new exit kinds appear only when you create them.
+
+New, created only on first use: `web-https.json` (panel HTTPS ownership record, 0600) and `/etc/caddy/rout-XXXXXXXX/panel.caddy` (imported through the existing Rout import line). Choosing 繁體中文 stores `"language": "zh-CN", "language_variant": "zh-TW"` in `settings.json`, which older versions read as Simplified Chinese.
+
+A panel deployed with v0.5.0 behind a hand-written Caddy site keeps working; `rout web https deploy` refuses to overwrite that site. To let Rout manage it, remove your site for that domain (or pick a new domain), then deploy.
+
+Rollback: restore the previous manager. An older manager **cannot load a `state.json` that contains a relay-chain exit** (`"kind": "chain"`): remove those exits first (or select another AI exit and delete them), or restore the backup taken before the upgrade. The panel's Caddy site keeps working under an older manager, which simply does not manage it; remove it first with `sudo rout web https remove` if you want it gone. Remote-node AI exits created by v0.5.1 are ordinary Remote server exits, readable by v0.4.0+, but an older manager does not accept them as the AI exit and rejects AI domains until another exit is selected.
+
 ## To v0.5.0: web panel and third-party subscriptions
 
 Back up first: `sudo rout backup --full` (a v0.5.0 backup includes sources, snapshots and aggregate items). Then `sudo rout update` (or install the build). Nothing restarts and nothing is migrated: nodes, relays, exits, subscriptions, tokens, `/s/TOKEN` URLs and the CLI are unchanged, and subscriptions without remote items return the same bytes as before. The panel is opt-in: `sudo rout web passwd --generate && sudo rout web install` (see [WEB.md](WEB.md)). New state files (`web.json`, `remote-sources.json`, source snapshots) are created on first use with mode 0600.

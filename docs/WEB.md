@@ -1,25 +1,44 @@
-# Web management panel (v0.5.0)
+# Web management panel (v0.5.1)
 
 The panel is a separate service, `rout-web`, that serves a React + TypeScript single-page app and a JSON API from the same Go binary (`rout web serve`). It manages nodes, relays, exits, subscriptions, third-party sources and the system. The terminal menu and all CLI commands keep working and share the same state files.
 
 ## Quick start
 
 ```sh
-sudo rout web passwd --generate    # sets the admin password, prints it once
-sudo rout web install              # installs and starts the rout-web service
-sudo rout web status
+sudo rout          # main menu 8 → 1 "One-click install / initialize panel"
+sudo rout web setup  # the same wizard as a command
 ```
 
-The panel listens on `127.0.0.1:8790` only. There is no public admin port. Reach it with an SSH tunnel:
+The wizard is safe to run again at any time. It:
+
+1. detects the distribution, architecture and init system (systemd or OpenRC), and the public IPv4/IPv6 addresses, recognizing IPv6-only and NAT hosts;
+2. sets the admin password if none exists — generated and printed **once** (save it), or typed twice and never echoed; it is never written to a log;
+3. installs or refreshes the `rout-web` service on `127.0.0.1:8790` and checks that it answers;
+4. asks for an admin domain. Leave it empty to use only an SSH tunnel. With a domain it deploys HTTPS (next section) and ends with:
+
+```text
+✓ Rout Web installed successfully
+✓ Web service working
+✓ IPv6 network working
+✓ DNS verified
+✓ HTTPS certificate valid
+✓ Reverse proxy working
+✓ Login page reachable
+Management panel:
+  https://panel.example.com
+Status: running
+```
+
+Main menu 8 also offers start/stop/restart, status and address, set/change domain, set/reset password, HTTPS deployment and repair, logs/diagnostics and uninstall. Every action returns to the same page. The classic commands keep working: `rout web passwd --generate|--stdin`, `rout web install [--port N]`, `rout web start|stop|restart|status|logs|uninstall`, `rout web host add|remove NAME`, `rout web https DOMAIN` (prints a Caddy snippet only), `rout web serve`.
+
+Without a domain the panel listens on `127.0.0.1:8790` only. There is no public admin port. Reach it with an SSH tunnel:
 
 ```sh
 ssh -L 8790:127.0.0.1:8790 user@your-vps
 # then open http://127.0.0.1:8790/
 ```
 
-`rout web passwd --stdin` reads the password from standard input. The password can only be set from the CLI, never through the API. It is stored as PBKDF2-HMAC-SHA256 (600000 iterations) in `web.json` (mode 0600).
-
-Other commands: `rout web start|stop|restart|logs|uninstall`, `rout web host <name>` (allow another Host header), `rout web https <domain>` (prints a Caddy snippet), `rout web serve` (foreground).
+The password can only be set from the CLI, never through the API. It is stored as PBKDF2-HMAC-SHA256 (600000 iterations) in `web.json` (mode 0600).
 
 ## Pages
 
@@ -27,12 +46,13 @@ Other commands: `rout web start|stop|restart|logs|uninstall`, `rout web host <na
 | --- | --- |
 | Dashboard | CPU, memory, disk, network, IPv4/IPv6 availability, node/relay/exit/subscription counts and states, live and cumulative traffic, alerts, certificate status, quota reminders |
 | Nodes | list, search/filter, bulk start/stop/delete, create/edit (VLESS Reality, AnyTLS, Hysteria2, SS2022, TUIC; local IPv4/IPv6, NAT relay, SOCKS5/HTTP/remote exit), share link and QR, connection/traffic test |
-| Relays & exits | local/remote/NAT relays, TCP/UDP, IPv4/IPv6/dual listen, outbound policy, SOCKS5/HTTP(S)/remote-node exits, references and delete protection, entry → exit path, layered tests |
+| AI Routing | enable/disable, inbound node checklist, AI exit selection (existing exit, through an existing relay, remote node link, forwarder on another server), path preview for ordinary and AI traffic, end-to-end exit test with the observed exit IP, rule simulation, identification limits |
+| Relays & exits | local/remote/NAT relays, TCP/UDP, IPv4/IPv6/dual listen, outbound policy, SOCKS5/HTTP(S)/remote-node exits and relay chains, which exits/AI depend on a relay, references and delete protection, entry → exit path, layered tests |
 | Subscriptions | CRUD, enable/disable, node add/remove/sort, plan (quota, reset, expiry), Base64 and Mihomo URLs, QR, token rotation, aggregates (local + remote items) |
 | Sources | third-party subscriptions: add, refresh, per-node enable, parse issues, tags |
-| System | version/update status, service control, logs, backup and restore, subscription HTTPS status, panel settings, sessions and audit log |
+| System | version/update status, service control, logs, backup and restore, subscription HTTPS status, panel HTTPS health (DNS, ports, Caddy, ACME, certificate, Host allow-list, login page) with a re-authenticated repair, panel settings, sessions and audit log |
 
-Interface languages: 简体中文, 繁體中文, English. Light and dark theme follow the system by default and can be switched in the header. The layout is desktop first; tables turn into cards on a phone.
+Interface languages: 简体中文, 繁體中文, English. Light and dark theme follow the system by default and can be switched in the header. The layout adapts from 320 px phones to desktop: tables turn into cards, the side navigation becomes a bottom tab bar, long IPv6 addresses, domains and links wrap instead of widening the page.
 
 ## Security model
 
@@ -49,7 +69,25 @@ Interface languages: 简体中文, 繁體中文, English. Light and dark theme f
 
 ## HTTPS for the panel
 
-Prefer the SSH tunnel. To publish it, put it behind a reverse proxy that you control and restrict by IP or an additional authentication layer. `rout web https panel.example.com` prints a Caddy snippet that proxies to `127.0.0.1:8790` and sets `X-Forwarded-Proto`, adds HSTS and caps request bodies at 26 MB (the restore limit is 24 MiB); add the domain with `rout web host panel.example.com`, paste the snippet into your Caddyfile and reload Caddy. Rout does not install or edit Caddy for the panel. (The existing `rout subscription https` is separate and only concerns subscription URLs.) The snippet has not been validated with a real Caddy binary (none was available in the build environment); run `caddy validate` before reloading. The snippet adds TLS only, not authentication: the panel's own login is the only credential unless you add IP restrictions or another layer in front.
+`rout web https deploy panel.example.com` (or the wizard / menu 8 → 6) deploys and verifies HTTPS with Caddy. `--install-caddy` and `--start-caddy` give the consent the menu asks for interactively; `--accept-nat` confirms that a NAT forwards public TCP 80/443 to this host. `rout web https repair` re-runs the deployment for the recorded domain, `rout web https status` prints the diagnosis, `rout web https remove` removes the panel site.
+
+What the deployment does, in order (nothing is changed until every check passes):
+
+- **Panel service** must answer on loopback.
+- **Domain**: an ASCII DNS name, not one used by Rout's subscription site (`hk.example.com` → `panel.hk.example.com` is suggested; two sites with the same name would make Caddy reject its whole configuration with *ambiguous site definition*), and not already defined in Caddy.
+- **DNS**: every A/AAAA record must point at this server. An IPv6-only server needs only AAAA and an extra A record is reported (it would make issuance fail). The records to create are printed. While DNS is wrong nothing is written and no certificate is requested.
+- **NAT**: a public address that is not on an interface means a NAT. ACME needs public TCP 80 and 443 to reach this host; a NAT VPS that maps only high ports cannot obtain a certificate this way. Rout says so and asks for confirmation; it never claims such a host can be deployed. Use the SSH tunnel there. Rout never changes the host firewall.
+- **Ports**: TCP 80/443 must be free or held by this Caddy. Nothing else is stopped.
+- **Caddy**: installed from the distribution repository only after consent (Debian/Ubuntu with systemd; elsewhere the snippet is printed for your own proxy). A stopped Caddy is started only after consent, because that activates every site in its Caddyfile. The service must use `/etc/caddy/Caddyfile`, Rout must be able to prove the running configuration equals that file, and automatic HTTPS must not be disabled globally.
+- **Files**: the site goes into `/etc/caddy/rout-XXXXXXXX/panel.caddy` — the same Rout directory and the same single `import` line as the subscription site (never a second import). The fragment is validated alone, then the whole layout with `caddy validate`; the Caddyfile, the fragment, `web-https.json` and `web.json` are backed up first to `/etc/rout/backups/subscription-panel-https-*.json`; writes use private temporary files and atomic renames that keep mode and ownership. Other sites, imports, certificates and the subscription site are never edited.
+- **Activation**: the domain is added to the Host allow-list with Secure cookies, Caddy is reloaded (or started), and the loaded configuration must equal the validated one.
+- **Verification**: the loopback service, the Host allow-list, HTTPS through this server's port 443, HTTPS through public DNS and the login page are checked separately. `caddy validate` succeeding is never taken as HTTPS working.
+
+Failure handling: if validation or the reload fails, the files, `web.json` and the previous active configuration are restored and verified, and a Caddy started or installed by this run is stopped again. If Caddy accepted the configuration but the certificate is not issued yet (DNS still propagating, ACME rate limit, firewall), the valid configuration is **kept** — Caddy keeps retrying on its own and nothing else is affected — the state is recorded as *pending* with the failing layer, and `rout web https repair` resumes. Repeating a deployment that already works changes nothing and reloads nothing. Rout edits or removes only a fragment whose bytes still match the digest it recorded in `web-https.json`; an edited fragment is kept and reported.
+
+Diagnosis (`rout web https status`, menu 8 → 7, System page) separates the layers: network facts (IPv4/IPv6, NAT, IPv6-only), panel service, DNS, TCP 80/443 owners, Caddy and its site, reachability of the Let's Encrypt **production** and **staging** directories (reported separately; an unreachable staging CA says nothing about production), the certificate (issuer, expiry), the Host allow-list, public HTTPS and the login page. Caddy's recent journal is classified, never printed: NXDOMAIN/DNS problems, `caddy_legacy_user_removed` (Caddy's data directory owned by a removed user: check `/var/lib/caddy` or reinstall the package), `tls: alert internal error` (no certificate yet), connection resets, ACME timeouts, rate limits, *unauthorized* and *ambiguous site definition*. Only lines for the panel's domain are used.
+
+The site proxies to `127.0.0.1:8790`, sets `X-Forwarded-Proto`, adds HSTS, removes the `Server` header and caps request bodies at 26 MB (the restore limit is 24 MiB). The panel backend keeps listening on IPv4 loopback while Caddy serves the public side over IPv4 and/or IPv6. TLS adds no authentication: the panel's own login is the only credential unless you restrict access further (IP allow-list in front, VPN). `rout web https remove` replaces the fragment with a placeholder and reloads; certificates, the subscription site and other sites stay. The real-Caddy test (`TestIntegrationPanelCaddyDeployment`, run in CI inside a disposable Debian container with Caddy's local CA) validates and serves the generated site next to a subscription site and an unrelated site; public ACME issuance itself cannot be tested in CI.
 
 ## Settings and backup
 
