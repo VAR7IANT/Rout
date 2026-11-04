@@ -402,3 +402,17 @@ func (a *App) diagChainHop(ctx context.Context, d diagger, e Exit, env diagEnv) 
 	d.add(3, diagOK, "中转目标 %s 可连通：%s %s（%d ms）", r.Target, ipFamilyLabel(rep.Used.Addr()), rep.Used.String(), time.Since(start).Milliseconds())
 	return dial, true
 }
+
+// chainProbeExit is a stand-in exit that asks "can this relay be the hop of a chain at all?"
+// without knowing the end yet: a SOCKS5 end for a relay that forwards TCP, a QUIC node end for
+// one that forwards UDP only. The relay's own settings (enabled, transport, loops) decide.
+func chainProbeExit(r Profile) Exit {
+	h, port, _ := ParseEndpoint(r.Target)
+	ex := Exit{Kind: exitChain, ViaRelay: r.ID, Proxy: Proxy{Protocol: "socks5", Host: h, Port: port, Username: "x", Password: "x"}}
+	if !contains(r.Networks(), "tcp") {
+		if p, e := ParseRemoteNode("hysteria2://probe@" + net.JoinHostPort(h, itoa(port)) + "?sni=probe.invalid"); e == nil {
+			ex.Proxy, ex.RemoteNetwork = *p, "both"
+		}
+	}
+	return ex
+}

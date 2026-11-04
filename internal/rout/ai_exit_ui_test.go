@@ -101,3 +101,42 @@ func TestAIExitFromARemoteNodeLink(t *testing.T) {
 		t.Fatal("share link echoed")
 	}
 }
+
+// A relay that forwards UDP only is the hop of a Hysteria2/TUIC chain: the menu must list it as
+// usable, offer only QUIC node ends, and dial it on loopback.
+func TestAIExitThroughAUDPOnlyRelayFromTheMenu(t *testing.T) {
+	sc := newAIScene(t)
+	node := quicNode(t, "hy2", "hy2.example.net", 8443)
+	relay := chainRelayProfile(t, node.hostPort())
+	relay.Protocol = "udp"
+	old, _ := sc.a.Load()
+	if e := sc.a.Commit(old, replace(old, relay), false); e != nil {
+		t.Fatal(e)
+	}
+	// Select AI exit · through an existing forward · relay 1 · end service: default (node) ·
+	// share link · default name · confirm · back.
+	u, out := aiUI(sc, "3\n2\n1\n\n"+node.Link+"\n\n\n0\n")
+	var dialed Proxy
+	u.probeProxy = func(p Proxy) (string, error) { dialed = p; return "203.0.113.55", nil }
+	if e := u.aiMenu(); e != nil {
+		t.Fatal(e)
+	}
+	text := out.String()
+	if strings.Contains(text, "This relay cannot be used") || !strings.Contains(text, "forwards UDP only") {
+		t.Fatalf("a UDP relay was refused or its ends were not narrowed:\n%s", text)
+	}
+	if strings.Contains(text, "SOCKS5 proxy") && strings.Contains(text, "What service is at the end of the chain?\n   1  SOCKS5") {
+		t.Fatalf("TCP proxies were offered for a UDP-only relay:\n%s", text)
+	}
+	s, _ := sc.a.Load()
+	ex, e := FindExit(s, s.AI.AIOutboundID)
+	if e != nil || !ex.isChain() || ex.ViaRelay != relay.ID || ex.Proxy.Protocol != proxyNode {
+		t.Fatalf("exit %+v %v\n%s", ex, e, text)
+	}
+	if dialed.Host != "127.0.0.1" || dialed.Port != relay.Port {
+		t.Fatalf("the test did not go through the relay: %+v", dialed)
+	}
+	if strings.Contains(text, node.Link) {
+		t.Fatal("share link echoed")
+	}
+}

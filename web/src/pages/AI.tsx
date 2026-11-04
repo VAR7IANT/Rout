@@ -353,7 +353,7 @@ function ChainForm({ kind, relays, choose }: { kind: 'relay' | 'forwarder'; rela
   const run = useRunner()
   const [relayId, setRelayId] = useState(relays[0]?.id ?? '')
   const relay = relays.find((r) => r.id === relayId)
-  const [protocol, setProtocol] = useState<ChainProtocol>(relay?.target_kind ? 'node' : 'socks5')
+  const [protocol, setProtocol] = useState<ChainProtocol>(relay?.target_kind || relay?.transport === 'udp' ? 'node' : 'socks5')
   const [via, setVia] = useState('')
   const [name, setName] = useState('')
   const [host, setHost] = useState('')
@@ -364,8 +364,8 @@ function ChainForm({ kind, relays, choose }: { kind: 'relay' | 'forwarder'; rela
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (kind === 'relay') setProtocol(relay?.target_kind ? 'node' : 'socks5')
-  }, [kind, relay?.id, relay?.target_kind])
+    if (kind === 'relay') setProtocol(relay?.target_kind || relay?.transport === 'udp' ? 'node' : 'socks5')
+  }, [kind, relay?.id, relay?.target_kind, relay?.transport])
 
   if (kind === 'relay' && relays.length === 0) {
     return (

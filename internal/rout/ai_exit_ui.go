@@ -180,19 +180,25 @@ func (u *UI) aiExitCheck(ex Exit) error {
 
 // chainProxyInput asks what the end of the chain is. endpoint is the proxy address as the
 // hop reaches it; relayLink is the relay's own target link (a node), offered as default.
-func (u *UI) chainProxyInput(endpoint, relayLink string) (ChainSpec, error) {
+func (u *UI) chainProxyInput(endpoint, relayLink string, udpOnly bool) (ChainSpec, error) {
 	spec := ChainSpec{}
 	def := "socks5"
-	if relayLink != "" {
+	if relayLink != "" || udpOnly {
 		def = "node"
 	}
-	spec.Protocol = u.option("链路末端是什么服务？", []menuItem{
+	items := []menuItem{
 		itemNote("socks5", "SOCKS5 代理", "需要账号密码；SOCKS5 本身不加密"),
 		itemNote("http", "HTTP CONNECT 代理", "需要账号密码；明文传输认证信息"),
 		itemNote("https", "HTTPS CONNECT 代理", "验证证书，认证信息经 TLS 加密"),
 		itemNote("node", "远程节点（分享链接）", "VLESS Reality / AnyTLS / Trojan / SS / Hysteria2 / TUIC"),
 		itemNote("forward", "只是另一个端口转发", "不是出口：末端必须是真正的代理"),
-	}, def)
+	}
+	if udpOnly {
+		// A relay that forwards UDP only can carry QUIC nodes (Hysteria2/TUIC), no TCP proxy.
+		u.say("此中转只转发 UDP：链路末端只能是 Hysteria2 / TUIC 节点")
+		items = []menuItem{items[3], items[4]}
+	}
+	spec.Protocol = u.option("链路末端是什么服务？", items, def)
 	if u.err != nil {
 		return spec, u.err
 	}
@@ -257,9 +263,7 @@ func (u *UI) aiChainThroughRelay() error {
 	local := localIPs()
 	usable := map[int]bool{}
 	for i, r := range relays {
-		probe := Exit{Kind: exitChain, ViaRelay: r.ID, Proxy: Proxy{Protocol: "socks5", Username: "x", Password: "x"}}
-		probe.Proxy.Host, probe.Proxy.Port, _ = ParseEndpoint(r.Target)
-		why := chainProblem(s, probe, local)
+		why := chainProblem(s, chainProbeExit(r), local)
 		state := u.a.T("已启用")
 		if !r.Enabled {
 			state = u.a.T("已停用")
@@ -283,7 +287,7 @@ func (u *UI) aiChainThroughRelay() error {
 	}
 	r := relays[n-1]
 	u.printf("中转 %s 会把连接送到 %s。该地址上必须运行真正的代理或节点，流量才会从那里进入互联网。\n", r.Name, r.Target)
-	spec, e := u.chainProxyInput(r.Target, r.TargetURI)
+	spec, e := u.chainProxyInput(r.Target, r.TargetURI, !contains(r.Networks(), "tcp"))
 	if e != nil {
 		return e
 	}
@@ -332,7 +336,7 @@ func (u *UI) aiNewChain() error {
 		if _, _, e := ParseEndpoint(via); e != nil {
 			return e
 		}
-		spec, e := u.chainProxyInput("", "")
+		spec, e := u.chainProxyInput("", "", false)
 		if e != nil {
 			return e
 		}
@@ -343,7 +347,7 @@ func (u *UI) aiNewChain() error {
 		}
 		return u.aiAdopt(ex, func() error { return u.a.DeleteExitByID(ex.ID) })
 	}
-	spec, e := u.chainProxyInput("", "")
+	spec, e := u.chainProxyInput("", "", false)
 	if e != nil {
 		return e
 	}

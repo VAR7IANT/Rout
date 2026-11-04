@@ -1779,5 +1779,6 @@
  "证书待验证，运行 rout web https repair":"certificate pending, run rout web https repair",
  "面板 HTTPS":"Panel HTTPS",
  "出口是 UDP/QUIC 协议（%s）：中转必须转发 UDP，下面用 QUIC 探测验证目标和经由中转的往返":"The exit uses a UDP/QUIC protocol (%s): the relay must forward UDP; a QUIC probe below checks the target and the round trip through the relay",
- "中转入口 %s 没有接收 UDP（收到 ICMP 端口不可达）：请确认中转转发 UDP 且服务在运行":"The relay entry %s did not receive UDP (ICMP port unreachable): make sure the relay forwards UDP and its service is running"
+ "中转入口 %s 没有接收 UDP（收到 ICMP 端口不可达）：请确认中转转发 UDP 且服务在运行":"The relay entry %s did not receive UDP (ICMP port unreachable): make sure the relay forwards UDP and its service is running",
+ "此中转只转发 UDP：链路末端只能是 Hysteria2 / TUIC 节点":"This relay forwards UDP only: the end of the chain can only be a Hysteria2 / TUIC node"
 }

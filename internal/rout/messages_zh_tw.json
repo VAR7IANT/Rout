@@ -1775,7 +1775,8 @@
 "证书待验证，运行 rout web https repair": "憑證待驗證，執行 rout web https repair",
 "面板 HTTPS": "面板 HTTPS",
 "出口是 UDP/QUIC 协议（%s）：中转必须转发 UDP，下面用 QUIC 探测验证目标和经由中转的往返": "出口是 UDP/QUIC 協定（%s）：中轉必須轉發 UDP，下面用 QUIC 探測驗證目標和經由中轉的往返",
-"中转入口 %s 没有接收 UDP（收到 ICMP 端口不可达）：请确认中转转发 UDP 且服务在运行": "中轉入口 %s 沒有接收 UDP（收到 ICMP 連接埠不可達）：請確認中轉轉發 UDP 且服務在執行"
+"中转入口 %s 没有接收 UDP（收到 ICMP 端口不可达）：请确认中转转发 UDP 且服务在运行": "中轉入口 %s 沒有接收 UDP（收到 ICMP 連接埠不可達）：請確認中轉轉發 UDP 且服務在執行",
+"此中转只转发 UDP：链路末端只能是 Hysteria2 / TUIC 节点": "此中轉只轉發 UDP：鏈路末端只能是 Hysteria2 / TUIC 節點"
 },
 "chars": {
 "与": "與",
