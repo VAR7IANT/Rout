@@ -93,6 +93,13 @@ func (u *UI) webCommand(args []string) error {
 		if st.HTTPSDomain != "" {
 			fmt.Fprintf(u.writer(), "%s: %s\n", a.T("HTTPS 域名"), st.HTTPSDomain)
 		}
+		if hs, er := a.loadWebHTTPSState(); er == nil && hs.Ownership == "managed" && !hs.Removed {
+			state := a.T("由 Rout 管理（Caddy）")
+			if hs.Pending {
+				state += " · " + a.T("证书待验证，运行 rout web https repair")
+			}
+			fmt.Fprintf(u.writer(), "%s: %s\n", a.T("面板 HTTPS"), state)
+		}
 		return nil
 	case "logs":
 		st, e := a.Load()

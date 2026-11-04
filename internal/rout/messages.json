@@ -1774,5 +1774,8 @@
  "只有勾选的入站节点参与 AI 分流；未绑定的节点完全不受影响":"Only the checked inbound nodes take part in AI routing; unbound nodes are not affected at all",
  "按域名识别：优先匹配客户端提交的域名，IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才能识别":"Identification is by domain: the domain the client sends is matched first; an IP destination is identified only when TLS SNI, HTTP Host or supported QUIC reveals the name",
  "Web 管理面板一键安装：服务、管理密码、域名与 HTTPS":"One-click Web panel install: service, admin password, domain and HTTPS",
- "部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）":"Deploy, repair, diagnose or remove the panel's HTTPS site (Caddy)"
+ "部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）":"Deploy, repair, diagnose or remove the panel's HTTPS site (Caddy)",
+ "由 Rout 管理（Caddy）":"managed by Rout (Caddy)",
+ "证书待验证，运行 rout web https repair":"certificate pending, run rout web https repair",
+ "面板 HTTPS":"Panel HTTPS"
 }

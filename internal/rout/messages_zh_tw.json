@@ -1770,7 +1770,10 @@
 "只有勾选的入站节点参与 AI 分流；未绑定的节点完全不受影响": "只有勾選的入站節點參與 AI 分流；未繫結的節點完全不受影響",
 "按域名识别：优先匹配客户端提交的域名，IP 目标仅在 TLS SNI、HTTP Host 或受支持的 QUIC 中暴露域名时才能识别": "按域名識別：優先匹配客戶端提交的域名，IP 目標僅在 TLS SNI、HTTP Host 或受支援的 QUIC 中暴露域名時才能識別",
 "Web 管理面板一键安装：服务、管理密码、域名与 HTTPS": "Web 管理面板一鍵安裝：服務、管理密碼、域名與 HTTPS",
-"部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）": "部署、修復、診斷或移除面板的 HTTPS 站點（Caddy）"
+"部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）": "部署、修復、診斷或移除面板的 HTTPS 站點（Caddy）",
+"由 Rout 管理（Caddy）": "由 Rout 管理（Caddy）",
+"证书待验证，运行 rout web https repair": "憑證待驗證，執行 rout web https repair",
+"面板 HTTPS": "面板 HTTPS"
 },
 "chars": {
 "与": "與",
