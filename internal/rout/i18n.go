@@ -20,14 +20,38 @@ var messages = func() map[string]string {
 }()
 var formatToken = regexp.MustCompile(`%[sdvwq]`)
 
+// Traditional Chinese (Taiwan) is generated from the Simplified Chinese source strings by
+// scripts/gen_zh_tw.py; "chars" converts text that is not in the catalog character by
+// character, so nothing is ever left in Simplified script.
+//
+//go:embed messages_zh_tw.json
+var messageDataTW []byte
+var messagesTW, charsTW = func() (map[string]string, map[rune]rune) {
+	var raw struct {
+		Messages map[string]string `json:"messages"`
+		Chars    map[string]string `json:"chars"`
+	}
+	if e := json.Unmarshal(messageDataTW, &raw); e != nil {
+		panic(e)
+	}
+	chars := map[rune]rune{}
+	for k, v := range raw.Chars {
+		a, b := []rune(k), []rune(v)
+		if len(a) == 1 && len(b) == 1 {
+			chars[a[0]] = b[0]
+		}
+	}
+	return raw.Messages, chars
+}()
+
 type messagePattern struct {
 	re         *regexp.Regexp
 	translated string
 }
 
-var patterns = func() []messagePattern {
-	keys := make([]string, 0, len(messages))
-	for k := range messages {
+func buildPatterns(catalog map[string]string) []messagePattern {
+	keys := make([]string, 0, len(catalog))
+	for k := range catalog {
 		if formatToken.MatchString(k) {
 			keys = append(keys, k)
 		}
@@ -45,19 +69,67 @@ var patterns = func() []messagePattern {
 			s.WriteString(regexp.QuoteMeta(p))
 		}
 		s.WriteString("$")
-		out = append(out, messagePattern{regexp.MustCompile(s.String()), messages[k]})
+		out = append(out, messagePattern{regexp.MustCompile(s.String()), catalog[k]})
 	}
 	return out
-}()
+}
+
+var patterns = buildPatterns(messages)
+var patternsTW = buildPatterns(messagesTW)
+
+// toTraditional converts text outside the catalog character by character.
+func toTraditional(s string) string {
+	return strings.Map(func(r rune) rune {
+		if t, ok := charsTW[r]; ok {
+			return t
+		}
+		return r
+	}, s)
+}
 
 func Translate(lang, s string) string {
-	if lang != "en" {
-		return s
-	}
-	if out, ok := messages[s]; ok {
+	if lang == "zh-TW" {
+		out, known := translateTW(s)
+		if !known {
+			return toTraditional(out)
+		}
 		return out
 	}
-	for _, p := range patterns {
+	return translateArg(lang, s)
+}
+
+// translateArg translates a whole message, or one argument of a formatted message. An
+// argument that is not catalog text (a node name, an address) is returned unchanged.
+func translateArg(lang, s string) string {
+	switch lang {
+	case "en":
+		return translateWith(lang, messages, patterns, s)
+	case "zh-TW":
+		out, _ := translateTW(s)
+		return out
+	}
+	return s
+}
+
+func translateTW(s string) (string, bool) {
+	if out, ok := messagesTW[s]; ok {
+		return out, true
+	}
+	// English internals (stable diagnostics) are shown in Chinese through their source.
+	for chinese, english := range messages {
+		if english == s {
+			return translateWith("zh-TW", messagesTW, patternsTW, chinese), true
+		}
+	}
+	out := translateWith("zh-TW", messagesTW, patternsTW, s)
+	return out, out != s
+}
+
+func translateWith(lang string, catalog map[string]string, pats []messagePattern, s string) string {
+	if out, ok := catalog[s]; ok {
+		return out
+	}
+	for _, p := range pats {
 		groups := p.re.FindStringSubmatch(s)
 		if groups == nil {
 			continue
@@ -66,14 +138,14 @@ func Translate(lang, s string) string {
 		return formatToken.ReplaceAllStringFunc(p.translated, func(_ string) string {
 			i++
 			if i < len(groups) {
-				return Translate(lang, groups[i])
+				return translateArg(lang, groups[i])
 			}
 			return ""
 		})
 	}
 	if i := strings.Index(s, ": "); i >= 0 {
 		right := s[i+2:]
-		translated := Translate(lang, right)
+		translated := translateArg(lang, right)
 		if right != translated {
 			return s[:i+2] + translated
 		}

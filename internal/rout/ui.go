@@ -151,16 +151,16 @@ func (u *UI) initLanguage(force bool) error {
 		return nil
 	}
 	if !force && s.Language != "" {
-		u.a.Language = s.Language
+		u.a.Language = s.lang()
 		return nil
 	}
-	fmt.Fprintln(u.writer(), "请选择语言 / Select language\n1. 简体中文\n2. English")
-	v := u.choose("Language", []string{"1", "2"}, "1")
+	fmt.Fprintln(u.writer(), "请选择语言 / Select language\n1. 简体中文\n2. English\n3. 繁體中文")
+	v := u.choose("Language", []string{"1", "2", "3"}, "1")
 	if u.err != nil {
 		return u.err
 	}
-	s.Language = map[string]string{"1": "zh-CN", "2": "en"}[v]
-	u.a.Language = s.Language
+	s.setLang(map[string]string{"1": "zh-CN", "2": "en", "3": "zh-TW"}[v])
+	u.a.Language = s.lang()
 	return u.a.SaveSettings(s)
 }
 

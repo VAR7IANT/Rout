@@ -548,8 +548,11 @@ func (a *App) selfUpdate() error {
 
 	return nil
 }
+
+// languageOr is the --lang passed to a helper process, which may be an older version that
+// accepts only zh-CN/en: Traditional Chinese is passed as zh-CN.
 func languageOr(lang string) string {
-	if lang == "" {
+	if lang == "" || lang == "zh-TW" {
 		return "zh-CN"
 	}
 	return lang

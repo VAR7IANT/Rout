@@ -118,7 +118,7 @@
  "请输入 y 或 n":"Enter y or n",
  "请选择 SOCKS5 或 HTTP":"Select SOCKS5 or HTTP",
  "请选择菜单中的编号":"Choose one of the menu numbers",
- "请选择语言 / Select language\n1. 简体中文\n2. English":"请选择语言 / Select language\n1. 简体中文\n2. English",
+ "请选择语言 / Select language\n1. 简体中文\n2. English\n3. 繁體中文":"请选择语言 / Select language\n1. 简体中文\n2. English\n3. 繁體中文",
  "转发类型无效":"Invalid forwarding type",
  "转发网络与节点协议不匹配":"Forwarding network does not match the node protocol",
  "输入代理 IP:端口:用户名:密码（IPv6 使用 [地址]:端口:用户名:密码）":"Enter proxy IP:port:username:password (IPv6: [address]:port:username:password)",

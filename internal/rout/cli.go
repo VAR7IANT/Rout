@@ -102,7 +102,7 @@ func Run(args []string) (result error) {
 	flags.StringVar(&a.Home, "home", a.Home, "configuration directory")
 	flags.StringVar(&a.BinDir, "bin-dir", a.BinDir, "engine directory")
 	flags.StringVar(&a.ServiceMode, "service", "auto", "auto or none (test-only)")
-	flags.StringVar(&language, "lang", "", "en or zh-CN (override saved language)")
+	flags.StringVar(&language, "lang", "", "en, zh-CN or zh-TW (override saved language)")
 	flags.BoolVar(&showVersion, "version", false, "print installed version")
 	flags.BoolVar(&showVersion, "v", false, "print installed version")
 	if e := flags.Parse(flagArgs); e != nil {
@@ -113,7 +113,7 @@ func Run(args []string) (result error) {
 		}
 	}
 	if language != "" {
-		if language != "en" && language != "zh-CN" {
+		if language != "en" && language != "zh-CN" && language != "zh-TW" {
 			return errors.New("语言设置无效")
 		}
 		a.Language = language
