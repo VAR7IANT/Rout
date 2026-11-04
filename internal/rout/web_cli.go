@@ -21,7 +21,7 @@ func caddySnippet(domain string, port int) string {
 func (u *UI) webCommand(args []string) error {
 	a := u.a
 	if len(args) < 2 {
-		return errors.New("用法：rout web [passwd|install|start|stop|restart|status|logs|uninstall|host|https|serve]")
+		return errors.New("用法：rout web [setup|passwd|install|start|stop|restart|status|logs|uninstall|host|https|serve]")
 	}
 	rest := args[2:]
 	switch args[1] {
@@ -31,6 +31,11 @@ func (u *UI) webCommand(args []string) error {
 		return a.ServeWeb(ctx, nil)
 	case "passwd":
 		return u.webPasswd(rest)
+	case "setup":
+		if e := u.initLanguage(false); e != nil {
+			return e
+		}
+		return u.webSetup()
 	case "install":
 		cfg, e := a.LoadWebConfig()
 		if e != nil {
@@ -103,10 +108,7 @@ func (u *UI) webCommand(args []string) error {
 	case "host":
 		return u.webHost(rest)
 	case "https":
-		if len(rest) != 1 {
-			return errors.New("用法：rout web https 域名")
-		}
-		return u.webHTTPS(rest[0])
+		return u.webHTTPSCommand(rest)
 	}
 	return errors.New("未知命令，请运行 rout help")
 }

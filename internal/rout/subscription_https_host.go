@@ -38,6 +38,31 @@ type subscriptionHTTPSRuntime struct {
 	verify           func(string, int, string, string) httpsVerification
 	external         func(string, string, string) error
 	osID             func() string
+	// Panel HTTPS (web_https.go). Nil means the real implementation.
+	panelProbe func(domain string, port int) panelVerification
+	acmeProbe  func(url string) error
+	journal    func() ([]byte, error)
+}
+
+func (r *subscriptionHTTPSRuntime) panelVerify(domain string, port int) panelVerification {
+	if r.panelProbe != nil {
+		return r.panelProbe(domain, port)
+	}
+	return verifyPanelHTTPS(domain, port)
+}
+func (r *subscriptionHTTPSRuntime) acme(u string) error {
+	if r.acmeProbe != nil {
+		return r.acmeProbe(u)
+	}
+	return probeACME(u)
+}
+
+// caddyLog reads Caddy's recent journal for classification only; it is never displayed.
+func (r *subscriptionHTTPSRuntime) caddyLog() ([]byte, error) {
+	if r.journal != nil {
+		return r.journal()
+	}
+	return r.run("", "journalctl", "-u", "caddy", "--since", "-2h", "--no-pager", "-o", "cat")
 }
 
 type httpsListener struct {

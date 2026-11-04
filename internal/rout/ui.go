@@ -37,6 +37,8 @@ type UI struct {
 	// navigation hint was already printed in this session.
 	path      []string
 	hintShown bool
+	// webService replaces installing/controlling the rout-web service in tests.
+	webService func(action string) error
 }
 
 func (u *UI) writer() io.Writer {
@@ -1523,9 +1525,9 @@ func (u *UI) menu0() []menuItem {
 	quick.group = "节点"
 	ai, relays, outbounds := item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理")
 	ai.group = "网络"
-	system, subs := item("system", "服务与系统"), item("subs", "订阅管理")
+	system, subs, web := item("system", "服务与系统"), item("subs", "订阅管理"), item("web", "Web 管理面板")
 	system.group = "服务"
-	return []menuItem{quick, nodes, ai, relays, outbounds, system, subs}
+	return []menuItem{quick, nodes, ai, relays, outbounds, system, subs, web}
 }
 
 // withBadges adds the live counts and states shown to the right of the entries.
@@ -1554,6 +1556,7 @@ func (u *UI) withBadges(items []menuItem, s State) []menuItem {
 		"relays":    count(relays),
 		"outbounds": count(len(s.Exits)),
 		"subs":      count(len(s.Subscriptions)),
+		"web":       u.webBadge(),
 	}
 	out := append([]menuItem(nil), items...)
 	for i := range out {
@@ -1611,6 +1614,8 @@ func (u *UI) mainMenu() error {
 			e = u.system()
 		case "subs":
 			e = u.subscriptions()
+		case "web":
+			e = u.webMenu()
 		}
 		if e != nil {
 			if errors.Is(e, io.EOF) || errors.Is(e, errQuit) {
