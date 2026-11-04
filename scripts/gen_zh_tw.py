@@ -3,7 +3,7 @@
 Simplified Chinese catalog keys in internal/rout/messages.json.
 
 Developer tool only (not used at build or run time). Requires OpenCC:
-    python3 -m venv /tmp/occ && /tmp/occ/bin/pip install opencc
+    python3 -m venv /tmp/occ && /tmp/occ/bin/pip install opencc==1.4.2   # outside the repository
     /tmp/occ/bin/python scripts/gen_zh_tw.py
 Entries listed in OVERRIDES win over the automatic conversion.
 """

@@ -7,3 +7,11 @@ coverage.out
 !/internal/webui/dist/.gitkeep
 /web/node_modules/
 /web/coverage/
+# Local build/dev artifacts that must never be committed (the zh-TW catalog generator,
+# scripts/gen_zh_tw.py, installs OpenCC into a throw-away virtualenv, not into the repository).
+*.whl
+*.egg-info/
+__pycache__/
+*.pyc
+/.venv/
+/venv/
