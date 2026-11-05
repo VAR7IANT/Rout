@@ -356,18 +356,24 @@ func engineExitProbe(originURL string) func(*App, Proxy) fullProbe {
 	}
 }
 
-func TestIntegrationAIRelayChainQUIC(t *testing.T) {
+// TestIntegrationAIRelayChainRemoteNodes is the real-engine proof that every node protocol a
+// chain can end in carries AI traffic through a relay: VLESS Reality, AnyTLS and Shadowsocks
+// 2022 over a TCP relay, Hysteria2 and TUIC over a UDP relay. The "remote server" is a real
+// sing-box node of that protocol; its own egress leaves from 127.0.0.2.
+func TestIntegrationAIRelayChainRemoteNodes(t *testing.T) {
 	if os.Getenv("ROUT_SKIP_SINGBOX_RUNTIME") == "1" {
-		t.Skip("runtime explicitly disabled; QUIC chains NOT verified")
+		t.Skip("runtime explicitly disabled; node chains NOT verified")
 	}
-	for _, protocol := range []string{"hy2", "tuic"} {
+	for _, tc := range []struct{ protocol, relay string }{{"vless", "tcp"}, {"anytls", "tcp"}, {"ss", "tcp"}, {"hy2", "udp"}, {"tuic", "udp"}} {
+		protocol, relayProtocol := tc.protocol, tc.relay
 		t.Run(protocol, func(t *testing.T) {
 			a := integrationApp(t)
-			cert, key, _ := tlsFixture(t)
+			cert, key, camouflage := tlsFixture(t)
+			camHost, camPort, _ := ParseEndpoint(strings.TrimPrefix(camouflage.URL, "https://"))
 			origin, hits := exitOrigin(t)
-			// The "remote server": a real sing-box Hysteria2/TUIC node whose own egress is an
-			// authenticated SOCKS5 leaving from 127.0.0.2, so the origin can tell its traffic
-			// from anything that leaves this server (127.0.0.1).
+			// The "remote server": a real sing-box node whose own egress is an authenticated
+			// SOCKS5 leaving from 127.0.0.2, so the origin can tell its traffic from anything
+			// that leaves this server (127.0.0.1).
 			ca, caHits, _ := canadaSOCKS(t, origin, "ca-user", "ca-pass")
 			remote := &App{Home: t.TempDir(), BinDir: a.BinDir, ServiceMode: "none"}
 			srv := fixture(t, protocol)
@@ -385,17 +391,24 @@ func TestIntegrationAIRelayChainQUIC(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
+			if protocol == "vless" || protocol == "anytls" {
+				// Reality borrows a real TLS site; use the local camouflage server.
+				conf["inbounds"].([]any)[0].(M)["tls"].(M)["reality"].(M)["handshake"] = M{"server": camHost, "server_port": camPort}
+			}
 			startEngine(t, profileSockets(srv), a.enginePath("sing-box"), "run", "-c", configFile(t, conf))
 			link, _ := srv.URI()
-			u, _ := url.Parse(link)
-			q := u.Query()
-			q.Set("insecure", "1") // the test server's certificate is self-signed
-			u.RawQuery = q.Encode()
-			node, e := ParseRemoteNode(u.String())
+			if protocol == "hy2" || protocol == "tuic" {
+				u, _ := url.Parse(link)
+				q := u.Query()
+				q.Set("insecure", "1") // the test server's certificate is self-signed
+				u.RawQuery = q.Encode()
+				link = u.String()
+			}
+			node, e := ParseRemoteNode(link)
 			if e != nil {
 				t.Fatal(e)
 			}
-			sc := newChainSceneProto(t, a, *node, "udp")
+			sc := newChainSceneProto(t, a, *node, relayProtocol)
 			stopRelay := runChainRelay(t, sc.relay)
 			ports := map[string]int{}
 			for _, p := range []Profile{sc.nodeA, sc.node} {
@@ -451,7 +464,7 @@ func TestIntegrationAIRelayChainQUIC(t *testing.T) {
 			if _, failed := rep.Failed(); failed || !rep.Has(6, diagOK) || !strings.Contains(rep.Text(), "127.0.0.2") {
 				t.Fatalf("diagnosis:\n%s", rep.Text())
 			}
-			t.Logf("%s AI exit test (loopback, real engines):\n%s", protocol, rep.Text())
+			t.Logf("%s over a %s relay: AI exit test (loopback, real engines):\n%s", protocol, relayProtocol, rep.Text())
 			// Fail closed: with the relay gone the AI request fails and never takes the
 			// original route; ordinary traffic still works.
 			stopRelay()
