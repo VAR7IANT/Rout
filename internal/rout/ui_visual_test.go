@@ -35,9 +35,9 @@ func TestMainMenuGroupsKeepTheDocumentedNumbers(t *testing.T) {
 		u, out := testUI(a, "0\n")
 		_ = u.mainMenu()
 		got := strings.Join(mainMenuLayout(out.String()), " ")
-		want := "G:Nodes 1 2 G:Network 3 4 5 G:Services 6 7"
+		want := "G:Nodes 1 2 G:Network 3 4 5 G:Services 6 7 8"
 		if lang == "zh-CN" {
-			want = "G:节点 1 2 G:网络 3 4 5 G:服务 6 7"
+			want = "G:节点 1 2 G:网络 3 4 5 G:服务 6 7 8"
 		}
 		if got != want {
 			t.Fatalf("%s layout %q, want %q\n%s", lang, got, want, out.String())

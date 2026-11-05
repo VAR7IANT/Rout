@@ -57,6 +57,8 @@ var helpLines = [][2]string{
 	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
 	{"rout relays", "端口转发（中转）管理"},
 	{"rout subscription [list|status|restart|https|logs|plan|serve]", "订阅管理：菜单、列表、服务状态、重启、流量与到期设置；serve 为订阅服务进程"},
+	{"rout web setup", "Web 管理面板一键安装：服务、管理密码、域名与 HTTPS"},
+	{"rout web https deploy|repair|status|remove", "部署、修复、诊断或移除面板的 HTTPS 站点（Caddy）"},
 	{"rout web [passwd|install|status|logs|host|https]", "Web 管理面板：设置密码、安装服务、查看状态、允许域名、HTTPS 反向代理配置"},
 	{"rout remote [list|refresh|delete]", "第三方订阅源：列表、立即刷新、删除（添加与编辑请使用 Web 面板）"},
 	{"rout ai [status|test|apply]", "AI 智能分流：菜单、状态、测试配置或重新应用"},
@@ -102,7 +104,7 @@ func Run(args []string) (result error) {
 	flags.StringVar(&a.Home, "home", a.Home, "configuration directory")
 	flags.StringVar(&a.BinDir, "bin-dir", a.BinDir, "engine directory")
 	flags.StringVar(&a.ServiceMode, "service", "auto", "auto or none (test-only)")
-	flags.StringVar(&language, "lang", "", "en or zh-CN (override saved language)")
+	flags.StringVar(&language, "lang", "", "en, zh-CN or zh-TW (override saved language)")
 	flags.BoolVar(&showVersion, "version", false, "print installed version")
 	flags.BoolVar(&showVersion, "v", false, "print installed version")
 	if e := flags.Parse(flagArgs); e != nil {
@@ -113,7 +115,7 @@ func Run(args []string) (result error) {
 		}
 	}
 	if language != "" {
-		if language != "en" && language != "zh-CN" {
+		if language != "en" && language != "zh-CN" && language != "zh-TW" {
 			return errors.New("语言设置无效")
 		}
 		a.Language = language
@@ -148,7 +150,7 @@ func Run(args []string) (result error) {
 	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		if settings, er := a.LoadSettings(); er == nil && language == "" {
-			a.Language = settings.Language
+			a.Language = settings.lang()
 		}
 		a.help()
 		return nil
@@ -157,7 +159,7 @@ func Run(args []string) (result error) {
 	if e != nil {
 		return e
 	}
-	a.Language = settings.Language
+	a.Language = settings.lang()
 	a.BackupKeep = settings.BackupKeep
 	if language != "" {
 		a.Language = language

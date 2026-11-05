@@ -290,6 +290,10 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 	// shows up as a change of the affected nodes, and of no others.
 	old = old.withAIRoutes()
 	next = next.withAIRoutes()
+	// A broken relay chain is named precisely (relay and exit) before the generic AI check.
+	if e := chainChangeError(old, next); e != nil {
+		return e
+	}
 	if probs := newAIProblems(old, next); len(probs) > 0 {
 		return errors.New(strings.Join(probs, "；"))
 	}

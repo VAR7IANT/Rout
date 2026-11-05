@@ -1,6 +1,7 @@
 package rout
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // AI Smart Routing menus. This file only asks questions and prints; every change goes
@@ -37,6 +39,9 @@ func (u *UI) aiStatusLines(st AIStatus) {
 	exit := u.a.T("未选择")
 	if st.ExitName != "" {
 		exit = st.ExitName + " (" + strings.ToUpper(st.ExitProtocol) + ")"
+		if st.ExitChain {
+			exit += " · " + u.a.T("经由中转")
+		}
 	} else if st.Config.AIOutboundID != "" {
 		exit = u.paint("33", u.a.T("所选出口已不存在"))
 	}
@@ -252,68 +257,6 @@ func (u *UI) aiSaveInbounds(s State, nodes []Profile, chosen map[string]bool, cf
 	return nil
 }
 
-func (u *UI) aiSelectExit() error {
-	s, e := u.a.Load()
-	if e != nil {
-		return e
-	}
-	if len(s.Exits) == 0 {
-		u.say("暂无出站代理。请先在“出站代理”中创建 AI 出口（例如位于加拿大的 SOCKS5 或 HTTP 代理）")
-		return nil
-	}
-	cfg := s.aiConfigured()
-	u.heading("选择 AI 出口")
-	local := localIPs()
-	usable := map[int]bool{}
-	for i, ex := range s.Exits {
-		why := aiExitUsable(ex.Proxy)
-		if why == nil {
-			why = aiExitLoop(s, ex.Proxy, local)
-		}
-		mark := ""
-		if ex.ID == cfg.AIOutboundID {
-			mark = " " + u.paint("32", u.a.T("（当前）"))
-		}
-		fmt.Fprintf(u.writer(), "  %s %s — %s — %s%s\n", u.paint(accent, fmt.Sprintf("%2d.", i+1)), u.bold(ex.Name), strings.ToUpper(ex.Proxy.Protocol), u.dim(fmt.Sprintf("%s:%d", ex.Proxy.Host, ex.Proxy.Port)), mark)
-		if why != nil {
-			fmt.Fprintf(u.writer(), "      %s\n", u.paint("31", "✗ "+u.a.Error(why)))
-		}
-		usable[i+1] = why == nil
-	}
-	n := u.number("选择 AI 出口编号（0 返回）", len(s.Exits))
-	if n <= 0 {
-		return u.err
-	}
-	if !usable[n] {
-		return errors.New("此出站代理不能作为 AI 出口")
-	}
-	ex := s.Exits[n-1]
-	if ex.ID == cfg.AIOutboundID {
-		u.say("AI 出口未改变")
-		return nil
-	}
-	u.say("正在测试出站代理…")
-	if ip, er := u.testExit(ex.Proxy); er != nil {
-		u.warn(u.a.Error(er))
-		if !u.yes("出口当前不可用，仍然选择它", false) {
-			return u.err
-		}
-	} else {
-		u.printf("实际出口 IP：%s\n", ip)
-	}
-	if cfg.Enabled {
-		u.say("只会重启已绑定的节点；其他节点和入站配置不受影响")
-	}
-	if !u.yes(fmt.Sprintf(u.a.T("将 AI 出口设为 %s"), ex.Name), true) {
-		return u.err
-	}
-	if e = u.a.SetAIExit(ex.ID); e != nil {
-		return e
-	}
-	u.good("AI 出口已更新")
-	return nil
-}
-
 func (u *UI) aiRules(version int) {
 	if version == 0 {
 		version = AIRuleSetCurrent
@@ -338,7 +281,11 @@ func (u *UI) aiRules(version int) {
 
 func (u *UI) aiTest() error {
 	u.say("正在检查配置…")
-	checks, e := u.a.TestAI(u.testExit)
+	var probe func(Proxy) (string, error)
+	if u.probeProxy != nil {
+		probe = u.testExit
+	}
+	checks, e := u.a.TestAI(probe)
 	if e != nil {
 		return e
 	}
@@ -356,6 +303,16 @@ func (u *UI) aiTest() error {
 	}
 	if bad {
 		u.say("配置存在问题，请先修复；当前运行中的节点不受此测试影响")
+	}
+	if probe == nil {
+		u.heading("AI 出口测试")
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		rep, er := u.a.diagnoseAI(ctx, u.diagEnvOrDefault(), diagOpts{Full: true})
+		cancel()
+		if er != nil {
+			return er
+		}
+		u.printReport(rep)
 	}
 	s, e := u.a.Load()
 	if e != nil {

@@ -40,6 +40,7 @@ const paths = {
   arrow: 'M5 12h14M13 6l6 6-6 6',
   test: 'M9 3v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L15 9V3M8 3h8M7.5 15h9',
   tag: 'M3 3h9l9 9-9 9-9-9zM8 8h.01',
+  ai: 'M3 12h6l4-6h5M9 12l4 6h5M16 3l3 3-3 3M16 15l3 3-3 3',
   drag: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
 } as const
 

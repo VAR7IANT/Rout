@@ -383,6 +383,9 @@ type RelaySpec struct {
 	Outbound      string `json:"outbound"`       // outbound address-family policy; "" = auto
 	ListenPort    int    `json:"listen_port"`    // 0 picks a free port
 	TargetNetwork string `json:"target_network"` // "tcp" marks a TCP-only NAT destination
+	// Loopback makes an internal hop: the relay listens on 127.0.0.1 only and is reachable
+	// from this server alone (used by relay-chain exits, never published to clients).
+	Loopback bool `json:"loopback"`
 }
 
 // relayDestinationFrom fills Target, TargetURI and Protocol from a spec.
@@ -478,7 +481,10 @@ func (a *App) CreateRelay(spec RelaySpec) (Profile, error) {
 		p.CreatedAt = &now
 		setupLocal := setup
 		p.Engine = engineNative
-		if setup.NAT {
+		if spec.Loopback {
+			p.InboundMode, p.Listen = inIPv4, "127.0.0.1"
+			setupLocal.PublicHost, setupLocal.NAT = "127.0.0.1", false
+		} else if setup.NAT {
 			// Legacy NAT host: the listen address and the provider's port mapping come from
 			// the saved defaults, and the port is picked inside the mapped range.
 			p.Listen, p.InboundMode = setup.Listen, modeOfListen(setup.Listen)
@@ -521,7 +527,7 @@ func (a *App) CreateRelay(spec RelaySpec) (Profile, error) {
 				return old, fmt.Errorf("目标链接使用 %s，与所选传输协议不一致", strings.ToUpper(network))
 			}
 		}
-		if setup.NAT && setup.Network != "both" && p.Protocol != setup.Network {
+		if setupLocal.NAT && setup.Network != "both" && p.Protocol != setup.Network {
 			return old, errors.New("所选协议需要的网络不在 NAT 允许范围内")
 		}
 		p.TargetNetwork = ""

@@ -2,6 +2,7 @@ package rout
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -67,12 +68,31 @@ func aiEligible(p Profile) error {
 	return nil
 }
 
-// aiExitUsable checks that an outbound proxy can serve as the AI exit.
+// aiExitUsable checks that an outbound can serve as the AI exit: an authenticated
+// SOCKS5/HTTP(S) proxy or a remote node link that Rout converts to a sing-box outbound.
+// A relay chain is accepted when it ends in one of those (see aiExitProxy).
 func aiExitUsable(p Proxy) error {
-	if p.Protocol != "socks5" && p.Protocol != "http" && p.Protocol != "https" {
-		return errors.New("AI 出口必须是 SOCKS5、HTTP 或 HTTPS 出站代理")
+	if p.Protocol != "socks5" && p.Protocol != "http" && p.Protocol != "https" && p.Protocol != proxyNode {
+		return errors.New("AI 出口必须是 SOCKS5、HTTP(S) 代理、远程节点或经由中转到达的代理")
 	}
 	return p.Validate()
+}
+
+// aiExitProxy is the complete check of an AI exit and the proxy the bound nodes must dial.
+// A chain exit is dialed through its hop; its own references are checked instead of the
+// loopback hop address, which is an explicit, internal reference to a Rout relay and not a
+// loop. Every other exit must not point back at this server.
+func aiExitProxy(s State, ex Exit, local map[string]bool) (Proxy, error) {
+	if e := aiExitUsable(ex.Proxy); e != nil {
+		return Proxy{}, e
+	}
+	if ex.isChain() {
+		return resolveExit(s, ex, local)
+	}
+	if e := aiExitLoop(s, ex.Proxy, local); e != nil {
+		return Proxy{}, e
+	}
+	return ex.Proxy, nil
 }
 
 // aiExitLoop refuses an exit that points back at this server's own entries, which would
@@ -124,10 +144,7 @@ func (s State) AIProblems() []string {
 	if e != nil {
 		return append(out, "所选 AI 出口已不存在")
 	}
-	if e = aiExitUsable(ex.Proxy); e != nil {
-		return append(out, e.Error())
-	}
-	if e = aiExitLoop(s, ex.Proxy, localIPs()); e != nil {
+	if _, e = aiExitProxy(s, ex, localIPs()); e != nil {
 		out = append(out, e.Error())
 	}
 	return out
@@ -165,9 +182,10 @@ func (s State) withAIRoutes() State {
 		return out
 	}
 	var proxy *Proxy
-	if ex, e := FindExit(s, s.AI.AIOutboundID); e == nil && aiExitUsable(ex.Proxy) == nil && aiExitLoop(s, ex.Proxy, localIPs()) == nil {
-		cp := ex.Proxy
-		proxy = &cp
+	if ex, e := FindExit(s, s.AI.AIOutboundID); e == nil {
+		if cp, er := aiExitProxy(s, ex, localIPs()); er == nil {
+			proxy = &cp
+		}
 	}
 	bound := s.AI.aiBound()
 	for i, p := range out.Profiles {
@@ -316,7 +334,7 @@ func (a *App) SetAIExit(id string) error {
 			if e != nil {
 				return e
 			}
-			if e = aiExitUsable(ex.Proxy); e != nil {
+			if _, e = aiExitProxy(s, ex, localIPs()); e != nil {
 				return e
 			}
 		}
@@ -381,6 +399,7 @@ type AIStatus struct {
 	Config           AIRouting
 	ExitName         string
 	ExitProtocol     string
+	ExitChain        bool
 	Problems         []string
 	Nodes            []AINodeStatus
 	BoundCount       int
@@ -414,7 +433,8 @@ func (a *App) AIStatus() (AIStatus, error) {
 	}
 	st := AIStatus{Config: s.aiConfigured(), Problems: s.AIProblems(), RuleSetAvailable: AIRuleSetCurrent}
 	if ex, er := FindExit(s, st.Config.AIOutboundID); er == nil {
-		st.ExitName, st.ExitProtocol = ex.Name, ex.Proxy.Protocol
+		st.ExitName, st.ExitProtocol = ex.Name, ex.Proxy.Kind()
+		st.ExitChain = ex.isChain()
 		if warning := proxySecurityWarning(ex.Proxy); warning != "" {
 			st.Problems = append(st.Problems, warning)
 		}
@@ -502,7 +522,10 @@ func (a *App) TestAI(probe func(Proxy) (string, error)) ([]AICheck, error) {
 			if warning := proxySecurityWarning(ex.Proxy); warning != "" {
 				add(false, true, warning)
 			}
-			if ip, er := probe(ex.Proxy); er != nil {
+			dial, er := aiExitProxy(s, ex, localIPs())
+			if er != nil {
+				add(false, false, a.Error(er))
+			} else if ip, er := probe(dial); er != nil {
 				add(false, false, fmt.Sprintf("AI 出口不可用：%s", a.Error(er)))
 			} else {
 				add(true, false, fmt.Sprintf("AI 出口可用，实际出口 IP：%s", ip))
@@ -513,3 +536,72 @@ func (a *App) TestAI(probe func(Proxy) (string, error)) ([]AICheck, error) {
 }
 
 func joinNames(names []string) string { return strings.Join(names, "、") }
+
+// diagnoseAI is the end-to-end AI exit test: the bound inbound nodes (layer 1), then every
+// layer of the selected exit, through its relay when it is a chain, ending with a real
+// request whose observed source address is the exit IP. Nothing is changed.
+func (a *App) diagnoseAI(ctx context.Context, env diagEnv, opts diagOpts) (diagReport, error) {
+	var rep diagReport
+	d := diagger{a: a, rep: &rep}
+	s, e := a.Load()
+	if e != nil {
+		return rep, e
+	}
+	if s.AI == nil || s.AI.AIOutboundID == "" {
+		d.add(5, diagFail, "尚未选择 AI 出口")
+		return rep, nil
+	}
+	eff := s.withAIRoutes()
+	bound := s.AI.aiBound()
+	if len(bound) == 0 {
+		d.add(1, diagWarn, "尚未选择入站节点：目前不会影响任何节点")
+	}
+	for _, p := range eff.Profiles {
+		if !bound[p.ID] {
+			continue
+		}
+		if er := aiEligible(p); er != nil {
+			d.add(1, diagFail, "%s：%s", p.Name, a.Error(er))
+			continue
+		}
+		if !p.Enabled {
+			d.add(1, diagWarn, "入站 %s 已停用", p.Name)
+			continue
+		}
+		if managed, up := env.managed(a, p); managed && !up {
+			d.add(1, diagFail, "入站 %s 的服务未运行", p.Name)
+			continue
+		}
+		if s.AI.Enabled && p.AIRoute != nil && !a.configInSync(p) {
+			d.add(1, diagWarn, "入站 %s 的配置与已保存的设置不一致，请选择“应用更改”", p.Name)
+			continue
+		}
+		d.add(1, diagOK, "入站 %s 正常", p.Name)
+	}
+	if !s.AI.Enabled {
+		d.add(1, diagWarn, "AI 智能分流尚未启用：以下只测试出口链路本身")
+	}
+	ex, e := FindExit(s, s.AI.AIOutboundID)
+	if e != nil {
+		d.add(5, diagFail, "所选 AI 出口已不存在")
+		return rep, nil
+	}
+	if _, e = aiExitProxy(s, ex, env.local()); e != nil {
+		d.add(5, diagFail, "%s", a.Error(e))
+		return rep, nil
+	}
+	rep.Steps = append(rep.Steps, a.diagnoseProxy(ctx, ex, env, opts).Steps...)
+	if _, failed := rep.Failed(); !failed && rep.Has(6, diagOK) {
+		d.add(6, diagOK, "AI 出口链路可用")
+	}
+	return rep, nil
+}
+
+// TestAIExit runs diagnoseAI for the panel.
+func (a *App) TestAIExit(ctx context.Context) (DiagView, error) {
+	rep, e := a.diagnoseAI(ctx, a.diagEnvironment(), diagOpts{Full: true})
+	if e != nil {
+		return DiagView{}, e
+	}
+	return diagView(a, rep), nil
+}

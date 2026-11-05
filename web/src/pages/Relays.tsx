@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n'
 import { api } from '../lib/api'
 import { useDebounced, useResource } from '../lib/hooks'
@@ -8,9 +8,8 @@ import { useRouter } from '../lib/router'
 import type { ExitView, HostInfo, RelayList, RelayView } from '../lib/types'
 import { DataTable, type Column } from '../components/table'
 import { ConfirmDialog, Drawer, Menu, Modal } from '../components/overlay'
-import { DiagPanel, SecretBox, StateBadge, WarningBadges } from '../components/shared'
+import { DiagPanel, HopPath, PathChain, SecretBox, StateBadge, WarningBadges } from '../components/shared'
 import { Badge, Button, Card, EmptyState, Field, Input, KV, Notice, PageHead, SearchInput, Segmented, Select, Spinner, Tabs, Textarea, Toggle } from '../components/ui'
-import { Icon } from '../components/icons'
 
 export function RelaysPage({ tab }: { tab: 'relays' | 'exits' }) {
   const { t } = useI18n()
@@ -19,26 +18,9 @@ export function RelaysPage({ tab }: { tab: 'relays' | 'exits' }) {
     <div className="page">
       <PageHead title={t('relays.title')} subtitle={t('relays.subtitle')} />
       <Tabs label={t('relays.title')} value={tab} onChange={(v) => navigate(v === 'relays' ? '/relays' : '/exits')} tabs={[{ value: 'relays', label: t('relays.tab.relays') }, { value: 'exits', label: t('relays.tab.exits') }]} />
+      <p className="muted small tab-explain">{t(tab === 'relays' ? 'relays.explain' : 'exits.explain')}</p>
       {tab === 'relays' ? <RelaysTab /> : <ExitsTab />}
     </div>
-  )
-}
-
-/** The route a connection takes: entry → relay → target. */
-export function PathChain({ items }: { items: { label: ReactNode; kind: 'entry' | 'relay' | 'target' | 'exit' }[] }) {
-  return (
-    <ol className="path">
-      {items.map((it, i) => (
-        <Fragment key={i}>
-          {i > 0 ? (
-            <li className="path-arrow" aria-hidden="true">
-              <Icon name="arrow" size={14} />
-            </li>
-          ) : null}
-          <li className={`path-chip path-${it.kind}`}>{it.label}</li>
-        </Fragment>
-      ))}
-    </ol>
   )
 }
 
@@ -95,6 +77,8 @@ function RelaysTab() {
           <div className="badges">
             <WarningBadges warnings={r.warnings} />
             {r.target_network === 'tcp' ? <Badge tone="warn">{t('relays.natTcp')}</Badge> : null}
+            {r.chain_exits?.length ? <Badge title={r.chain_exits.join('、')}>{t('relays.chainUsers', { n: r.chain_exits.length })}</Badge> : null}
+            {r.ai_chain ? <Badge tone="accent">{t('relays.aiChain')}</Badge> : null}
           </div>
         </div>
       ),
@@ -233,7 +217,13 @@ function RelaysTab() {
         <ConfirmDialog
           title={del.length === 1 ? t('relays.deleteTitle', { name: del[0]!.name }) : t('nodes.bulk.deleteTitle', { n: del.length })}
           message={t('relays.deleteMsg')}
-          impact={[t('relays.deleteImpact.clients'), ...[...new Set(del.flatMap((r) => r.subscriptions))].slice(0, 6).map((s) => t('relays.deleteImpact.subs', { names: s })), t('nodes.deleteImpact.port')]}
+          impact={[
+            t('relays.deleteImpact.clients'),
+            ...[...new Set(del.flatMap((r) => r.subscriptions))].slice(0, 6).map((s) => t('relays.deleteImpact.subs', { names: s })),
+            ...(del.some((r) => r.chain_exits?.length) ? [t('relays.deleteImpact.chain', { names: [...new Set(del.flatMap((r) => r.chain_exits ?? []))].join('、') })] : []),
+            ...(del.some((r) => r.ai_chain) ? [t('relays.deleteImpact.ai')] : []),
+            t('nodes.deleteImpact.port'),
+          ]}
           confirmLabel={t('common.delete')}
           danger
           onCancel={() => setDel(null)}
@@ -265,6 +255,7 @@ function RelayDetail({ relay, onEdit, onDelete, onToggle, onRestart }: { relay: 
         <Badge>{t(relay.mode === 'local' ? 'relays.mode.local' : 'relays.mode.remote')}</Badge>
         <Badge>{t(transportKey(relay.transport))}</Badge>
         <WarningBadges warnings={relay.warnings} />
+        {relay.ai_chain ? <Badge tone="accent">{t('relays.aiChain')}</Badge> : null}
       </div>
       <div className="row-wrap">
         <Button size="sm" icon={relay.enabled ? 'stop' : 'play'} onClick={onToggle}>
@@ -283,6 +274,17 @@ function RelayDetail({ relay, onEdit, onDelete, onToggle, onRestart }: { relay: 
       <section>
         <h3 className="section-title">{t('exits.detail.path')}</h3>
         <PathChain items={relayPath(relay, t)} />
+      </section>
+      <section className="stack-tight">
+        <h3 className="section-title">{t('relays.detail.chain')}</h3>
+        {relay.chain_exits?.length ? (
+          <Notice tone={relay.ai_chain ? 'accent' : 'neutral'} title={relay.chain_exits.join('、')}>
+            {t('relays.detail.chainHint')}
+            {relay.ai_chain ? ` ${t('relays.deleteImpact.ai')}` : ''}
+          </Notice>
+        ) : (
+          <p className="muted small">{t('relays.detail.chainNone')}</p>
+        )}
       </section>
       <section>
         <KV
@@ -573,7 +575,11 @@ function ExitsTab() {
       cell: (x) => (
         <div className="name-cell">
           <strong>{x.name}</strong>
-          {x.warning ? <Badge tone="warn" title={x.warning}>{x.warning}</Badge> : null}
+          <div className="badges">
+            {x.kind === 'chain' ? <Badge tone="accent">{t('exits.kind.chain')}</Badge> : null}
+            {x.ai ? <Badge tone="ok">{t('exits.ai')}</Badge> : null}
+            {x.warning ? <Badge tone="warn" title={x.warning}>{x.warning}</Badge> : null}
+          </div>
         </div>
       ),
     },
@@ -585,8 +591,16 @@ function ExitsTab() {
       cell: (x) => (
         <span className="mono small">
           {exitAddress(x)} <span className="muted">· {x.has_auth ? t('exits.auth') : t('exits.noAuth')}</span>
+          {x.kind === 'chain' ? <span className="muted"> · {t('exits.via', { name: x.via_relay_name || x.via_address || '?' })}</span> : null}
         </span>
       ),
+    },
+    {
+      key: 'path',
+      header: t('exits.col.path'),
+      label: t('exits.col.path'),
+      className: 'col-path',
+      cell: (x) => (x.path?.length ? <HopPath hops={x.path} /> : <span className="muted">–</span>),
     },
     {
       key: 'refs',
@@ -684,8 +698,16 @@ function ExitsTab() {
           <div className="stack">
             <div className="row-wrap">
               <Badge>{detailExit.label}</Badge>
+              {detailExit.kind === 'chain' ? <Badge tone="accent">{t('exits.kind.chain')}</Badge> : detailExit.kind === 'remote' ? <Badge>{t('exits.kind.remote')}</Badge> : null}
               {detailExit.warning ? <Badge tone="warn">{detailExit.warning}</Badge> : null}
             </div>
+            {detailExit.path?.length ? (
+              <section className="stack-tight">
+                <h3 className="section-title">{t('exits.detail.path')}</h3>
+                <HopPath hops={detailExit.path} />
+              </section>
+            ) : null}
+            {detailExit.ai_usable === false ? <Notice tone="warn">{t('exits.detail.aiBad', { why: detailExit.ai_problem ?? '' })}</Notice> : detailExit.ai_usable ? <p className="small ok-text">{t('exits.detail.aiOk')}</p> : null}
             <div className="row-wrap">
               <Button size="sm" icon="edit" onClick={() => setEdit(detailExit)}>
                 {t('common.edit')}
@@ -701,6 +723,7 @@ function ExitsTab() {
                 { k: t('exits.col.type'), v: detailExit.label },
                 { k: t('relays.col.transport'), v: detailExit.transport.toUpperCase() },
                 { k: t('exits.auth'), v: detailExit.has_auth ? t('common.yes') : t('common.no') },
+                ...(detailExit.kind === 'chain' ? [{ k: t('relays.path.relay'), v: detailExit.via_relay_name || detailExit.via_address || '–', mono: !detailExit.via_relay_name }] : []),
               ]}
             />
             <section>

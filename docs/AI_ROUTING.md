@@ -1,7 +1,105 @@
-# AI routing security and acceptance (v0.3.2 candidate)
+# AI routing security and acceptance
 
 This document is a test procedure, not evidence that the US/Canada VPS path has
 been tested. No production deployment is part of this change.
+
+## AI exits through a relay (v0.5.1)
+
+A port forward alone is never an exit: it moves the connection, and the destination
+still sees whoever dialed last. v0.5.1 therefore models a **relay chain**: an exit of
+kind `chain` that names the real proxy at the END of the forward and the hop that
+carries the connection there.
+
+```text
+Client → US VPS (bound Rout inbound) ─┬─ ordinary traffic → node's original exit (US IP)
+                                      └─ AI domains → hop → SOCKS5 / HTTP(S) CONNECT / remote node → Internet (exit IP)
+hop = a Rout relay on this server (via_relay: stable relay ID)
+    | a forwarder port on another server, e.g. a NAT or IPv6-only box (via_address: host:port)
+```
+
+`state.json` stores, for example:
+
+```json
+{"id": "a1b2c3d4e5f6", "name": "CA via hop", "kind": "chain", "via_relay": "0123456789ab",
+ "proxy": {"protocol": "socks5", "host": "ca.example.net", "port": 1080, "username": "…", "password": "…"}}
+```
+
+- **References, not positions.** The relay is referenced by its stable ID. The address
+  the bound nodes dial (`127.0.0.1`/`::1` and the relay's port, from the relay's own
+  listen address) is derived each time the configuration is rendered, so changing the
+  relay's port updates the AI exit in the same transaction. The relay's target must be
+  exactly the proxy's endpoint.
+- **Protection.** Deleting, disabling, or retargeting a relay that a chain uses is
+  refused, naming the relay and the exit. A chain whose relay disappears anyway (state
+  edited by hand, partial restore) is not a fallback: AI domains of bound nodes are
+  rejected, exactly like a missing exit.
+- **Loops.** A relay (or a remote forwarder address) that points at a Rout node or relay
+  of this server is refused: the traffic would come back and leave from this server. A
+  different local service — such as the SSH-forwarded SOCKS5 below on `127.0.0.1:11080`
+  — is a legitimate end of a chain. The internal loopback hop to a Rout relay is an
+  explicit reference checked by ID; no loop or SSRF check is relaxed for anything else.
+- **TLS identity.** For HTTPS CONNECT the certificate is still verified against the real
+  proxy host (`server_name`), and for node links the link is rewritten to the hop while
+  keeping its SNI/host parameters, so moving the socket never weakens TLS.
+- **Transport.** The chain carries TCP. A relay must forward the transport the end needs
+  (TCP for SOCKS5/HTTP/VLESS/Trojan/AnyTLS, UDP for Hysteria2/TUIC; a TCP-only NAT target
+  cannot reach a UDP node). AI UDP/QUIC is still rejected so clients fall back to TCP.
+- **Address families.** The hop's outbound policy (IPv4/IPv6 only/first, auto) decides
+  how it reaches the proxy, independently of how clients reach the node: an IPv6 entry
+  does not imply an IPv6 exit and vice versa.
+- **Encryption.** SOCKS5 and HTTP CONNECT authenticate and connect in plaintext; a
+  forward does not add encryption. Across the Internet prefer HTTPS CONNECT, a remote
+  node link (VLESS Reality, AnyTLS, Trojan …) or an SSH tunnel.
+- **Scope.** Chain exits are used by AI Smart Routing only; binding one as a node's
+  ordinary outbound is refused.
+
+*Select AI exit* offers: existing outbound proxies; **through an existing port forward**
+(pick a relay, then the service at its end: SOCKS5 / HTTP CONNECT / HTTPS CONNECT with
+credentials, or a node link — the relay's own target link is offered when it has one);
+**remote node share link**; **create a new exit chain** (a new relay on this server that
+listens on `127.0.0.1` only, with its outbound family policy, or a forwarder address on
+another server, plus the proxy). Whatever is created is tested before it is selected and
+removed again if you decline to keep a failing one. The panel's *AI Routing* page offers
+the same four ways (`POST /api/exits/chain`).
+
+### End-to-end AI exit test
+
+*Test configuration* (`rout ai test`, panel *Test AI exit*, `POST /api/ai/test`) runs every
+layer and stops at the first failure, naming it:
+
+```text
+AI exit test
+1. Local listening   ✓ Inbound US-A is working
+4. Relay             ✓ Relay CA-hop is enabled: 127.0.0.1:20001 → ca.example.net:1080
+3. Target            ✓ Relay target ca.example.net:1080 is reachable: IPv4 203.0.113.7:1080 (31 ms)
+3. Target            ✓ TCP connection established: IPv4 127.0.0.1:20001 (0 ms)
+5. Proxy protocol    ✓ The proxy accepted the credentials (SOCKS5 handshake succeeded)
+6. Real exit         ✓ Exit IPv4: <observed address>
+6. Real exit         ✓ AI exit chain is working
+```
+
+The exit address is what an IP-echo service observed for a request sent through the
+generated outbound (relay included); it is never taken from the configuration. A
+result equal to one of this server's own addresses is flagged. The test does not prove
+that every AI application uses recognizable domains, nor the exit's geography.
+
+Automated evidence (no VPS): `TestChainDiagnosisRealTrafficThroughRelayAndSOCKS5` sends
+real traffic through Rout's native relay to an authenticating SOCKS5 server that egresses
+from `127.0.0.2`, checks wrong credentials (layer 5) and a stopped proxy, and that no
+request reaches the origin without the proxy. `TestIntegrationAIRelayChain`
+(`ROUT_TEST_ENGINES`) runs real sing-box nodes: the bound node's AI requests leave from
+`127.0.0.2`, its ordinary requests and every request of the unbound node from
+`127.0.0.1`, and with the relay stopped the AI request fails without reaching the
+origin.
+
+### Chain acceptance on real VPSs (operator-run)
+
+In addition to the steps below: on the US host create a relay to the Canada SOCKS5
+(or use *Create a new exit chain*), select it as the AI exit, run `rout ai test` and
+record the observed exit IP (it must be the Canada address). Repeat step 4/6 with the
+relay stopped (`rout off RELAY_ID`): AI requests must fail and the observer must see no
+US request. Try deleting the relay: it must be refused naming the AI exit chain. For a
+relay on a NAT or IPv6-only VPS, use *a forwarder port on another server* and repeat.
 
 ## US → Canada transport
 
@@ -147,8 +245,8 @@ passes. macOS cannot validate systemd/OpenRC, nftables or Linux `/proc` behavior
 1. Record the exact candidate SHA, OS, kernel version, sing-box version and US/CA
    public IPv4/IPv6. Save `rout backup /root/rout-before-ai.json` on the US host.
    Use a maintenance window/disposable nodes; retain administrative SSH access.
-2. Create/test the verified HTTPS or SSH SOCKS5 exit as above. From the six main
-   menus select AI Smart Routing, bind test node **A** (and optionally **C**), leave
+2. Create/test the verified HTTPS or SSH SOCKS5 exit as above. From the main
+   menu select AI Smart Routing, bind test node **A** (and optionally **C**), leave
    **B** unbound, select Canada, enable. Save `rout ai status`, `rout doctor`, and
    `rout traffic` output privately. `rout ai test` is a config/proxy test plus
    a simulation, not proof of the complete routing path.

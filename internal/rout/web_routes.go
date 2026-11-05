@@ -45,6 +45,7 @@ func (s *WebServer) routes() {
 	s.nodeRoutes()
 	s.subscriptionRoutes()
 	s.systemRoutes()
+	s.aiRoutes()
 }
 
 // ---- session ---------------------------------------------------------------------------

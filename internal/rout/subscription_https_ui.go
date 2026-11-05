@@ -294,7 +294,7 @@ func (u *UI) showExistingSubscriptionURL() {
 // New HTTPS internals return stable English diagnostics for automation. Present
 // their catalog translations in the selected CLI language without changing errors.
 func (a *App) subscriptionText(s string) string {
-	if a.Language == "en" {
+	if a.Language == "en" || a.Language == "zh-TW" {
 		return a.T(s)
 	}
 	for chinese, english := range messages {

@@ -61,6 +61,30 @@ describe('server codes are translated', () => {
   })
 })
 
+// Every literal key the interface passes to t() must exist, in all three languages.
+describe('keys used in the source', () => {
+  const src = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const files: string[] = []
+  const walk = (d: string) => {
+    for (const f of readdirSync(d, { withFileTypes: true })) {
+      if (f.isDirectory()) walk(join(d, f.name))
+      else if (/\.tsx?$/.test(f.name) && !/\.test\.tsx?$/.test(f.name)) files.push(join(d, f.name))
+    }
+  }
+  walk(src)
+  it('are all in the catalog', () => {
+    const missing: string[] = []
+    for (const f of files) {
+      for (const m of readFileSync(f, 'utf8').matchAll(/\bt\(\s*'([a-z]+\.[\w.]+)'/g)) if (!(m[1]! in catalog)) missing.push(`${m[1]} (${f.split('/src/')[1]})`)
+    }
+    expect(files.length).toBeGreaterThan(10)
+    expect(missing).toEqual([])
+  })
+  it('include the AI routing and panel HTTPS screens', () => {
+    for (const k of ['nav.ai', 'ai.title', 'ai.plain.detail', 'ai.sim', 'panel.title', 'panel.repair', 'dash.ai', 'exits.kind.chain']) expect(k in catalog).toBe(true)
+  })
+})
+
 describe('translate', () => {
   it('fills placeholders and keeps unknown ones visible', () => {
     expect(translate('en', 'common.selected', { n: 3 })).toBe('3 selected')

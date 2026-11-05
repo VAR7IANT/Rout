@@ -1,5 +1,7 @@
 export const shell = {
   'nav.dashboard': ['仪表盘', '儀表板', 'Dashboard'],
+  'nav.dashboardShort': ['概览', '概覽', 'Home'],
+  'nav.subscriptionsShort': ['订阅', '訂閱', 'Subs'],
   'nav.nodes': ['节点', '節點', 'Nodes'],
   'nav.relays': ['中转与出口', '中轉與出口', 'Relays & exits'],
   'nav.relaysShort': ['中转', '中轉', 'Relays'],

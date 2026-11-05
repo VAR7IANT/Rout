@@ -65,6 +65,10 @@ export interface RelayView extends NodeView {
   target_network?: string
   target_node?: string
   path: string[]
+  /** Names of the relay-chain exits that dial through this relay. */
+  chain_exits?: string[]
+  /** True when one of those chain exits is the AI exit. */
+  ai_chain?: boolean
 }
 
 export interface ProtocolInfo {
@@ -100,7 +104,7 @@ export interface RelayList {
 export interface ExitView {
   id: string
   name: string
-  kind: 'classic' | 'remote'
+  kind: 'classic' | 'remote' | 'chain'
   protocol: string
   label: string
   host: string
@@ -113,6 +117,13 @@ export interface ExitView {
   ai: boolean
   refs: number
   warning?: string
+  via_relay?: string
+  via_relay_name?: string
+  via_address?: string
+  /** Hop-by-hop route for display, e.g. ["Local inbound", "Relay CA-hop (TCP …)", "SOCKS5 …", "Internet"]. */
+  path?: string[]
+  ai_usable?: boolean
+  ai_problem?: string
 }
 
 export interface DiagStep {
@@ -451,4 +462,89 @@ export interface RestorePlan {
   subscriptions: DiffSet
   sources: DiffSet
   warnings: string[]
+}
+
+// ---- AI smart routing ------------------------------------------------------------------
+
+export interface AINode {
+  id: string
+  name: string
+  protocol: string
+  bound: boolean
+  eligible: boolean
+  /** Service state, already worded in the interface language by the server. */
+  running: string
+  in_sync: boolean
+  note?: string
+  /** The node's ordinary route: an exit name or "direct". */
+  exit: string
+}
+
+export interface AIService {
+  name: string
+  suffixes: string[]
+}
+
+export interface AIView {
+  enabled: boolean
+  rule_set: number
+  rule_set_available: number
+  exit_id?: string
+  exit?: ExitView
+  problems: string[]
+  nodes: AINode[]
+  exits: ExitView[]
+  relays: RelayView[]
+  services: AIService[]
+  limits: string[]
+}
+
+export type AIRoute = 'ai' | 'original' | 'blocked'
+export interface AISimulation {
+  host: string
+  nodes: { id: string; name: string; route: AIRoute }[]
+}
+
+export type ChainProtocol = 'socks5' | 'http' | 'https' | 'node'
+export interface ChainSpec {
+  name?: string
+  via_relay?: string
+  via_address?: string
+  protocol: ChainProtocol
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  link?: string
+}
+
+// ---- panel HTTPS -----------------------------------------------------------------------
+
+export type CheckLevel = 'ok' | 'warn' | 'fail' | 'info'
+
+export interface PanelHTTPSReport {
+  domain: string
+  ownership: 'none' | 'managed' | 'external' | 'modified' | string
+  pending: boolean
+  last_error?: string
+  network: { ipv4?: string; ipv6?: string; ipv4_nat: boolean; ipv6_nat: boolean; ipv6_only: boolean }
+  records?: string[]
+  verification: {
+    local_service: boolean
+    host_allowed: boolean
+    local_tls: boolean
+    public_https: boolean
+    login_page: boolean
+    certificate_error: boolean
+    expires?: string
+    issuer?: string
+  }
+  checks: { key: string; level: CheckLevel; text: string }[]
+  url?: string
+}
+
+export interface PanelRepairResult {
+  ok: boolean
+  pending: boolean
+  diagnosis: string
 }

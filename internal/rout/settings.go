@@ -11,8 +11,12 @@ import (
 )
 
 type Settings struct {
-	Language string       `json:"language,omitempty"`
-	Server   *ServerSetup `json:"server,omitempty"`
+	Language string `json:"language,omitempty"`
+	// LanguageVariant "zh-TW" selects Traditional Chinese on top of Language "zh-CN". It is a
+	// separate field so that an older version, which accepts only zh-CN/en, still reads the
+	// file (it ignores the unknown field and shows Simplified Chinese).
+	LanguageVariant string       `json:"language_variant,omitempty"`
+	Server          *ServerSetup `json:"server,omitempty"`
 	// Automatic pre-change backups to keep; 0 means the default (20).
 	BackupKeep int `json:"backup_keep,omitempty"`
 	// Last relay destination type chosen ("local"/"remote"), offered as the default.
@@ -84,7 +88,7 @@ func (a *App) LoadSettings() (Settings, error) {
 	if e = json.Unmarshal(b, &s); e != nil {
 		return s, errors.New("设置文件无效")
 	}
-	if s.Language != "" && s.Language != "zh-CN" && s.Language != "en" {
+	if s.Language != "" && s.Language != "zh-CN" && s.Language != "en" || s.LanguageVariant != "" && s.LanguageVariant != "zh-TW" {
 		return s, errors.New("语言设置无效")
 	}
 	if s.Server != nil {
@@ -105,8 +109,28 @@ func (a *App) LoadSettings() (Settings, error) {
 	}
 	return s, nil
 }
+
+// lang is the effective interface language.
+func (s Settings) lang() string {
+	if s.Language == "zh-CN" && s.LanguageVariant == "zh-TW" {
+		return "zh-TW"
+	}
+	return s.Language
+}
+
+// setLang stores an interface language in the backward-compatible form.
+func (s *Settings) setLang(lang string) {
+	s.Language, s.LanguageVariant = lang, ""
+	if lang == "zh-TW" {
+		s.Language, s.LanguageVariant = "zh-CN", "zh-TW"
+	}
+}
+
 func (a *App) SaveSettings(s Settings) error {
-	if s.Language != "en" && s.Language != "zh-CN" {
+	if s.Language == "zh-TW" {
+		s.setLang("zh-TW")
+	}
+	if s.Language != "en" && s.Language != "zh-CN" || s.LanguageVariant != "" && s.LanguageVariant != "zh-TW" {
 		return errors.New("语言设置无效")
 	}
 	if s.Server != nil {

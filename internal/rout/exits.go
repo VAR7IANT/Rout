@@ -21,6 +21,11 @@ type Exit struct {
 	// RemoteNetwork records which transports the remote server's port mapping accepts
 	// ("tcp", "udp", "both"); empty means unknown. A TCP-only NAT cannot reach a QUIC node.
 	RemoteNetwork string `json:"remote_network,omitempty"`
+	// ViaRelay / ViaAddress are set only for Kind "chain" (see exit_chain.go): the stable ID
+	// of a Rout relay on this server, or the host:port of a forwarder on another server,
+	// that carries the connection to Proxy.
+	ViaRelay   string `json:"via_relay,omitempty"`
+	ViaAddress string `json:"via_address,omitempty"`
 }
 
 const exitRemote = "remote"
@@ -142,6 +147,9 @@ func BindExit(s State, nodeID, exitID string) (State, error) {
 	}
 	if p.Kind != "node" {
 		return s, errors.New("中转节点不使用出站代理；如需出站代理，请在目标节点上设置")
+	}
+	if ex, er := FindExit(s, exitID); er == nil && ex.isChain() {
+		return s, errors.New("转发出口链路仅用于 AI 智能分流，不能作为节点的出站代理")
 	}
 	p.ExitID = exitID
 	p.Outbound = nil

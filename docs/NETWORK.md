@@ -102,3 +102,19 @@ A QUIC server that does not answer the probe (UDP filtered, obfuscation) is *inc
 | Real network | `ROUT_TEST_REALNET=1` | Each outbound policy dials a real dual-stack host over the intended family; a public QUIC server answers the probe; a full diagnosis of a relay to a public host | Your own VPS/NAT unless you run it there |
 
 IPv6 socket tests (`IPv6-only entry refuses IPv4`, `dual stack uses two sockets`, `IPv4 in → IPv6 out`) need an IPv6 stack and skip themselves without one; on hosts without IPv6 the same flows are covered with an injected bind probe, and the real-socket assertions run in CI where `::1` exists.
+
+## AI exits through relays (v0.5.1)
+
+A relay is a port forward, not an exit (see [AI_ROUTING.md](AI_ROUTING.md#ai-exits-through-a-relay-v051)). AI Smart Routing can dial its exit **through** a relay: the bound node's AI outbound connects to the relay's own listener on loopback (`127.0.0.1` for an IPv4 or `0.0.0.0` listener, `::1` for `::`), and the relay forwards to the real proxy with its own outbound policy. Typical uses:
+
+| Situation | Chain |
+| --- | --- |
+| The proxy is reachable from this host only over IPv6 (or only over IPv4) | loopback relay with `ipv6_only` (or `ipv4_only`) → proxy |
+| The proxy is behind a NAT or IPv6-only box that maps a port to it | *forwarder on another server* (`via_address`) → proxy |
+| A remote node should be reached through a specific path | relay → remote node link (SNI and host parameters are kept) |
+
+Only TCP crosses the chain; a Hysteria2/TUIC end needs a relay that forwards UDP and a target that is not TCP-only. Relays created for a chain by the AI menu listen on `127.0.0.1` only and are never published to clients.
+
+## Panel HTTPS on IPv6-only and NAT hosts (v0.5.1)
+
+The panel backend listens on `127.0.0.1:8790`; Caddy serves the public side on whatever families the host has. On an **IPv6-only** server only an AAAA record is needed and Let's Encrypt validates over IPv6 (HTTP-01 on TCP 80 / TLS-ALPN-01 on TCP 443); an A record pointing elsewhere makes validation fail and is reported. On a **NAT** host (the public address is not on an interface) issuance works only when the provider forwards public TCP 80 and 443 unchanged to this host; a NAT VPS with only high mapped ports cannot get a certificate by HTTP-01/TLS-ALPN-01 and should use the SSH tunnel. Rout detects this, explains it and asks for explicit confirmation; it never modifies the host firewall.

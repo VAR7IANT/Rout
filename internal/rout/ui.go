@@ -37,6 +37,8 @@ type UI struct {
 	// navigation hint was already printed in this session.
 	path      []string
 	hintShown bool
+	// webService replaces installing/controlling the rout-web service in tests.
+	webService func(action string) error
 }
 
 func (u *UI) writer() io.Writer {
@@ -149,16 +151,16 @@ func (u *UI) initLanguage(force bool) error {
 		return nil
 	}
 	if !force && s.Language != "" {
-		u.a.Language = s.Language
+		u.a.Language = s.lang()
 		return nil
 	}
-	fmt.Fprintln(u.writer(), "请选择语言 / Select language\n1. 简体中文\n2. English")
-	v := u.choose("Language", []string{"1", "2"}, "1")
+	fmt.Fprintln(u.writer(), "请选择语言 / Select language\n1. 简体中文\n2. English\n3. 繁體中文")
+	v := u.choose("Language", []string{"1", "2", "3"}, "1")
 	if u.err != nil {
 		return u.err
 	}
-	s.Language = map[string]string{"1": "zh-CN", "2": "en"}[v]
-	u.a.Language = s.Language
+	s.setLang(map[string]string{"1": "zh-CN", "2": "en", "3": "zh-TW"}[v])
+	u.a.Language = s.lang()
 	return u.a.SaveSettings(s)
 }
 
@@ -1523,9 +1525,9 @@ func (u *UI) menu0() []menuItem {
 	quick.group = "节点"
 	ai, relays, outbounds := item("ai", "AI 智能分流"), item("relays", "端口转发"), item("outbounds", "出站代理")
 	ai.group = "网络"
-	system, subs := item("system", "服务与系统"), item("subs", "订阅管理")
+	system, subs, web := item("system", "服务与系统"), item("subs", "订阅管理"), item("web", "Web 管理面板")
 	system.group = "服务"
-	return []menuItem{quick, nodes, ai, relays, outbounds, system, subs}
+	return []menuItem{quick, nodes, ai, relays, outbounds, system, subs, web}
 }
 
 // withBadges adds the live counts and states shown to the right of the entries.
@@ -1554,6 +1556,7 @@ func (u *UI) withBadges(items []menuItem, s State) []menuItem {
 		"relays":    count(relays),
 		"outbounds": count(len(s.Exits)),
 		"subs":      count(len(s.Subscriptions)),
+		"web":       u.webBadge(),
 	}
 	out := append([]menuItem(nil), items...)
 	for i := range out {
@@ -1611,6 +1614,8 @@ func (u *UI) mainMenu() error {
 			e = u.system()
 		case "subs":
 			e = u.subscriptions()
+		case "web":
+			e = u.webMenu()
 		}
 		if e != nil {
 			if errors.Is(e, io.EOF) || errors.Is(e, errQuit) {

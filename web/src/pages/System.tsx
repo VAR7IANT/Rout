@@ -10,6 +10,8 @@ import type { ActivityEntry, HTTPSView, NetworkView, PermissionCheck, RestorePla
 import { ConfirmDialog } from '../components/overlay'
 import { DataTable, type Column } from '../components/table'
 import { StateBadge } from '../components/shared'
+import { useRouter } from '../lib/router'
+import { PanelHTTPSCard } from './PanelHTTPS'
 import { Badge, Button, Card, EmptyState, Field, Input, KV, Meter, Notice, PageHead, Select, Spinner, Tabs, Textarea, Toggle } from '../components/ui'
 
 type Section = 'overview' | 'services' | 'network' | 'security' | 'backup'
@@ -17,7 +19,9 @@ const MAX_BACKUP = 24 * 1024 * 1024
 
 export function SystemPage() {
   const { t } = useI18n()
-  const [tab, setTab] = useState<Section>('overview')
+  const { query } = useRouter()
+  const initial = query.get('tab')
+  const [tab, setTab] = useState<Section>(initial === 'services' || initial === 'network' || initial === 'security' || initial === 'backup' ? initial : 'overview')
   const res = useResource<SystemView>('/api/system', { interval: 20000 })
   const [logUnit, setLogUnit] = useState<string>('')
 
@@ -399,9 +403,7 @@ function NetworkTab({ sys }: { sys: SystemView }) {
         {net.data?.public_ips.checked_at ? <p className="muted small">{t('sys.net.checkedAt', { v: formatRelative(net.data.public_ips.checked_at, now, t) })}</p> : null}
       </Card>
 
-      <Card title={t('sys.https.panel')}>
-        {sys.web.secure_request ? <Notice tone="ok">{t('sys.https.panelSecure')}</Notice> : <Notice tone="warn">{t('sys.https.panelPlain')}</Notice>}
-      </Card>
+      <PanelHTTPSCard secure={sys.web.secure_request} />
 
       <Card
         title={t('sys.https.title')}

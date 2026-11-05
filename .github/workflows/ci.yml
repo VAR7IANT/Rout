@@ -40,13 +40,15 @@ jobs:
           fi
           grep -q "VERSION=\${ROUT_VERSION:-v$version}" install.sh || { echo 'install.sh default version does not match' >&2; exit 1; }
           grep -qx "## v$version" CHANGELOG.md || { echo 'CHANGELOG version missing' >&2; exit 1; }
+      - name: Release order guard (install.sh must not point at an unpublished release on main)
+        run: sh scripts/check-install-release.sh
       - name: Unit tests and static checks
         run: |
           go vet ./...
           go test ./...
           go test -race ./...
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_release_assets.py' -v
-          sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh scripts/measure-engine-memory.sh scripts/test-nft-container.sh scripts/test-subscription-https.sh scripts/test-mihomo.sh
+          sh -n install.sh scripts/release.sh scripts/test-native-hy2.sh scripts/measure-engine-memory.sh scripts/test-nft-container.sh scripts/test-subscription-https.sh scripts/test-mihomo.sh scripts/check-install-release.sh scripts/test-install.sh
           test -z "$(gofmt -l cmd internal)"
       - name: Vulnerability check (Go standard library and modules)
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -141,6 +143,15 @@ jobs:
           docker rm -f alpine-openrc
       - name: Build both Linux architectures
         run: sh scripts/release.sh
+      - name: install.sh on the built artifacts (names, SHA256, version, atomic replace, missing release fails closed)
+        run: sh scripts/test-install.sh dist
+      - name: Installer against the latest published release
+        run: |
+          tag=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" | jq -r .tag_name)
+          case "$tag" in v[0-9]*) ;; *) echo "cannot determine the latest release: $tag" >&2; exit 1 ;; esac
+          sudo env ROUT_VERSION="$tag" ROUT_INSTALL_DIR="$RUNNER_TEMP/published-install" sh install.sh
+          # install.sh ran as root with umask 077: the directory is private to root by design.
+          test "$(sudo "$RUNNER_TEMP/published-install/rout" version)" = "rout ${tag#v}"
       - name: Verify updater artifact contract and source provenance
         env:
           ROUT_VERSION: ${{ steps.version.outputs.version }}

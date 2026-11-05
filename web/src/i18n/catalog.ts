@@ -8,8 +8,10 @@ import { relays } from './messages/relays'
 import { subs } from './messages/subs'
 import { sources } from './messages/sources'
 import { system } from './messages/system'
+import { ai } from './messages/ai'
+import { panel } from './messages/panel'
 
 export type Entry = readonly [string, string, string]
 
-export const catalog = { ...common, ...shell, ...dashboard, ...nodes, ...relays, ...subs, ...sources, ...system } as const
+export const catalog = { ...common, ...shell, ...dashboard, ...nodes, ...relays, ...subs, ...sources, ...system, ...ai, ...panel } as const
 export type MessageKey = keyof typeof catalog
