@@ -4,12 +4,13 @@ import { api } from '../lib/api'
 import { useDebounced, useResource } from '../lib/hooks'
 import { formatDateTime } from '../lib/format'
 import { Cancelled, useReauth, useRunner } from '../lib/session'
-import type { ExitRef, HostInfo, NodeList, NodeView, ProtocolInfo } from '../lib/types'
+import type { ExitRef, HostInfo, NodeList, NodeView, PolicyChoice, ProtocolInfo } from '../lib/types'
 import { DataTable, type Column } from '../components/table'
 import { ConfirmDialog, Drawer, Menu, Modal } from '../components/overlay'
 import { DiagPanel, SecretBox, StateBadge, TrafficCell, WarningBadges } from '../components/shared'
 import { Badge, Button, Card, EmptyState, Field, Input, KV, PageHead, SearchInput, Segmented, Select, Spinner } from '../components/ui'
 import { Icon } from '../components/icons'
+import { EgressSection, PolicyPicker, policyLabel, policyNeedsConfirm } from './NodeEgress'
 
 type StateFilter = 'all' | 'running' | 'stopped' | 'disabled' | 'warn'
 
@@ -85,7 +86,22 @@ export function NodesPage() {
         </span>
       ),
     },
-    { key: 'exit', header: t('nodes.col.exit'), label: t('nodes.col.exit'), cell: (n) => n.exit_name ?? <span className="muted">{t('nodes.direct')}</span> },
+    {
+      key: 'exit',
+      header: t('nodes.col.exit'),
+      label: t('nodes.col.exit'),
+      cell: (n) => (
+        <span>
+          {n.exit_name ?? <span className="muted">{t('nodes.direct')}</span>}
+          {n.outbound_policy && n.outbound_policy !== 'auto' ? (
+            <>
+              {' '}
+              <Badge tone="accent">{policyLabel(t, n.outbound_policy)}</Badge>
+            </>
+          ) : null}
+        </span>
+      ),
+    },
     { key: 'traffic', header: t('nodes.col.traffic'), label: t('nodes.col.traffic'), cell: (n) => <TrafficCell traffic={n.traffic} /> },
     {
       key: 'actions',
@@ -215,6 +231,7 @@ export function NodesPage() {
           protocols={list.protocols}
           exits={list.exits}
           host={list.host}
+          policies={list.outbound_policies}
           onClose={() => setCreating(false)}
           onCreated={async (n) => {
             setCreating(false)
@@ -228,6 +245,10 @@ export function NodesPage() {
         <NodeDetail
           node={detailNode}
           locale={locale}
+          policies={list.outbound_policies}
+          onChanged={async () => {
+            await res.reload()
+          }}
           onClose={() => setDetail(null)}
           onRename={() => setRename(detailNode)}
           onDelete={() => setDel([detailNode])}
@@ -374,7 +395,7 @@ function BindExit({ count, exits, onClose, onBind }: { count: number; exits: Exi
   )
 }
 
-function CreateNodes({ protocols, exits, host, onClose, onCreated }: { protocols: ProtocolInfo[]; exits: ExitRef[]; host: HostInfo; onClose: () => void; onCreated: (n: number) => Promise<void> }) {
+function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: { protocols: ProtocolInfo[]; exits: ExitRef[]; host: HostInfo; policies: PolicyChoice[]; onClose: () => void; onCreated: (n: number) => Promise<void> }) {
   const { t } = useI18n()
   const run = useRunner()
   const [base, setBase] = useState('')
@@ -383,6 +404,8 @@ function CreateNodes({ protocols, exits, host, onClose, onCreated }: { protocols
   const [sni, setSni] = useState('')
   const [exit, setExit] = useState('')
   const [port, setPort] = useState('')
+  const [outbound, setOutbound] = useState('auto')
+  const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -398,7 +421,7 @@ function CreateNodes({ protocols, exits, host, onClose, onCreated }: { protocols
     }
     setError(null)
     setBusy(true)
-    const r = await run(() => api.post<{ nodes: NodeView[] }>('/api/nodes', { base_name: base.trim(), protocols: picked, inbound, reality_sni: usesReality ? sni.trim() : '', exit_id: exit, port: picked.length === 1 ? portNum : 0 }))
+    const r = await run(() => api.post<{ nodes: NodeView[] }>('/api/nodes', { base_name: base.trim(), protocols: picked, inbound, reality_sni: usesReality ? sni.trim() : '', exit_id: exit, port: picked.length === 1 ? portNum : 0, outbound_policy: outbound === 'auto' ? '' : outbound, force: confirmed }))
     setBusy(false)
     if (r) await onCreated(r.nodes.length)
   }
@@ -414,7 +437,7 @@ function CreateNodes({ protocols, exits, host, onClose, onCreated }: { protocols
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </Button>
-          <Button variant="primary" onClick={() => void submit()} busy={busy} disabled={picked.length === 0 || portBad}>
+          <Button variant="primary" onClick={() => void submit()} busy={busy} disabled={picked.length === 0 || portBad || policyNeedsConfirm(policies, outbound, confirmed)}>
             {t('common.create')}
           </Button>
         </>
@@ -484,6 +507,10 @@ function CreateNodes({ protocols, exits, host, onClose, onCreated }: { protocols
             </Field>
           ) : null}
         </div>
+
+        <Field label={t('egress.title')} hint={t('egress.hint')}>
+          {(id, d) => <PolicyPicker id={id} describedBy={d} value={outbound} onChange={setOutbound} choices={policies} confirmed={confirmed} onConfirm={setConfirmed} />}
+        </Field>
       </div>
     </Modal>
   )
@@ -491,7 +518,7 @@ function CreateNodes({ protocols, exits, host, onClose, onCreated }: { protocols
 
 // ---- detail ----------------------------------------------------------------------------
 
-function NodeDetail({ node, locale, onClose, onRename, onDelete, onToggle, onRestart }: { node: NodeView; locale: string; onClose: () => void; onRename: () => void; onDelete: () => void; onToggle: () => void; onRestart: () => void }) {
+function NodeDetail({ node, locale, policies, onChanged, onClose, onRename, onDelete, onToggle, onRestart }: { node: NodeView; locale: string; policies: PolicyChoice[]; onChanged: () => Promise<void>; onClose: () => void; onRename: () => void; onDelete: () => void; onToggle: () => void; onRestart: () => void }) {
   const { t } = useI18n()
   const tr = node.traffic
   return (
@@ -558,6 +585,13 @@ function NodeDetail({ node, locale, onClose, onRename, onDelete, onToggle, onRes
           ) : (
             <p className="muted">{t('nodes.detail.noLink')}</p>
           )}
+        </section>
+
+        <section>
+          <h3 className="section-title">
+            <Icon name="link" size={16} /> {t('egress.title')}
+          </h3>
+          <EgressSection key={`${node.id}:${node.outbound_policy ?? 'auto'}`} node={node} choices={policies} onChanged={onChanged} />
         </section>
 
         <section>
