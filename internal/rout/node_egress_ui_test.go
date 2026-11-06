@@ -3,6 +3,7 @@ package rout
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -540,5 +541,126 @@ func TestDiagnosisNamesThePolicyOfANode(t *testing.T) {
 				t.Errorf("a blocked family must not fail the diagnosis:\n%s", text)
 			}
 		})
+	}
+}
+
+// ---- a temporary client that does not live as long as the measurement ----------------------------------
+
+func TestProxyListening(t *testing.T) {
+	l, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	proxy := "http://" + l.Addr().String()
+	if !proxyListening(proxy) {
+		t.Fatal("a listening client must be reported alive")
+	}
+	l.Close()
+	if proxyListening(proxy) {
+		t.Fatal("a closed client must be reported gone")
+	}
+	if proxyListening("::not a url::") {
+		t.Fatal("garbage must not be alive")
+	}
+}
+
+// After the temporary client is gone every request fails with "connection refused". That must not
+// be read as the node refusing a family: the measurement is aborted instead.
+func TestMeasurementIsAbortedWhenTheClientDiesAndNotTakenAsEvidence(t *testing.T) {
+	ok := func(string, string) (string, error) { return "203.0.113.10", nil }
+	refused := func(string, string) (string, error) { return "", errors.New("connection refused") }
+	for _, c := range []struct {
+		name    string
+		name4   func(string, string) (string, error)
+		name6   func(string, string) (string, error)
+		alive   bool
+		aborted bool
+		err6    bool
+	}{
+		{"the node really refuses IPv6 and the client is alive", ok, refused, true, false, true},
+		{"the client died: the IPv6 failure is not evidence", ok, refused, false, true, false},
+		{"a success never needs the liveness check", ok, ok, false, false, false},
+		{"the client died before IPv4", refused, ok, false, true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := probeFetchers{
+				name: func(proxy, network string) (string, error) {
+					if network == "tcp4" {
+						return c.name4(proxy, network)
+					}
+					return c.name6(proxy, network)
+				},
+				literal: func(string, string, literalTarget) error { return nil },
+				alive:   func(string) bool { return c.alive },
+			}
+			got := measureThroughProxy("http://127.0.0.1:1", false, litTargets, f)
+			if got.Aborted != c.aborted {
+				t.Fatalf("aborted=%v, want %v: %+v", got.Aborted, c.aborted, got)
+			}
+			if !c.aborted && (got.ErrV6 != nil) != c.err6 {
+				t.Fatalf("ErrV6=%v", got.ErrV6)
+			}
+		})
+	}
+	// a literal request that fails after the client died aborts as well
+	f := probeFetchers{
+		name:    func(string, string) (string, error) { return "203.0.113.10", nil },
+		literal: func(string, string, literalTarget) error { return errBlocked },
+		alive:   func(string) bool { return false },
+	}
+	if !measureThroughProxy("http://127.0.0.1:1", false, litTargets, f).Aborted {
+		t.Fatal("a literal failure after the client died must abort")
+	}
+}
+
+// The same with the real requests: a local "client" that answers the first family and then goes away.
+func TestMeasurementAbortsWhenARealListenerDisappearsMidRun(t *testing.T) {
+	l, e := net.Listen("tcp4", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	proxy := "http://" + l.Addr().String()
+	f := probeFetchers{
+		name: func(p, network string) (string, error) {
+			if network == "tcp4" {
+				l.Close() // the client's lifetime ends after the first family
+				return "203.0.113.10", nil
+			}
+			return fetchIP(p, "http://origin.invalid/") // really refused now
+		},
+		literal: func(string, string, literalTarget) error { return nil },
+		alive:   proxyListening,
+	}
+	if !measureThroughProxy(proxy, true, nil, f).Aborted {
+		t.Fatal("a vanished client must abort the measurement")
+	}
+}
+
+// IPv4 only, where IPv6 "fails" only because the client died: this used to read as a successful
+// exclusion even if the node leaks IPv6. It must be inconclusive, never a pass.
+func TestAnAbortedMeasurementIsNeverAPass(t *testing.T) {
+	a := testApp(t)
+	n := egressNode(t, a, outIPv4Only, nil)
+	f := egressFake{routes: dualRoutes(), hostV4: "203.0.113.10", hostV6: "2001:db8::10", lit: litTargets,
+		probe: egressProbe{V4: "203.0.113.10", ErrV6: errBlocked, Lit4: allowed(), Aborted: true}}
+	rep, e := a.nodeEgressTest(n.ID, false, f.env())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if rep.Result != egressInconclusive {
+		t.Fatalf("result %q: %+v", rep.Result, rep.Checks)
+	}
+	if c, ok := checkOf(rep, "aborted"); !ok || c.Status != egressInconclusive {
+		t.Fatalf("no aborted check: %+v", rep.Checks)
+	}
+	for _, c := range rep.Checks {
+		if c.Status == egressPass {
+			t.Fatalf("a pass in an aborted measurement: %+v", c)
+		}
+	}
+	// the quick view reports it as well instead of listing half-measured addresses as fact
+	quick, _ := a.nodeEgressTest(n.ID, true, f.env())
+	if quick.Result != egressInconclusive {
+		t.Fatalf("quick aborted result %q", quick.Result)
 	}
 }

@@ -147,8 +147,13 @@ describe('EgressReportView', () => {
     renderApp(<EgressReportView report={{ ...base, result: 'fail', checks: [{ key: 'denied_name', status: 'fail', text: 'The policy is not in effect' }] }} />)
     expect(screen.getByText('Result: failed')).toBeInTheDocument()
   })
+  it('a quick look that could not finish says so instead of showing the quick message', () => {
+    renderApp(<EgressReportView report={{ ...base, quick: true, result: 'inconclusive', checks: [{ key: 'aborted', status: 'inconclusive', text: 'The test client stopped early' }] }} />)
+    expect(screen.getByText(/could not be fully verified/)).toBeInTheDocument()
+    expect(screen.queryByText(/Showing the addresses seen through the node/)).toBeNull()
+  })
   it('the quick view only lists addresses', () => {
-    renderApp(<EgressReportView report={{ ...base, quick: true, checks: [{ key: 'node_v6', status: 'info', text: 'IPv6 exit 2001:db8::1' }] }} />)
+    renderApp(<EgressReportView report={{ ...base, quick: true, result: '', checks: [{ key: 'node_v6', status: 'info', text: 'IPv6 exit 2001:db8::1' }] }} />)
     expect(screen.getByText(/Showing the addresses seen through the node/)).toBeInTheDocument()
   })
 })

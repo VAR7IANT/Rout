@@ -89,6 +89,10 @@ type egressProbe struct {
 	Lit4, Lit6   literalProbe
 	ClientErr    error
 	LogHint      string
+	// Aborted is set when the temporary client stopped before every request was made (its
+	// lifetime is bounded). A request that failed because the client was gone says nothing about
+	// the node, so such a measurement is never used as evidence of anything.
+	Aborted bool
 }
 
 type literalProbe struct {
@@ -209,28 +213,76 @@ func probeThroughNode(a *App, p Profile, host string, port int, quick bool, lit 
 		return out
 	}
 	out.ClientErr = a.withClientLog(conf, local, func(proxy string, logs func() string) error {
-		for _, f := range []struct {
-			network string
-			ip      *string
-			err     *error
-			literal *literalProbe
-		}{{"tcp4", &out.V4, &out.ErrV4, &out.Lit4}, {"tcp6", &out.V6, &out.ErrV6, &out.Lit6}} {
-			var ip string
-			var er error
-			for _, endpoint := range ipEndpoints[f.network] {
-				if ip, er = fetchIP(proxy, endpoint); er == nil {
-					break
-				}
-			}
-			*f.ip, *f.err = ip, er
-			if t, ok := lit[f.network]; ok && !quick {
-				_, le := fetchLiteral(proxy, f.network, t)
-				*f.literal = literalProbe{Tried: true, Err: le}
-			}
-		}
+		out = measureThroughProxy(proxy, quick, lit, probeFetchers{
+			name:    func(proxy, network string) (string, error) { return fetchEcho(proxy, network) },
+			literal: func(proxy, network string, t literalTarget) error { _, e := fetchLiteral(proxy, network, t); return e },
+			alive:   func(proxy string) bool { return proxyListening(proxy) },
+		})
 		out.LogHint = classifyClientLog(logs())
 		return nil
 	})
+	return out
+}
+
+// probeFetchers are the requests of a measurement, replaceable in tests.
+type probeFetchers struct {
+	name    func(proxy, network string) (string, error)
+	literal func(proxy, network string, t literalTarget) error
+	// alive says whether the temporary client still accepts connections.
+	alive func(proxy string) bool
+}
+
+func fetchEcho(proxy, network string) (ip string, err error) {
+	for _, endpoint := range ipEndpoints[network] {
+		if ip, err = fetchIP(proxy, endpoint); err == nil {
+			return ip, nil
+		}
+	}
+	return ip, err
+}
+
+// proxyListening reports whether the local client still accepts connections.
+func proxyListening(proxy string) bool {
+	u, e := url.Parse(proxy)
+	if e != nil {
+		return false
+	}
+	c, e := net.DialTimeout("tcp", u.Host, time.Second)
+	if e != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+// measureThroughProxy makes the requests, one family after the other. The temporary client lives
+// for a bounded time (withClientLog), and the requests together can outlast it: after it is gone
+// every request fails with "connection refused", which must not be mistaken for the node refusing
+// the family. A success proves the path, so it needs no check; a FAILURE counts as a measurement
+// only if the client is verified alive after it. Otherwise the measurement is aborted.
+func measureThroughProxy(proxy string, quick bool, lit map[string]literalTarget, f probeFetchers) egressProbe {
+	var out egressProbe
+	for _, fam := range []struct {
+		network string
+		ip      *string
+		err     *error
+		literal *literalProbe
+	}{{"tcp4", &out.V4, &out.ErrV4, &out.Lit4}, {"tcp6", &out.V6, &out.ErrV6, &out.Lit6}} {
+		ip, er := f.name(proxy, fam.network)
+		if er != nil && !f.alive(proxy) {
+			out.Aborted = true
+			return out
+		}
+		*fam.ip, *fam.err = ip, er
+		if t, ok := lit[fam.network]; ok && !quick {
+			le := f.literal(proxy, fam.network, t)
+			if le != nil && !f.alive(proxy) {
+				out.Aborted = true
+				return out
+			}
+			*fam.literal = literalProbe{Tried: true, Err: le}
+		}
+	}
 	return out
 }
 
@@ -296,8 +348,9 @@ func (a *App) nodeEgressTest(id string, quick bool, env egressEnv) (EgressReport
 		}
 	}
 	rep.Checks = a.egressChecks(p, rep, probe, hostLit)
-	if !quick {
-		// A quick look only lists addresses; it proves nothing, so it carries no verdict.
+	if !quick || probe.Aborted {
+		// A quick look only lists addresses; it proves nothing, so it carries no verdict (unless
+		// it could not even finish, which is worth saying).
 		rep.Result = overallEgress(rep.Checks)
 	}
 	return rep, nil
@@ -351,6 +404,12 @@ func (a *App) egressChecks(p Profile, rep EgressReport, probe egressProbe, hostL
 	n4, n6 := rep.Node.V4, rep.Node.V6
 	if probe.ClientErr != nil {
 		add("client", egressFail, "无法经由节点发起检测请求：%s", a.Error(probe.ClientErr))
+		return out
+	}
+	if probe.Aborted {
+		// What was measured before the client stopped is not enough to say anything, and what
+		// failed after it stopped says nothing about the node.
+		add("aborted", egressInconclusive, "检测客户端在测量完成前已停止（检测站点响应过慢）；未完成的测量不能作为证据，结果不可靠，请稍后重试")
 		return out
 	}
 	// what the node actually achieved, per family

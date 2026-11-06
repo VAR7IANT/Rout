@@ -188,7 +188,7 @@ func (u *UI) printEgressReport(rep EgressReport) {
 	}
 	fmt.Fprintln(w)
 	switch {
-	case rep.Quick:
+	case rep.Quick && rep.Result == "":
 		u.say("已列出经节点的实际出口地址；要验证策略请使用『测试 IPv6 出站』")
 	case rep.Result == egressPass:
 		u.good("结果：通过")

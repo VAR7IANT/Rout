@@ -1837,5 +1837,6 @@
  "结果：通过":"Result: passed",
  "结果：未通过":"Result: failed",
  "结果：无法完全验证（见上面标有 ! 的项目）；不要据此认为策略已生效":"Result: could not be fully verified (see the items marked ! above); do not treat the policy as proven",
- "出站网络策略（节点访问互联网时使用的 IP 类型）":"Outbound IP family (what the node uses to reach the Internet)"
+ "出站网络策略（节点访问互联网时使用的 IP 类型）":"Outbound IP family (what the node uses to reach the Internet)",
+ "检测客户端在测量完成前已停止（检测站点响应过慢）；未完成的测量不能作为证据，结果不可靠，请稍后重试":"The test client stopped before the measurement finished (the test sites were too slow). An unfinished measurement is not evidence, so the result is unreliable; try again later"
 }

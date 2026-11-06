@@ -149,8 +149,10 @@ const mark = { pass: 'check', fail: 'close', inconclusive: 'warn', info: 'pulse'
 export function EgressReportView({ report }: { report: EgressReport }) {
   const { t } = useI18n()
   const yn = (b: boolean) => (b ? t('egress.have') : t('egress.none'))
-  const tone = report.quick ? 'neutral' : report.result === 'pass' ? 'ok' : report.result === 'fail' ? 'error' : 'warn'
-  const title = report.quick ? t('egress.result.quick') : t(`egress.result.${report.result}` as 'egress.result.pass')
+  // a quick look carries no verdict, unless it could not even finish
+  const quickView = report.quick && !report.result
+  const tone = quickView ? 'neutral' : report.result === 'pass' ? 'ok' : report.result === 'fail' ? 'error' : 'warn'
+  const title = quickView ? t('egress.result.quick') : t(`egress.result.${report.result || 'inconclusive'}` as 'egress.result.pass')
   return (
     <div className="diag" aria-live="polite">
       <Notice tone={tone} title={title} />
