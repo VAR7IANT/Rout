@@ -1,5 +1,9 @@
 # Upgrading and rollback safety
 
+## To v0.5.2: node outbound IP family
+
+Nothing to migrate. Existing nodes read as **Auto** and keep their configuration byte for byte (`state.json` gets no new key for them); the policy is stored per node in the existing `outbound_policy` field once you choose one. Backups and restores carry it. **Downgrading:** v0.5.1 loads such a state but does not apply the field to nodes, so they would leave without the restriction; see [NODE_EGRESS.md](NODE_EGRESS.md#6-persistence-and-upgrades).
+
 ## To v0.5.1: one-click panel HTTPS, zh-TW CLI and AI exits through relays
 
 Back up first: `sudo rout backup --full`. Then `sudo rout update`. Nothing restarts and nothing is migrated: nodes, relays, exits, AI routing, subscriptions, tokens, `/s/TOKEN` URLs, the subscription HTTPS site and the panel keep working unchanged. The main menu gains entry **8** (the numbers 1–7 are unchanged). Existing AI routing keeps its exit and bindings; new exit kinds appear only when you create them.

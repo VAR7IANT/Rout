@@ -105,6 +105,15 @@ func serverConfig(p Profile, dir string) (M, error) {
 		out = proxyConfig(*p.Outbound)
 		rules = append(rules, M{"network": "udp", "action": "reject"})
 	}
+	// The node's outbound IP family (node_egress.go): dial options on the egress outbound, the
+	// resolver they refer to, and for an "only" policy the rule that also covers destinations
+	// that are IP addresses. Auto adds nothing, so legacy nodes render exactly as before.
+	for k, v := range p.egressDial() {
+		out[k] = v
+	}
+	if r := p.egressFamilyRule(); r != nil {
+		rules = append(rules, r)
+	}
 	rules = append(rules, M{"inbound": []string{"entry"}, "action": "route", "outbound": "egress"})
 	outbounds := []any{out}
 	if p.AIRoute != nil {
@@ -122,7 +131,11 @@ func serverConfig(p Profile, dir string) (M, error) {
 		// ahead of every other rule.
 		rules = append([]any{M{"inbound": []string{"entry"}, "source_ip_cidr": []string{"0.0.0.0/0"}, "action": "reject"}}, rules...)
 	}
-	return M{"log": M{"level": "warn", "timestamp": true}, "inbounds": []any{in}, "outbounds": outbounds, "route": M{"rules": rules, "final": "egress"}}, nil
+	cfg := M{"log": M{"level": "warn", "timestamp": true}, "inbounds": []any{in}, "outbounds": outbounds, "route": M{"rules": rules, "final": "egress"}}
+	if dns := p.egressDNS(); dns != nil {
+		cfg["dns"] = dns
+	}
+	return cfg, nil
 }
 
 // ClientConfig exports a complete, portable sing-box configuration without server secrets.

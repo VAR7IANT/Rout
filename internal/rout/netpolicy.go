@@ -199,6 +199,9 @@ func (p Profile) validateNetPolicy() error {
 	if p.OutboundPolicy != "" && !validOutboundPolicy(p.OutboundPolicy) {
 		return errors.New("出站网络策略无效")
 	}
+	if e := p.checkNodeEgress(); e != nil {
+		return e
+	}
 	if p.Engine != "" && p.Engine != engineNative {
 		return errors.New("中转引擎无效")
 	}

@@ -53,6 +53,53 @@ export interface NodeView {
   subscriptions: string[]
   warnings: string[]
   has_link: boolean
+  /** Effective outbound IP family of a node: auto, ipv4_first, ipv6_first, ipv4_only or ipv6_only. */
+  outbound_policy?: string
+  /** What the policy governs: the node's own connections ("direct") or only its connection to an outbound proxy server ("proxy"). */
+  outbound_scope?: 'direct' | 'proxy'
+  /** True only when Rout can guarantee the IP family that leaves for the Internet. */
+  outbound_enforced?: boolean
+  outbound_note?: string
+}
+
+export type OutboundPolicy = 'auto' | 'ipv4_first' | 'ipv6_first' | 'ipv4_only' | 'ipv6_only'
+
+export interface PolicyChoice {
+  policy: OutboundPolicy
+  available: boolean
+  missing?: 'IPv4' | 'IPv6'
+}
+
+export interface EgressCheck {
+  key: string
+  status: 'pass' | 'fail' | 'inconclusive' | 'info'
+  text: string
+}
+
+export interface EgressHostFamily {
+  route: boolean
+  dns: boolean
+  ip?: string
+}
+
+export interface EgressNodeFamily {
+  ip?: string
+  error?: string
+  literal_tried: boolean
+  literal_ok: boolean
+}
+
+export interface EgressReport {
+  policy: string
+  policy_label: string
+  scope: 'direct' | 'proxy'
+  enforced: boolean
+  note?: string
+  quick: boolean
+  host: { v4: EgressHostFamily; v6: EgressHostFamily }
+  node: { v4: EgressNodeFamily; v6: EgressNodeFamily; error?: string }
+  checks: EgressCheck[]
+  result: 'pass' | 'fail' | 'inconclusive' | ''
 }
 
 export interface RelayView extends NodeView {
@@ -92,6 +139,7 @@ export interface NodeList {
   exits: ExitRef[]
   host: HostInfo
   monitoring: boolean
+  outbound_policies: PolicyChoice[]
 }
 
 export interface RelayList {

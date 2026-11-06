@@ -53,6 +53,14 @@ func (a *App) diagnoseNode(ctx context.Context, p Profile, env diagEnv, opts dia
 		return rep
 	}
 	d.layerExit(res)
+	if pol := p.outboundPolicy(); p.Kind == "node" && pol != outAuto {
+		// An unavailable family is expected when the policy forbids it; say so, and say what the
+		// policy can and cannot promise for this node's exit.
+		d.add(6, diagInfo, "出站网络策略：%s", a.T(outboundLabel(pol)))
+		if note := p.egressScopeNote(); note != "" {
+			d.add(6, diagInfo, note)
+		}
+	}
 	return rep
 }
 

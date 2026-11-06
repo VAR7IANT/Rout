@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.5.1"
+const Version = "0.5.2"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -86,6 +86,8 @@ type Profile struct {
 	// "ipv4_only", "ipv6_only", "auto") are the explicit address-family settings, see
 	// netpolicy.go. Both are empty on profiles written by earlier versions, which keep
 	// their previous behavior. Engine "native" selects Rout's own forwarder for a relay.
+	// On a NODE OutboundPolicy is the IP family of its outbound connections (node_egress.go);
+	// empty is "auto" and renders the configuration earlier versions wrote.
 	InboundMode    string `json:"inbound_mode,omitempty"`
 	OutboundPolicy string `json:"outbound_policy,omitempty"`
 	Engine         string `json:"engine,omitempty"`
