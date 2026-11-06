@@ -36,8 +36,9 @@ type tgCommand struct {
 	// set_credentials: the new token and chat, pushed only to approved servers.
 	Token  string `json:"token,omitempty"`
 	ChatID int64  `json:"chat_id,omitempty"`
-	// Expires is a unix time; an agent that reconnects late ignores a stale command.
-	Expires int64 `json:"exp"`
+	// TTL is how many seconds the command stays valid after the agent receives it. It is relative
+	// on purpose: an absolute time would make every command fail on a server whose clock is off.
+	TTL int `json:"ttl"`
 }
 
 func (c tgCommand) String() string { return c.Kind + "#" + tgShort(c.ID) } // never prints the token
@@ -90,6 +91,9 @@ type tgResult struct {
 	Steps  []tgStep        `json:"steps,omitempty"`
 }
 
+// tgRedacted replaces anything removed from text that crosses the wire or reaches a chat.
+const tgRedacted = "[redacted]"
+
 var (
 	// Anything that looks like key material or a URL is removed from text that crosses the wire
 	// or reaches a chat: diagnostics are written for a local operator, not for a message history.
@@ -97,7 +101,7 @@ var (
 	tgURLLike    = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S+`)
 	tgIPv4       = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b`)
 	tgIPv6       = regexp.MustCompile(`\[[0-9A-Fa-f:.]{3,}\](?::\d{1,5})?`)
-	tgUserInfo   = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|key|uuid|密码|密钥)\s*[=:：]\s*\S+`)
+	tgUserInfo   = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|key|uuid|\x{5BC6}\x{7801}|\x{5BC6}\x{94A5})\s*[=:\x{FF1A}]\s*\S+`)
 )
 
 // tgScrub makes text safe to send: control characters out, URLs/credentials/long key-like runs
@@ -105,14 +109,14 @@ var (
 func tgScrub(s string, max int, extra ...string) string {
 	for _, x := range extra {
 		if len(x) >= 6 {
-			s = strings.ReplaceAll(s, x, "<隐藏>")
+			s = strings.ReplaceAll(s, x, tgRedacted)
 		}
 	}
-	s = tgURLLike.ReplaceAllString(s, "<地址已隐藏>")
-	s = tgIPv4.ReplaceAllString(s, "<地址>")
-	s = tgIPv6.ReplaceAllString(s, "<地址>")
-	s = tgUserInfo.ReplaceAllString(s, "$1=<隐藏>")
-	s = tgSecretLike.ReplaceAllString(s, "<隐藏>")
+	s = tgURLLike.ReplaceAllString(s, tgRedacted)
+	s = tgIPv4.ReplaceAllString(s, tgRedacted)
+	s = tgIPv6.ReplaceAllString(s, tgRedacted)
+	s = tgUserInfo.ReplaceAllString(s, "$1="+tgRedacted)
+	s = tgSecretLike.ReplaceAllString(s, tgRedacted)
 	s = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || r == utf8.RuneError {
 			return ' '
@@ -245,7 +249,7 @@ func (a *App) tgExecute(ctx context.Context, cfg TelegramConfig, c tgCommand) (r
 }
 
 // tgCommandValid is the single structural check applied to a command before it executes.
-func tgCommandValid(c tgCommand, now time.Time) error {
+func tgCommandValid(c tgCommand) error {
 	if len(c.ID) < 8 || len(c.ID) > 64 {
 		return errors.New("命令 ID 无效")
 	}
@@ -254,10 +258,7 @@ func tgCommandValid(c tgCommand, now time.Time) error {
 	default:
 		return fmt.Errorf("不支持的命令")
 	}
-	if c.Expires == 0 || now.Unix() > c.Expires {
-		return errors.New("命令已过期")
-	}
-	if c.Expires-now.Unix() > 3600 {
+	if c.TTL < 1 || c.TTL > 3600 {
 		return errors.New("命令有效期无效")
 	}
 	if c.Kind == tgCmdCredentials && (!validTelegramToken(c.Token) || c.ChatID <= 0) {

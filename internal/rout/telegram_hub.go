@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -78,7 +79,7 @@ func (h *tgHub) listen(cfg TelegramConfig) error {
 	}
 	ln, e := net.Listen("tcp", addr)
 	if e != nil {
-		return errors.New("无法监听控制中心端口：" + e.Error())
+		return fmt.Errorf("无法监听控制中心端口：%s", e.Error())
 	}
 	tc := &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
 	_, agentWait, _ := h.app.tgDurations()
@@ -475,7 +476,7 @@ func (h *tgHub) syncCredentialsLocked(cfg TelegramConfig, p *tgPeer) {
 			return
 		}
 	}
-	c := tgCommand{ID: randomID(8), Kind: tgCmdCredentials, Token: cfg.Token, ChatID: cfg.ChatID, Expires: h.app.tgNow().Add(10 * time.Minute).Unix()}
+	c := tgCommand{ID: randomID(8), Kind: tgCmdCredentials, Token: cfg.Token, ChatID: cfg.ChatID, TTL: 600}
 	p.jobs = append(p.jobs, &tgJob{cmd: c, done: make(chan tgResult, 1)})
 }
 
@@ -567,11 +568,11 @@ func (h *tgHub) unlock(id string) {
 
 // dispatch runs one command on a server, here or through its agent, and waits for the result.
 func (h *tgHub) dispatch(ctx context.Context, cfg TelegramConfig, serverID string, c tgCommand, wait time.Duration) (tgResult, error) {
-	c.Expires = h.app.tgNow().Add(wait + 15*time.Second).Unix()
+	c.TTL = int((wait + 15*time.Second) / time.Second)
 	if serverID == cfg.ServerID {
 		return h.app.tgExecute(ctx, cfg, c), nil
 	}
-	if err := tgCommandValid(c, h.app.tgNow()); err != nil {
+	if err := tgCommandValid(c); err != nil {
 		return tgResult{}, err
 	}
 	h.mu.Lock()

@@ -582,25 +582,25 @@ func TestTelegramAgentDeduplicatesAndExpiresCommands(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	cmd := tgCommand{ID: "replay-0123456789", Kind: tgCmdSetEnabled, Enabled: true, Expires: time.Now().Add(time.Minute).Unix()}
-	if r := g.execute(context.Background(), cmd); !r.OK || !n.status().Config.Enabled {
+	cmd := tgCommand{ID: "replay-0123456789", Kind: tgCmdSetEnabled, Enabled: true, TTL: 60}
+	if r := g.execute(context.Background(), cmd, time.Now()); !r.OK || !n.status().Config.Enabled {
 		t.Fatalf("first run: %+v", r)
 	}
 	if e := n.a.SetAIEnabled(false); e != nil {
 		t.Fatal(e)
 	}
 	// the hub redelivers (its response was lost): answered from the cache, not executed again
-	if r := g.execute(context.Background(), cmd); !r.OK || n.status().Config.Enabled {
+	if r := g.execute(context.Background(), cmd, time.Now()); !r.OK || n.status().Config.Enabled {
 		t.Fatalf("a redelivered command ran twice: %+v", r)
 	}
 	// an old command arriving late is refused
-	old := tgCommand{ID: "stale-0123456789", Kind: tgCmdSetEnabled, Enabled: true, Expires: time.Now().Add(-time.Minute).Unix()}
-	if r := g.execute(context.Background(), old); r.OK || !strings.Contains(r.Error, "过期") || n.status().Config.Enabled {
+	old := tgCommand{ID: "stale-0123456789", Kind: tgCmdSetEnabled, Enabled: true, TTL: 30}
+	if r := g.execute(context.Background(), old, time.Now().Add(-time.Minute)); r.OK || !strings.Contains(r.Error, "过期") || n.status().Config.Enabled {
 		t.Fatalf("an expired command was executed: %+v", r)
 	}
 	// there is no command that runs anything else
 	for _, kind := range []string{"exec", "shell", "set_exit;reboot", "read_file", "get_secrets"} {
-		r := g.execute(context.Background(), tgCommand{ID: randomID(8), Kind: kind, Expires: time.Now().Add(time.Minute).Unix()})
+		r := g.execute(context.Background(), tgCommand{ID: randomID(8), Kind: kind, TTL: 60}, time.Now())
 		if r.OK || r.Status != nil && false {
 			t.Fatalf("%q was accepted: %+v", kind, r)
 		}

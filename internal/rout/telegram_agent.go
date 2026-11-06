@@ -74,6 +74,27 @@ func (a *App) writeTelegramRuntime(rt TelegramRuntime) {
 	}
 }
 
+// tgRTBox serialises the hub's runtime status: the bot loop and the fleet ticker both update it.
+type tgRTBox struct {
+	app *App
+	mu  sync.Mutex
+	rt  TelegramRuntime
+}
+
+// set changes the runtime status and writes it out.
+func (b *tgRTBox) set(change func(*TelegramRuntime)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	change(&b.rt)
+	b.app.writeTelegramRuntime(b.rt)
+}
+
+func (b *tgRTBox) state() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.rt.State
+}
+
 // LoadTelegramRuntime returns the last status the service wrote.
 func (a *App) LoadTelegramRuntime() (TelegramRuntime, bool) {
 	var rt TelegramRuntime
@@ -304,8 +325,9 @@ func (g *tgAgent) run(ctx context.Context) error {
 		fails, backoff = 0, retry
 		g.markState("approved")
 		g.status(tgStateOK, "")
+		received := time.Now()
 		for _, c := range out.Commands {
-			res := g.execute(ctx, c)
+			res := g.execute(ctx, c, received)
 			if _, e := g.post(ctx, "/v1/result", resultIn{Result: res}, nil, 20*time.Second); e != nil {
 				break // the hub redelivers; the cache answers without executing again
 			}
@@ -341,13 +363,15 @@ func (g *tgAgent) markState(state string) {
 }
 
 // execute answers from the de-duplication cache when it can, otherwise runs the command once.
-func (g *tgAgent) execute(ctx context.Context, c tgCommand) tgResult {
+func (g *tgAgent) execute(ctx context.Context, c tgCommand, received time.Time) tgResult {
 	if r, ok := g.cache.get(c.ID); ok {
 		return r
 	}
 	var res tgResult
-	if e := tgCommandValid(c, g.app.tgNow()); e != nil {
+	if e := tgCommandValid(c); e != nil {
 		res = tgResult{ID: c.ID, Error: e.Error()}
+	} else if time.Since(received) > time.Duration(c.TTL)*time.Second {
+		res = tgResult{ID: c.ID, Error: "命令已过期"}
 	} else if c.Kind == tgCmdCredentials {
 		res = g.applyCredentials(ctx, c)
 	} else {

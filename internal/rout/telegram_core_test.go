@@ -249,23 +249,22 @@ func TestTelegramScrubRemovesSecretsFromOutgoingText(t *testing.T) {
 }
 
 func TestTelegramCommandValidation(t *testing.T) {
-	now := time.Now()
-	ok := tgCommand{ID: "abcdef0123456789", Kind: tgCmdSetEnabled, Expires: now.Add(time.Minute).Unix()}
-	if e := tgCommandValid(ok, now); e != nil {
+	ok := tgCommand{ID: "abcdef0123456789", Kind: tgCmdSetEnabled, TTL: 60}
+	if e := tgCommandValid(ok); e != nil {
 		t.Fatal(e)
 	}
 	for name, c := range map[string]tgCommand{
-		"expired":     {ID: ok.ID, Kind: tgCmdStatus, Expires: now.Add(-time.Second).Unix()},
-		"no expiry":   {ID: ok.ID, Kind: tgCmdStatus},
-		"far future":  {ID: ok.ID, Kind: tgCmdStatus, Expires: now.Add(24 * time.Hour).Unix()},
-		"short id":    {ID: "x", Kind: tgCmdStatus, Expires: ok.Expires},
-		"shell":       {ID: ok.ID, Kind: "exec", Expires: ok.Expires},
-		"empty kind":  {ID: ok.ID, Expires: ok.Expires},
-		"bad creds":   {ID: ok.ID, Kind: tgCmdCredentials, Token: "x", ChatID: 1, Expires: ok.Expires},
-		"neg chat":    {ID: ok.ID, Kind: tgCmdCredentials, Token: testBotToken, ChatID: -5, Expires: ok.Expires},
-		"unknown one": {ID: ok.ID, Kind: "set_exit ", Expires: ok.Expires},
+		"no ttl":      {ID: ok.ID, Kind: tgCmdStatus},
+		"negative":    {ID: ok.ID, Kind: tgCmdStatus, TTL: -5},
+		"far future":  {ID: ok.ID, Kind: tgCmdStatus, TTL: 24 * 3600},
+		"short id":    {ID: "x", Kind: tgCmdStatus, TTL: 60},
+		"shell":       {ID: ok.ID, Kind: "exec", TTL: 60},
+		"empty kind":  {ID: ok.ID, TTL: 60},
+		"bad creds":   {ID: ok.ID, Kind: tgCmdCredentials, Token: "x", ChatID: 1, TTL: 60},
+		"neg chat":    {ID: ok.ID, Kind: tgCmdCredentials, Token: testBotToken, ChatID: -5, TTL: 60},
+		"unknown one": {ID: ok.ID, Kind: "set_exit ", TTL: 60},
 	} {
-		if tgCommandValid(c, now) == nil {
+		if tgCommandValid(c) == nil {
 			t.Errorf("%s should be rejected", name)
 		}
 	}

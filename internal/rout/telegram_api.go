@@ -243,7 +243,7 @@ func tgIsConflict(e error) bool {
 func tgFriendly(e error) string {
 	var ae *tgAPIError
 	if !errors.As(e, &ae) {
-		return "无法连接 Telegram：" + redactError(e)
+		return fmt.Sprintf("无法连接 Telegram：%s", redactError(e))
 	}
 	switch {
 	case ae.Code == 401:
@@ -257,5 +257,5 @@ func tgFriendly(e error) string {
 	case ae.Code == 429:
 		return "Telegram 请求过于频繁，请稍后再试"
 	}
-	return "Telegram 返回错误：" + redactError(errors.New(ae.Desc))
+	return fmt.Sprintf("Telegram 返回错误：%s", redactError(errors.New(ae.Desc)))
 }

@@ -286,8 +286,8 @@ func (a *App) runTelegramAgent(ctx context.Context, cfg TelegramConfig) error {
 }
 
 func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
-	rt := TelegramRuntime{Role: tgRoleHub, State: tgStateConnecting, BotUser: cfg.BotUser}
-	a.writeTelegramRuntime(rt)
+	rt := &tgRTBox{app: a, rt: TelegramRuntime{Role: tgRoleHub, State: tgStateConnecting, BotUser: cfg.BotUser}}
+	rt.set(func(*TelegramRuntime) {})
 	cl := a.tgClient(cfg.Token)
 	defer cl.close()
 	_, _, retry := a.tgDurations()
@@ -295,11 +295,12 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 	for ctx.Err() == nil {
 		me, e := cl.getMe(ctx)
 		if e == nil {
-			rt.BotUser = me.Username
+			rt.set(func(r *TelegramRuntime) { r.BotUser = me.Username })
 			var wh tgWebhookInfo
 			if wh, e = cl.getWebhook(ctx); e == nil && wh.URL != "" {
-				rt.State, rt.Detail = tgStateConflict, "这个机器人设置了 webhook；Rout 不会覆盖它。请先在设置 webhook 的程序中移除，或换用专用机器人"
-				a.writeTelegramRuntime(rt)
+				rt.set(func(r *TelegramRuntime) {
+					r.State, r.Detail = tgStateConflict, "这个机器人设置了 webhook；Rout 不会覆盖它。请先在设置 webhook 的程序中移除，或换用专用机器人"
+				})
 				if !sleepCtx(ctx, 15*retry) {
 					return ctx.Err()
 				}
@@ -310,12 +311,11 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 			break
 		}
 		if tgIsAuth(e) {
-			rt.State, rt.Detail = tgStateError, "Bot Token 无效或已被撤销"
+			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateError, "Bot Token 无效或已被撤销" })
 		} else {
-			rt.State, rt.Detail = tgStateOffline, "无法连接 Telegram"
+			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateOffline, "无法连接 Telegram" })
 		}
-		a.writeTelegramRuntime(rt)
-		if !sleepCtx(ctx, jitter(15*retry)) {
+		if !sleepCtx(ctx, jitter(5*retry)) {
 			return ctx.Err()
 		}
 	}
@@ -326,60 +326,63 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 	defer hub.close()
 	if cfg.Hub.MultiServer {
 		if e := hub.listen(cfg); e != nil {
-			rt.State, rt.Detail = tgStateError, a.tgErr(e)
-			a.writeTelegramRuntime(rt)
+			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateError, a.tgErr(e) })
 			return e
 		}
-		rt.Listen = hub.addr()
+		rt.set(func(r *TelegramRuntime) { r.Listen = hub.addr() })
 		if a.telegram != nil && a.telegram.onHub != nil {
 			a.telegram.onHub(hub)
 		}
 	}
 	bot := newTelegramBot(a, hub, cl)
 	hub.onPending = func(rec TelegramPendingRecord) {
-		if cur, e := a.LoadTelegram(); e == nil {
-			bot.notifyPending(ctx, cur, rec)
-		}
+		// Never make an agent's enrollment request wait for Telegram.
+		go func() {
+			if cur, e := a.LoadTelegram(); e == nil {
+				bot.notifyPending(ctx, cur, rec)
+			}
+		}()
 	}
-	rt.State, rt.Detail = tgStateOK, ""
+	rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateOK, "" })
 	if e := bot.announce(ctx, cfg); e != nil {
-		rt.Detail = tgScrub(a.Error(e), 200, cfg.Token)
-		if strings.Contains(e.Error(), "另一个控制中心") {
-			rt.State = tgStateConflict
-			a.writeTelegramRuntime(rt)
+		var other *tgOtherHubError
+		if errors.As(e, &other) {
+			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateConflict, tgScrub(a.Error(e), 200, cfg.Token) })
 			<-ctx.Done()
 			return ctx.Err()
 		}
+		rt.set(func(r *TelegramRuntime) { r.Detail = tgScrub(a.Error(e), 200, cfg.Token) })
 	}
-	a.writeTelegramRuntime(rt)
 	// Ask again for requests that were saved but never reached the chat (a restart in between).
 	for _, p := range cfg.Hub.Pending {
 		bot.notifyPending(ctx, cfg, p)
 	}
-	go a.telegramHubTicker(ctx, hub, bot, &rt)
-	return bot.run(ctx, &rt)
+	go a.telegramHubTicker(ctx, hub, bot, rt)
+	return bot.run(ctx, rt)
 }
 
 // telegramHubTicker refreshes the fleet summary and re-announces when the addresses change.
-func (a *App) telegramHubTicker(ctx context.Context, hub *tgHub, bot *tgBot, rt *TelegramRuntime) {
+func (a *App) telegramHubTicker(ctx context.Context, hub *tgHub, bot *tgBot, rt *tgRTBox) {
 	_, _, retry := a.tgDurations()
-	every := 5 * retry
+	every, announceEvery := 5*retry, 300*retry // 10 s and 10 min by default
 	last := time.Now()
 	for sleepCtx(ctx, every) {
 		cfg, e := a.LoadTelegram()
 		if e != nil {
 			return
 		}
-		rt.Servers = rt.Servers[:0]
-		for _, v := range hub.servers(cfg) {
-			e := TelegramRuntimeServer{ID: v.ID, Name: v.Name, Online: v.Online, LastSeen: v.LastSeen}
-			if v.Status != nil {
-				e.AIEnabled, e.ExitName, e.Version = v.Status.Enabled, v.Status.ExitName, v.Status.Version
+		views := hub.servers(cfg)
+		rt.set(func(r *TelegramRuntime) {
+			r.Servers = r.Servers[:0]
+			for _, v := range views {
+				e := TelegramRuntimeServer{ID: v.ID, Name: v.Name, Online: v.Online, LastSeen: v.LastSeen}
+				if v.Status != nil {
+					e.AIEnabled, e.ExitName, e.Version = v.Status.Enabled, v.Status.ExitName, v.Status.Version
+				}
+				r.Servers = append(r.Servers, e)
 			}
-			rt.Servers = append(rt.Servers, e)
-		}
-		a.writeTelegramRuntime(*rt)
-		if time.Since(last) > 10*time.Minute || (a.telegram != nil && a.telegram.retry > 0) {
+		})
+		if time.Since(last) > announceEvery {
 			last = time.Now()
 			bot.announce(ctx, cfg)
 		}

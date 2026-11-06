@@ -92,7 +92,7 @@ func (b *tgBot) tapAllowed() bool {
 
 // run consumes updates until ctx ends. It returns an error only for conditions that need a
 // human (invalid token, another consumer), after recording them in the runtime status.
-func (b *tgBot) run(ctx context.Context, rt *TelegramRuntime) error {
+func (b *tgBot) run(ctx context.Context, rt *tgRTBox) error {
 	poll, _, retry := b.app.tgDurations()
 	backoff := retry
 	for ctx.Err() == nil {
@@ -108,14 +108,14 @@ func (b *tgBot) run(ctx context.Context, rt *TelegramRuntime) error {
 			var ae *tgAPIError
 			switch {
 			case tgIsAuth(e):
-				rt.State, rt.Detail = tgStateError, "Bot Token 无效或已被撤销"
-				b.app.writeTelegramRuntime(*rt)
+				rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateError, "Bot Token 无效或已被撤销" })
 				if !sleepCtx(ctx, 30*retry) {
 					return ctx.Err()
 				}
 			case tgIsConflict(e):
-				rt.State, rt.Detail = tgStateConflict, "另一个程序正在接收这个机器人的消息（getUpdates 或 webhook）；Rout 不会覆盖它"
-				b.app.writeTelegramRuntime(*rt)
+				rt.set(func(r *TelegramRuntime) {
+					r.State, r.Detail = tgStateConflict, "另一个程序正在接收这个机器人的消息（getUpdates 或 webhook）；Rout 不会覆盖它"
+				})
 				if !sleepCtx(ctx, 15*retry) {
 					return ctx.Err()
 				}
@@ -124,8 +124,7 @@ func (b *tgBot) run(ctx context.Context, rt *TelegramRuntime) error {
 					return ctx.Err()
 				}
 			default:
-				rt.State, rt.Detail = tgStateOffline, "无法连接 Telegram"
-				b.app.writeTelegramRuntime(*rt)
+				rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateOffline, "无法连接 Telegram" })
 				if !sleepCtx(ctx, jitter(backoff)) {
 					return ctx.Err()
 				}
@@ -136,9 +135,8 @@ func (b *tgBot) run(ctx context.Context, rt *TelegramRuntime) error {
 			continue
 		}
 		backoff = retry
-		if rt.State != tgStateOK {
-			rt.State, rt.Detail = tgStateOK, ""
-			b.app.writeTelegramRuntime(*rt)
+		if rt.state() != tgStateOK {
+			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateOK, "" })
 		}
 		for _, up := range ups {
 			b.handle(ctx, cfg, up)
@@ -752,7 +750,7 @@ func (b *tgBot) announce(ctx context.Context, cfg TelegramConfig) error {
 	if ch.PinnedMessage != nil {
 		if cur, er := keys.openAnnouncement(ch.PinnedMessage.Text); er == nil {
 			if cur.HubID != cfg.ServerID {
-				return fmt.Errorf("聊天中已有另一个控制中心（%s）", cur.Name)
+				return &tgOtherHubError{name: cur.Name}
 			}
 			if cur.FP == want.FP && sameStrings(cur.Endpoints, want.Endpoints) && cur.Name == want.Name {
 				if cfg.Hub.AnnounceMsgID != ch.PinnedMessage.MessageID {
@@ -785,4 +783,11 @@ func (b *tgBot) publishNew(ctx context.Context, cfg TelegramConfig, an tgAnnounc
 		return fmt.Errorf("无法置顶控制中心地址：%s", tgFriendly(e))
 	}
 	return b.app.mutateTelegram(func(c *TelegramConfig) error { c.Hub.AnnounceMsgID = m.MessageID; return nil })
+}
+
+// tgOtherHubError means the chat already announces a different hub; Rout never overwrites it.
+type tgOtherHubError struct{ name string }
+
+func (e *tgOtherHubError) Error() string {
+	return fmt.Sprintf("聊天中已有另一个控制中心（%s）", e.name)
 }

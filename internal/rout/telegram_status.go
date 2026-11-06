@@ -102,7 +102,7 @@ func (a *App) TelegramTest(ctx context.Context) ([]TelegramCheck, error) {
 		return nil, e
 	}
 	var out []TelegramCheck
-	add := func(level, text string) { out = append(out, TelegramCheck{level, text}) }
+	add := func(level, text string) { out = append(out, TelegramCheck{level, a.T(text)}) }
 	cl := a.tgClient(cfg.Token)
 	defer cl.close()
 	cctx, cancel := context.WithTimeout(ctx, 40*time.Second)

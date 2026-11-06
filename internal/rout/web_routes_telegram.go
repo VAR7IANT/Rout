@@ -66,7 +66,7 @@ type telegramView struct {
 }
 
 // telegramConnState maps the service's runtime state onto what the page shows.
-func telegramConnState(sum TelegramSummary) telegramConnView {
+func telegramConnState(a *App, sum TelegramSummary) telegramConnView {
 	rt := sum.Runtime
 	v := telegramConnView{State: "starting"}
 	if rt == nil || rt.State == "" {
@@ -77,7 +77,7 @@ func telegramConnState(sum TelegramSummary) telegramConnView {
 		}
 		return v
 	}
-	v.Detail = rt.Detail
+	v.Detail = a.T(rt.Detail)
 	switch rt.State {
 	case tgStateOK:
 		v.State = "connected"
@@ -115,7 +115,7 @@ func (s *WebServer) telegramView(c *reqCtx) (telegramView, error) {
 		return v, nil
 	}
 	v.Role, v.ServerID, v.ServerName, v.BotUsername, v.ChatMasked, v.Fingerprint = sum.Role, sum.ServerID, sum.Name, sum.BotUser, sum.ChatMasked, sum.Fingerprint
-	v.Connection = telegramConnState(sum)
+	v.Connection = telegramConnState(a, sum)
 	v.Audit = a.telegramAuditTail(100)
 	for i, d := range v.Audit {
 		v.Audit[i] = tgScrub(d, 240)

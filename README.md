@@ -18,7 +18,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.5.1`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.6.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -30,7 +30,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.5.1
+Rout 0.6.0
   ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   ! Tokyo-HY2 certificate expires in 12 days
 
@@ -39,7 +39,7 @@ Rout 0.5.1
    2  Manage nodes      4   → full links below every node; pick one to edit / delete / copy / enable / restart
                              n new node · l all links · t traffic and limits
   Network
-   3  AI Smart Routing  Enabled → send AI services to a chosen exit, for selected inbound nodes only
+   3  AI Smart Routing  Enabled → send AI services to a chosen exit, for selected inbound nodes only; includes Telegram Bot management
    4  Port forwarding    1   → relays: view / create / edit / test / delete
    5  Outbound proxies   2   → numbered list incl. Direct connection; create / edit / test / delete / assign to nodes
   Services
@@ -307,6 +307,28 @@ The same actions are under Manage nodes → Edit node → Certificate. An expire
 
 If only a TCP port is reachable the report says `! The proxy protocol handshake has not been verified` and the verdict does not call the node usable. The exit address services are queried through the chain, so layer 6 needs Internet access from the VPS.
 
+
+## Telegram Bot remote management (v0.6.0)
+
+Bind **one Telegram bot** (Bot Token + your Chat ID) on every server and, from one chat, switch each server's AI exit and turn AI routing on or off with buttons — without SSH. Main menu → **AI Smart Routing → Telegram Bot management** (bind, view status, change Token / Chat ID, test the connection, unbind), `rout telegram …`, or the panel's *AI Routing → Telegram Bot* card.
+
+```text
+Telegram (one bot, one chat)
+      │  getUpdates — exactly one consumer
+   ┌──┴───────────────┐
+   │ hub (first bind)  │◄── mutual TLS 1.3, pinned certificates ──┐ outbound only
+   └──┬───────────────┘                                          │
+      │ local calls                              server B (agent)─┤
+  AI routing on this server                      server C (agent)─┘
+```
+
+* **Minimal input.** First bind asks for the Token (hidden) and Chat ID only; the server name defaults to the host name. A single server opens no port.
+* **Many servers, one bot.** Telegram allows one update consumer per bot, so the first server is the **hub**; others join as **agents** that dial out to it, found through an encrypted pinned message in your chat. A new server appears in Telegram with its certificate fingerprint and works only after you press **Allow**. The hub needs one reachable TCP port when you enable multi-server mode; agents need none. Rout never opens firewalls, never deletes a webhook, never sends the token to a third party.
+* **Safe by construction.** Only your private chat and your user ID are accepted; buttons are MAC-protected, confirmations single-use, operations per server serialized, duplicates ignored; the only commands are status / on-off / switch to an **existing** exit / test; no shell, no secrets in messages; `telegram.json` is 0600 and excluded from backups; changes roll back through `Commit`. If Telegram or the hub is unreachable the proxies keep running.
+* **Service.** `rout-telegram` under systemd or OpenRC, enabled at boot, refreshed by `rout update`, removed by unbind and `rout uninstall`.
+
+Design, threat model, prerequisites, NAT notes, token rotation, hub replacement and what is **not** verified: [docs/TELEGRAM.md](docs/TELEGRAM.md).
+
 ## Commands
 
 ```sh
@@ -318,6 +340,7 @@ rout export ID [FILE] | export all [FILE] | copy ID
 rout restart|on|off|delete|logs ID
 rout relays | outbounds | settings   # `exits` still works as an alias
 rout ai [status|test|apply]   # AI Smart Routing menu | status | check configuration + end-to-end exit test | re-apply
+rout telegram [bind|status|test|unbind|multi|approve|reject|revoke|rename]   # Telegram Bot remote management (menu without arguments); Token from ROUT_TELEGRAM_TOKEN or a hidden prompt
 rout web setup                # one-click panel install: service, password, domain, Caddy HTTPS
 rout web https deploy DOMAIN [--install-caddy] [--start-caddy] [--accept-nat]
 rout web https repair|status|remove   # resume / diagnose / remove the panel's HTTPS site
@@ -343,6 +366,7 @@ Global options work before or after the command: `--lang en|zh-CN|zh-TW`, `--hom
 - systemd units restrict engines with a capability bounding set (`CAP_NET_BIND_SERVICE`; HY2/TUIC also keep `CAP_NET_ADMIN` for QUIC socket buffers), `ProtectSystem=strict`, kernel/cgroup/clock protections, `RestrictNamespaces` and `RestrictAddressFamilies`. Engines therefore cannot change Rout's quota tables. New units apply on the next change or `rout apply`.
 - OpenRC services use `supervise-daemon` with bounded respawns and private logs in `/var/log/rout-<ID>.log`, rotated at 5 MB.
 - The optional `rout-subscription` service (systemd or OpenRC) is independent of node services: loopback-only, read-only filesystem and no capabilities under systemd, never writes the configuration. It runs a copy of the binary at `/opt/rout/bin/rout-subscription-v1`; the installer/newer updater refreshes it automatically when needed. The v0.3.4 updater predates that hook: open the new subscription menu or run `sudo rout subscription refresh`; existing URLs keep working meanwhile.
+- The optional `rout-telegram` service (systemd or OpenRC, a private copy `rout-telegram-v1` of the manager) holds the Telegram binding in `/etc/rout/telegram.json` (0600: Bot Token and this server's private key; **never** in `state.json` or any backup) with `telegram-status.json` and `telegram-audit.log` beside it. See [docs/TELEGRAM.md](docs/TELEGRAM.md).
 - Changes are serialized by file locks with bounded waits, validated in private staging directories and rolled back on failure.
 
 ## Low-memory installation
@@ -375,6 +399,7 @@ sudo rout update      # refuses downgrades; keeps /usr/local/bin/rout.previous
 | Downgrade after using the family settings or Remote server exits | Older Rout cannot read Remote server exits (`protocol: node`); restore a compatible backup first. Native relays would run as GOST relays with their saved listening address (dual stack and IPv6-only are then not honored) |
 | Existing NAT-VPS mappings | Keep working; not offered for new setups (see Legacy NAT-VPS mappings) |
 | OpenVZ / restricted LXC | Proxies work; accounting needs nftables + `CAP_NET_ADMIN` |
+| Telegram Bot control (v0.6.0) | Optional; nothing changes until you bind. Debian/Ubuntu (systemd) and Alpine (OpenRC) services are generated and unit-tested; real-host runs and the live Telegram service are not part of the automated tests (see docs/TELEGRAM.md) |
 
 Real-host acceptance items outside CI: IPv6 reachability from real client networks, provider NAT reachability, behavior on the 1 GB VPS that reported the OOM kill, physical reboots and power loss, NIC offload and sustained high rates. Each node table adds a small per-packet cost; Rout is tuned for tens of nodes per host.
 
@@ -400,7 +425,7 @@ Three kinds of tests are kept apart. **Unit and simulated** tests (injected DNS/
 ```sh
 # Only after exact-commit CI and real VPS acceptance, with the maintainer's approval.
 # Publish BEFORE merging: main's install.sh pins this version (docs/RELEASING.md).
-git tag -a v0.5.1 -m 'Rout v0.5.1' <verified-pr-head-sha>
-git push origin v0.5.1
+git tag -a v0.6.0 -m 'Rout v0.6.0' <verified-pr-head-sha>
+git push origin v0.6.0
 # ...wait for the release to be public, then merge the PR with a merge commit.
 ```
