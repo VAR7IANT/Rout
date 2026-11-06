@@ -37,12 +37,17 @@ func tapLabel(t *testing.T, tg *fakeTelegram, msg int64, label string) string {
 
 func waitText(t *testing.T, tg *fakeTelegram, msg int64, substr string) fakeMsg {
 	t.Helper()
-	var m fakeMsg
-	waitFor(t, "message text containing "+substr+"\n--- current text:\n"+tg.msg(msg).Text, 10*time.Second, func() bool {
-		m = tg.msg(msg)
-		return strings.Contains(m.Text, substr)
-	})
-	return m
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		m := tg.msg(msg)
+		if strings.Contains(m.Text, substr) {
+			return m
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for message text containing %q; the text now is:\n%s", substr, m.Text)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // openServer taps the server's button in the list message and waits for its page.

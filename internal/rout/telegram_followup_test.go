@@ -643,7 +643,16 @@ func TestTelegramServiceDefinitionsAreAcceptedByTheRealInitTools(t *testing.T) {
 				t.Fatal(e)
 			}
 			out, _ := exec.Command(p, "verify", "--man=no", f).CombinedOutput()
-			return strings.TrimSpace(string(out))
+			// systemd-analyze also loads the machine's own units and complains about those (a CI
+			// runner prints warnings about xfs_scrub and walinuxagent); only what it says about
+			// the file under test is ours.
+			var mine []string
+			for _, line := range strings.Split(string(out), "\n") {
+				if strings.Contains(line, name) {
+					mine = append(mine, line)
+				}
+			}
+			return strings.TrimSpace(strings.Join(mine, "\n"))
 		}
 		if out := verify("rout-bogus.service", "[Service]\nExecStart=/bin/true\nBogusKey=1\n"); out == "" {
 			t.Skip("this systemd-analyze does not report problems on this machine; nothing to learn from it")

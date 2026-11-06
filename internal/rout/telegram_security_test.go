@@ -312,7 +312,8 @@ func TestTelegramFailedSwitchRollsBackAndSaysSo(t *testing.T) {
 	}
 	// the same for turning AI off: the failure is real text, and nothing else moved
 	tapLabel(t, tg, list.ID, "关闭 AI 分流")
-	waitText(t, tg, list.ID, "操作失败")
+	// (the earlier "切换失败：操作失败：…" text also contains 操作失败, so wait for this banner)
+	waitText(t, tg, list.ID, "❌ 操作失败")
 	if !ca.status().Config.Enabled {
 		t.Fatal("a failed disable reported success")
 	}
