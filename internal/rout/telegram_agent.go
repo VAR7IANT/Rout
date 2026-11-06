@@ -42,19 +42,26 @@ const (
 )
 
 type TelegramRuntime struct {
-	Role      string    `json:"role"`
-	State     string    `json:"state"`
-	Detail    string    `json:"detail,omitempty"`
-	Since     time.Time `json:"since"`
-	UpdatedAt time.Time `json:"updated_at"`
-	BotUser   string    `json:"bot_username,omitempty"`
-	Listen    string    `json:"listen,omitempty"`
-	HubName   string    `json:"hub_name,omitempty"`
-	Servers   []struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Online bool   `json:"online"`
-	} `json:"servers,omitempty"`
+	Role      string                  `json:"role"`
+	State     string                  `json:"state"`
+	Detail    string                  `json:"detail,omitempty"`
+	Since     time.Time               `json:"since"`
+	UpdatedAt time.Time               `json:"updated_at"`
+	BotUser   string                  `json:"bot_username,omitempty"`
+	Listen    string                  `json:"listen,omitempty"`
+	HubName   string                  `json:"hub_name,omitempty"`
+	Servers   []TelegramRuntimeServer `json:"servers,omitempty"`
+}
+
+// TelegramRuntimeServer is the hub's last observation of one server (no credentials).
+type TelegramRuntimeServer struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Online    bool      `json:"online"`
+	LastSeen  time.Time `json:"last_seen,omitempty"`
+	AIEnabled bool      `json:"ai_enabled,omitempty"`
+	ExitName  string    `json:"exit_name,omitempty"`
+	Version   string    `json:"version,omitempty"`
 }
 
 func (a *App) writeTelegramRuntime(rt TelegramRuntime) {

@@ -192,6 +192,8 @@ func Run(args []string) (result error) {
 		return u.subscriptionCommand(args)
 	case "web":
 		return u.webCommand(args)
+	case "telegram":
+		return u.telegramCommand(args)
 	case "remote":
 		return u.remoteCommand(args)
 	case "settings":
@@ -422,6 +424,11 @@ func (a *App) Uninstall() error {
 		}
 		if e = a.RemoveWebService(); e != nil {
 			return e
+		}
+		// Stop the Telegram control channel and withdraw its announcement before the files that
+		// hold its token and keys are deleted.
+		if _, er := a.TelegramUnbind(context.Background()); er != nil {
+			return er
 		}
 	}
 	if e = os.RemoveAll(a.Home); e != nil {

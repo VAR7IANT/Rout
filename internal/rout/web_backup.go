@@ -413,7 +413,7 @@ func (a *App) CheckPermissions() []PermissionCheck {
 		out = append(out, PermissionCheck{Path: rel, Mode: fmt.Sprintf("%04o", mode), Expected: fmt.Sprintf("%04o", want), OK: mode&0o077 == 0})
 	}
 	check(a.Home, true)
-	for _, f := range []string{"state.json", "web.json", "traffic.json", "settings.json"} {
+	for _, f := range []string{"state.json", "web.json", "traffic.json", "settings.json", "telegram.json", "telegram-status.json", "telegram-audit.log"} {
 		check(filepath.Join(a.Home, f), false)
 	}
 	check(filepath.Join(a.Home, "secrets"), true)

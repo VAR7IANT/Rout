@@ -372,11 +372,11 @@ func (a *App) telegramHubTicker(ctx context.Context, hub *tgHub, bot *tgBot, rt 
 		}
 		rt.Servers = rt.Servers[:0]
 		for _, v := range hub.servers(cfg) {
-			rt.Servers = append(rt.Servers, struct {
-				ID     string `json:"id"`
-				Name   string `json:"name"`
-				Online bool   `json:"online"`
-			}{v.ID, v.Name, v.Online})
+			e := TelegramRuntimeServer{ID: v.ID, Name: v.Name, Online: v.Online, LastSeen: v.LastSeen}
+			if v.Status != nil {
+				e.AIEnabled, e.ExitName, e.Version = v.Status.Enabled, v.Status.ExitName, v.Status.Version
+			}
+			rt.Servers = append(rt.Servers, e)
 		}
 		a.writeTelegramRuntime(*rt)
 		if time.Since(last) > 10*time.Minute || (a.telegram != nil && a.telegram.retry > 0) {

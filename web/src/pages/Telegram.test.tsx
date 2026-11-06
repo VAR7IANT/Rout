@@ -182,9 +182,9 @@ describe('bind wizard', () => {
     expect(screen.getByText('Waiting for approval', { selector: '.badge' })).toBeInTheDocument()
   })
 
-  it('becomes the hub when none exists, sending multi_server and delete_webhook', async () => {
+  it('becomes the hub when none exists, sending multi_server', async () => {
     const m = setup({
-      'POST /api/telegram/probe': () => ({ body: { ...probeHub, webhook_active: true } }),
+      'POST /api/telegram/probe': () => ({ body: probeHub }),
       'POST /api/telegram/bind': () => ({ body: hubStatus }),
     })
     await openWizard()
@@ -195,31 +195,39 @@ describe('bind wizard', () => {
     const multi = screen.getByRole('checkbox', { name: /Allow other servers to join/ })
     expect(multi).toBeChecked()
 
-    // a webhook has to be deleted before polling can start
     const bind = screen.getByRole('button', { name: 'Bind' })
-    expect(bind).toBeDisabled()
-    await userEvent.click(screen.getByRole('checkbox', { name: /Delete the existing webhook/ }))
     expect(bind).toBeEnabled()
-
     await userEvent.clear(screen.getByLabelText(/^Server name/))
     expect(bind).toBeDisabled()
     await userEvent.type(screen.getByLabelText(/^Server name/), 'tokyo-1')
     await userEvent.click(bind)
     await waitFor(() => expect(callsTo(m, 'POST', '/api/telegram/bind')).toHaveLength(1))
     const body = callsTo(m, 'POST', '/api/telegram/bind')[0]!.body as TelegramBindRequest
-    expect(body).toEqual({ token: TOKEN, chat_id: '123456789', server_name: 'tokyo-1', role: 'hub', multi_server: true, delete_webhook: true })
+    expect(body).toEqual({ token: TOKEN, chat_id: '123456789', server_name: 'tokyo-1', role: 'hub', multi_server: true })
     expect(body.trust_hub_fp).toBeUndefined()
     expect(await screen.findByText('@rout_manage_bot')).toBeInTheDocument()
     expect(screen.getByText('Hub')).toBeInTheDocument()
   })
 
-  it('omits delete_webhook when there is none and honours turning other servers off', async () => {
+  it('never offers to delete a webhook: an active one blocks binding with an explanation', async () => {
+    const m = setup({ 'POST /api/telegram/probe': () => ({ body: { ...probeHub, webhook_active: true } }), 'POST /api/telegram/bind': () => ({ body: hubStatus }) })
+    await openWizard()
+    await fillCredentials()
+    await userEvent.click(screen.getByRole('button', { name: 'Check' }))
+    await screen.findByText(/this server becomes the control hub/)
+    expect(screen.getByText('This bot has a webhook set')).toBeInTheDocument()
+    expect(screen.getByText(/Rout will not delete or overwrite an existing webhook/)).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /Delete the existing webhook/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Bind' })).toBeDisabled()
+    expect(callsTo(m, 'POST', '/api/telegram/bind')).toHaveLength(0)
+  })
+
+  it('honours turning other servers off', async () => {
     const m = setup({ 'POST /api/telegram/probe': () => ({ body: probeHub }), 'POST /api/telegram/bind': () => ({ body: hubStatus }) })
     await openWizard()
     await fillCredentials()
     await userEvent.click(screen.getByRole('button', { name: 'Check' }))
     await screen.findByText(/this server becomes the control hub/)
-    expect(screen.queryByText(/Delete the existing webhook/)).toBeNull()
     await userEvent.click(screen.getByRole('checkbox', { name: /Allow other servers to join/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Bind' }))
     await waitFor(() => expect(callsTo(m, 'POST', '/api/telegram/bind')).toHaveLength(1))

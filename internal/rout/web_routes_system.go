@@ -192,6 +192,8 @@ func (a *App) serviceLog(st State, unit string, lines int) (string, error) {
 		name = a.subscriptionService()
 	case unit == "web":
 		name = a.webService()
+	case unit == "telegram":
+		name = a.telegramService()
 	case idPattern.MatchString(unit):
 		p, e := Find(st, unit)
 		if e != nil {

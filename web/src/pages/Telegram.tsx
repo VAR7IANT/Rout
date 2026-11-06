@@ -683,7 +683,6 @@ function BindWizard({ onClose, onBound }: { onClose: () => void; onBound: (s: Te
   const [name, setName] = useState('')
   const [verified, setVerified] = useState(false)
   const [multi, setMulti] = useState(true)
-  const [dropHook, setDropHook] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -696,7 +695,7 @@ function BindWizard({ onClose, onBound }: { onClose: () => void; onBound: (s: Te
   const hubInfo = probe && probe.hub.found ? probe.hub : null
   const agent = !!hubInfo
   const nameOK = name.trim().length >= 1 && name.trim().length <= NAME_MAX
-  const step2OK = !!probe && nameOK && (agent ? verified : !probe.webhook_active || dropHook)
+  const step2OK = !!probe && nameOK && (agent ? verified : !probe.webhook_active)
 
   const doProbe = async () => {
     setBusy(true)
@@ -711,7 +710,6 @@ function BindWizard({ onClose, onBound }: { onClose: () => void; onBound: (s: Te
     setProbe(r.value)
     setName((r.value.suggested_name ?? '').slice(0, NAME_MAX))
     setVerified(false)
-    setDropHook(false)
     setMulti(true)
   }
 
@@ -719,7 +717,7 @@ function BindWizard({ onClose, onBound }: { onClose: () => void; onBound: (s: Te
     if (!probe || !step2OK) return
     const body: TelegramBindRequest = hubInfo
       ? { token: tk, chat_id: cid, server_name: name.trim(), role: 'agent', trust_hub_fp: hubInfo.fingerprint }
-      : { token: tk, chat_id: cid, server_name: name.trim(), role: 'hub', multi_server: multi, ...(probe.webhook_active && dropHook ? { delete_webhook: true } : {}) }
+      : { token: tk, chat_id: cid, server_name: name.trim(), role: 'hub', multi_server: multi }
     setBusy(true)
     setError(null)
     const r = await act(() => api.post<TelegramStatus>('/api/telegram/bind', body))
@@ -843,16 +841,9 @@ function BindWizard({ onClose, onBound }: { onClose: () => void; onBound: (s: Te
                   </Toggle>
                 </div>
                 {probe.webhook_active ? (
-                  <>
-                    <Notice tone="warn" title={t('telegram.webhook.title')}>
-                      {t('telegram.webhook.detail')}
-                    </Notice>
-                    <div className="tg-toggle">
-                      <Toggle checked={dropHook} onChange={setDropHook}>
-                        {t('telegram.webhook.delete')}
-                      </Toggle>
-                    </div>
-                  </>
+                  <Notice tone="error" title={t('telegram.webhook.title')}>
+                    {t('telegram.webhook.detail')}
+                  </Notice>
                 ) : null}
               </>
             )}

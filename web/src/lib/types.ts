@@ -606,7 +606,6 @@ export interface TelegramBindRequest {
   /** Required for an agent: must equal the fingerprint the probe reported for the hub. */
   trust_hub_fp?: string
   multi_server?: boolean
-  delete_webhook?: boolean
 }
 
 export interface TelegramPatch {

@@ -540,6 +540,13 @@ func (a *App) selfUpdate() error {
 			fmt.Println(msg)
 		}
 	}
+	// The Telegram service runs a copy of the manager; bring it to the new version so it keeps
+	// matching the hub or agents on other servers. Only hosts that bound a bot are touched.
+	if _, er := a.LoadTelegram(); er == nil {
+		if out, er := runOutput(2*time.Minute, exe, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "telegram", "refresh"); er != nil {
+			a.printf("Telegram 服务未更新，请运行 rout telegram refresh：%s\n", strings.TrimSpace(string(out)))
+		}
+	}
 	if out, er := runOutput(45*time.Second, exe, "--home", a.Home, "--bin-dir", a.BinDir, "--lang", languageOr(a.Language), "subscription", "refresh"); er != nil {
 		// Preserve the helper transaction's exact recovery state. It may report an
 		// incomplete rollback; a failed child is not proof that rollback succeeded.
