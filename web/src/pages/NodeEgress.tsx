@@ -3,7 +3,7 @@ import { useI18n } from '../i18n'
 import { api } from '../lib/api'
 import { useRunner } from '../lib/session'
 import type { EgressReport, NodeView, PolicyChoice } from '../lib/types'
-import { Badge, Button, Notice, Select } from '../components/ui'
+import { Badge, Button, Notice, Select, Toggle } from '../components/ui'
 import { Icon } from '../components/icons'
 
 // The outbound IP family of a node: one selector used by "new nodes" and by the node drawer, and
@@ -59,10 +59,9 @@ export function PolicyPicker({
       <p className="muted small">{t(`egress.desc.${value || 'auto'}` as 'egress.desc.auto')}</p>
       {chosen?.missing ? <p className="warn-text small">{t('egress.missing', { family: chosen.missing })}</p> : null}
       {blocked ? (
-        <label className="check">
-          <input type="checkbox" checked={confirmed} onChange={(e) => onConfirm(e.target.checked)} />
-          <span>{t('egress.confirm', { family: chosen!.missing ?? '' })}</span>
-        </label>
+        <Toggle checked={confirmed} onChange={onConfirm}>
+          {t('egress.confirm', { family: chosen!.missing ?? '' })}
+        </Toggle>
       ) : null}
     </div>
   )
