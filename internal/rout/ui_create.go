@@ -277,7 +277,7 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 	if has("hy2", "tuic") {
 		items = append(items, item("tls", "HY2/TUIC 证书"))
 	}
-	items = append(items, item("credentials", "自定义认证凭据"))
+	items = append(items, item("credentials", "自定义认证凭据"), item("egress", "出站网络策略"))
 	v := u.menu("高级选项", items, "返回")
 	if u.err != nil || v == "" {
 		return next, u.err
@@ -323,6 +323,20 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 		each([]string{"hy2", "tuic"}, func(p *Profile) {
 			p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = sni, cert, key, choice == "self"
 		})
+	case "egress":
+		// Per node, and independent of the listening mode: it only decides how the node reaches
+		// the Internet. Auto (the default) writes nothing.
+		var cur string
+		each(createProtocols, func(p *Profile) { cur = p.OutboundPolicy })
+		policy, ok := u.chooseNodePolicy("出站网络策略（节点访问互联网时使用的 IP 类型）", cur)
+		if u.err != nil || !ok {
+			return next, u.err
+		}
+		norm, e := normalizeNodePolicy(policy)
+		if e != nil {
+			return next, e
+		}
+		each(createProtocols, func(p *Profile) { p.OutboundPolicy = norm })
 	case "credentials":
 		each(createProtocols, func(p *Profile) {
 			u.printf("配置 %s 的认证凭据\n", ProtocolLabel(p.Protocol))

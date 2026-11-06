@@ -312,7 +312,10 @@ func (s *WebServer) writeError(w http.ResponseWriter, c *reqCtx, err error) {
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		var mb *http.MaxBytesError
+		var nr *errNoRoute
 		switch {
+		case errors.As(err, &nr):
+			ae = &apiError{Status: http.StatusConflict, Code: "no_route", Msg: err.Error()}
 		case errors.As(err, &mb):
 			ae = &apiError{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Msg: "请求内容过大"}
 		case errors.Is(err, errLockBusy):

@@ -39,6 +39,8 @@ type nodeList struct {
 	Exits      []exitRef   `json:"exits"`
 	Host       hostInfo    `json:"host"`
 	Monitoring bool        `json:"monitoring"`
+	// OutboundPolicies are the five policies in menu order, annotated for this host.
+	OutboundPolicies []PolicyChoice `json:"outbound_policies"`
 }
 
 type protoInfo struct {
@@ -121,7 +123,7 @@ func (s *WebServer) nodeRoutes() {
 		v4, v6 := hostFamilies()
 		nodes := sortedProfiles(st, "node")
 		_, mon := s.trafficViews(c.a, nodes)
-		return nodeList{Nodes: s.nodeViewsFor(c, st, nil), Protocols: protocolInfos(), Exits: exitRefs(st), Host: hostInfo{v4, v6}, Monitoring: mon}, nil
+		return nodeList{Nodes: s.nodeViewsFor(c, st, nil), Protocols: protocolInfos(), Exits: exitRefs(st), Host: hostInfo{v4, v6}, Monitoring: mon, OutboundPolicies: nodePolicyChoices(hostRoutes())}, nil
 	})
 	s.handle("POST /api/nodes", r, func(c *reqCtx) (any, error) {
 		var spec NodeSpec
@@ -140,6 +142,8 @@ func (s *WebServer) nodeRoutes() {
 		return map[string]any{"nodes": s.nodeViewsFor(c, st, idSet(created))}, nil
 	})
 	s.handle("PATCH /api/nodes/{id}", r, s.renameProfile("node"))
+	s.handle("PUT /api/nodes/{id}/outbound-policy", r, s.setOutboundPolicy)
+	s.handle("POST /api/nodes/{id}/egress-test", r, s.egressTest)
 	s.handle("DELETE /api/nodes/{id}", rr, s.deleteProfile("node"))
 	s.handle("GET /api/nodes/{id}/link", rr, s.profileLink("node"))
 	s.handle("POST /api/nodes/{id}/test", r, s.testProfile("node"))
@@ -278,6 +282,11 @@ func (s *WebServer) nodeRoutes() {
 }
 
 func (s *WebServer) runDiag(c *reqCtx, run func(context.Context) (DiagView, error)) (any, error) {
+	return s.limited(c, func(ctx context.Context) (any, error) { return run(ctx) })
+}
+
+// limited runs a measurement under the shared one-at-a-time limit and the 90 s ceiling.
+func (s *WebServer) limited(c *reqCtx, run func(context.Context) (any, error)) (any, error) {
 	select {
 	case s.diagSem <- struct{}{}:
 		defer func() { <-s.diagSem }()
@@ -287,6 +296,65 @@ func (s *WebServer) runDiag(c *reqCtx, run func(context.Context) (DiagView, erro
 	ctx, cancel := context.WithTimeout(c.r.Context(), 90*time.Second)
 	defer cancel()
 	return run(ctx)
+}
+
+// setOutboundPolicy changes one node's outbound IP family through the same code path as the menu.
+// An "only" policy for a family the host cannot route answers 409 no_route until the request is
+// repeated with force.
+func (s *WebServer) setOutboundPolicy(c *reqCtx) (any, error) {
+	id, e := c.pathID("id")
+	if e != nil {
+		return nil, e
+	}
+	var req struct {
+		Policy string `json:"policy"`
+		Force  bool   `json:"force"`
+	}
+	if e := c.decode(&req); e != nil {
+		return nil, e
+	}
+	st, e := c.a.Load()
+	if e != nil {
+		return nil, e
+	}
+	if _, e := profileOfKind(st, id, "node"); e != nil {
+		return nil, e
+	}
+	if e := c.a.SetNodeOutboundPolicy(id, req.Policy, req.Force); e != nil {
+		return nil, e
+	}
+	s.changed()
+	st, e = c.a.Load()
+	if e != nil {
+		return nil, e
+	}
+	return map[string]any{"nodes": s.nodeViewsFor(c, st, map[string]bool{id: true})}, nil
+}
+
+// egressTest measures the node's real outbound path against its policy.
+func (s *WebServer) egressTest(c *reqCtx) (any, error) {
+	id, e := c.pathID("id")
+	if e != nil {
+		return nil, e
+	}
+	var req struct {
+		Quick bool `json:"quick"`
+	}
+	if c.r.ContentLength != 0 {
+		if e := c.decode(&req); e != nil {
+			return nil, e
+		}
+	}
+	st, e := c.a.Load()
+	if e != nil {
+		return nil, e
+	}
+	if _, e := profileOfKind(st, id, "node"); e != nil {
+		return nil, e
+	}
+	return s.limited(c, func(ctx context.Context) (any, error) {
+		return c.a.nodeEgressTest(id, req.Quick, c.a.egressEnvironment())
+	})
 }
 
 type renameReq struct {
