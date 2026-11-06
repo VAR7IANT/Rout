@@ -30,6 +30,8 @@ type App struct {
 	remoteFetch remoteFetchFunc
 	// webHooks lets tests replace host inspection in the panel; nil in production.
 	webHooks *webTestHooks
+	// telegram lets tests replace the Bot API base URL and host inspection; nil in production.
+	telegram *telegramHooks
 	// Only the running monitor reopens sealed checkpoints.
 	monitorMode bool
 }

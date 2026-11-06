@@ -918,3 +918,271 @@
   max-width: 60%;
   border-radius: var(--radius-sm);
 }
+
+/* ---- Telegram bot (AI routing page) ------------------------------------------------- */
+.tg-card .card-body {
+  min-width: 0;
+}
+.tg-points {
+  gap: 6px;
+}
+.tg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.tg-bot {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 650;
+}
+.tg-botline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.tg-botline > svg {
+  color: var(--ok);
+  flex: none;
+}
+.tg-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tg-fact {
+  display: grid;
+  grid-template-columns: minmax(110px, 190px) minmax(0, 1fr);
+  gap: 2px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.tg-fact:last-child {
+  border-bottom: 0;
+}
+.tg-fact dt {
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tg-fact dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tg-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tg-lines li {
+  overflow-wrap: anywhere;
+}
+/* Fingerprints are groups of hex digits: break between groups first, inside a group last. */
+.tg-fp {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-width: 0;
+}
+.tg-fpline {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.tg-fpline .tg-fp {
+  flex: 0 1 auto;
+  padding-top: 5px;
+}
+.tg-fpbox {
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.tg-actions .btn {
+  min-width: 0;
+}
+.tg-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.tg-table {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-width: 0;
+}
+.tg-table .table th:last-child,
+.tg-table .table td:last-child {
+  padding-right: 14px;
+}
+.tg-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+.tg-server-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.table td.col-fp {
+  min-width: 150px;
+}
+.tg-pending {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--accent-line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+.tg-pending li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--accent-line);
+}
+.tg-pending li:last-child {
+  border-bottom: 0;
+}
+.tg-pending-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tg-pending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tg-audit summary {
+  max-width: 100%;
+}
+.tg-audit-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+}
+.tg-audit-list li {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.tg-audit-list li:last-child {
+  border-bottom: 0;
+}
+.tg-audit > p,
+.tg-audit > .tg-points {
+  margin-top: 6px;
+}
+/* A checkbox row in the wizard: the whole bordered row is the touch target. */
+.tg-toggle .toggle-row {
+  align-items: flex-start;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.tg-toggle .toggle-row .check {
+  margin-top: 2px;
+  width: 20px;
+  height: 20px;
+}
+.tg-toggle .toggle-row label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  /* Touch targets stay at 40px inside the card. */
+  .tg-card .btn-sm {
+    min-height: 40px;
+  }
+  .tg-card .icon-btn-sm {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (max-width: 720px) {
+  .tg-fact {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .tg-actions .btn {
+    flex: 1 1 auto;
+  }
+  .tg-pending-actions {
+    flex: 1 1 100%;
+  }
+  .tg-pending-actions .btn {
+    flex: 1 1 0;
+  }
+  /* Inside a phone card the stacked cells line up on the right, next to their label. */
+  .table-wrap .table:not(.table-keep) td .tg-cell {
+    align-items: flex-end;
+    text-align: right;
+  }
+  .table-wrap .table:not(.table-keep) td.tg-cell-name,
+  .table-wrap .table:not(.table-keep) td.cell-primary .tg-cell {
+    align-items: flex-start;
+    text-align: left;
+  }
+  .table-wrap .table:not(.table-keep) td.col-fp {
+    display: block;
+    text-align: left;
+    min-width: 0;
+  }
+  .table-wrap .table:not(.table-keep) td.col-fp::before {
+    display: block;
+    margin-bottom: 2px;
+  }
+  .table-wrap .table:not(.table-keep) td.col-actions:empty {
+    display: none;
+  }
+  .table-wrap .table:not(.table-keep) td.col-actions .btn {
+    flex: 1 1 auto;
+  }
+}

@@ -39,6 +39,8 @@ type UI struct {
 	hintShown bool
 	// webService replaces installing/controlling the rout-web service in tests.
 	webService func(action string) error
+	// telegramSvc replaces installing/removing the rout-telegram service in tests.
+	telegramSvc func(action string) error
 }
 
 func (u *UI) writer() io.Writer {

@@ -3,6 +3,10 @@
 This document is a test procedure, not evidence that the US/Canada VPS path has
 been tested. No production deployment is part of this change.
 
+## Remote control from Telegram (v0.6.0)
+
+AI routing can be switched and its exit changed from a Telegram bot, on one or many servers: see [TELEGRAM.md](TELEGRAM.md). The bot calls the same `SetAIEnabled` / `SetAIExit` / exit test as the menu and the panel, so everything in this document — fail-closed behaviour, bound-inbound isolation, rollback — applies unchanged. A switch from Telegram selects an exit that already exists on that server **by its stable ID**; it never carries an address or a credential, and "usable" is decided by the same check the panel shows ("AI exit unusable: points at this server", wrong protocol, and so on), with the real reason in the chat.
+
 ## AI exits through a relay (v0.5.1)
 
 A port forward alone is never an exit: it moves the connection, and the destination

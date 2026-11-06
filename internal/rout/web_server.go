@@ -53,6 +53,8 @@ type WebServer struct {
 	updCache    updateInfo
 	updAt       time.Time
 	fetchLatest func(ctx context.Context) (string, error)
+	// telegramSvc replaces installing the rout-telegram service in tests.
+	telegramSvc func(action string) error
 }
 
 type trafficEntry struct {

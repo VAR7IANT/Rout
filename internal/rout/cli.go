@@ -62,6 +62,7 @@ var helpLines = [][2]string{
 	{"rout web [passwd|install|status|logs|host|https]", "Web 管理面板：设置密码、安装服务、查看状态、允许域名、HTTPS 反向代理配置"},
 	{"rout remote [list|refresh|delete]", "第三方订阅源：列表、立即刷新、删除（添加与编辑请使用 Web 面板）"},
 	{"rout ai [status|test|apply]", "AI 智能分流：菜单、状态、测试配置或重新应用"},
+	{"rout telegram [bind|status|test|unbind|multi|approve|reject|revoke|rename]", "Telegram Bot 远程管理：绑定、状态、测试、解绑、多服务器、批准或撤销服务器（无参数打开菜单）"},
 	{"rout outbounds", "出站代理管理（旧名称 exits 仍可用）"},
 	{"rout traffic", "全部节点流量"},
 	{"rout traffic show|manage ID", "查看或管理节点流量与限额"},
@@ -192,6 +193,8 @@ func Run(args []string) (result error) {
 		return u.subscriptionCommand(args)
 	case "web":
 		return u.webCommand(args)
+	case "telegram":
+		return u.telegramCommand(args)
 	case "remote":
 		return u.remoteCommand(args)
 	case "settings":
@@ -422,6 +425,11 @@ func (a *App) Uninstall() error {
 		}
 		if e = a.RemoveWebService(); e != nil {
 			return e
+		}
+		// Stop the Telegram control channel and withdraw its announcement before the files that
+		// hold its token and keys are deleted.
+		if _, er := a.TelegramUnbind(context.Background()); er != nil {
+			return er
 		}
 	}
 	if e = os.RemoveAll(a.Home); e != nil {

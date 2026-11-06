@@ -78,7 +78,7 @@ func (u *UI) aiMenu() error {
 		if st.Config.Enabled {
 			toggle = "停用 AI 智能分流"
 		}
-		v := u.menu("", []menuItem{item("toggle", toggle), item("inbounds", "选择入站节点"), item("exit", "选择 AI 出口"), item("rules", "查看 AI 规则"), item("test", "测试配置"), item("status", "状态与诊断"), item("apply", "应用更改")}, "返回")
+		v := u.menu("", []menuItem{item("toggle", toggle), item("inbounds", "选择入站节点"), item("exit", "选择 AI 出口"), item("rules", "查看 AI 规则"), item("test", "测试配置"), item("status", "状态与诊断"), item("apply", "应用更改"), item("telegram", "Telegram Bot 管理")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
 		}
@@ -97,6 +97,8 @@ func (u *UI) aiMenu() error {
 			e = u.aiDiagnostics()
 		case "apply":
 			e = u.aiApply(st)
+		case "telegram":
+			e = u.telegramMenu()
 		}
 		if e != nil {
 			if errors.Is(e, errQuit) || errors.Is(e, io.EOF) {

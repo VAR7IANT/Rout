@@ -1,4 +1,4 @@
-# Web management panel (v0.5.1)
+# Web management panel (v0.6.0)
 
 The panel is a separate service, `rout-web`, that serves a React + TypeScript single-page app and a JSON API from the same Go binary (`rout web serve`). It manages nodes, relays, exits, subscriptions, third-party sources and the system. The terminal menu and all CLI commands keep working and share the same state files.
 
@@ -53,6 +53,12 @@ The password can only be set from the CLI, never through the API. It is stored a
 | System | version/update status, service control, logs, backup and restore, subscription HTTPS status, panel HTTPS health (DNS, ports, Caddy, ACME, certificate, Host allow-list, login page) with a re-authenticated repair, panel settings, sessions and audit log |
 
 Interface languages: 简体中文, 繁體中文, English. Light and dark theme follow the system by default and can be switched in the header. The layout adapts from 320 px phones to desktop: tables turn into cards, the side navigation becomes a bottom tab bar, long IPv6 addresses, domains and links wrap instead of widening the page.
+
+## Telegram Bot card (v0.6.0)
+
+*AI Routing → Telegram Bot* binds and manages the Telegram remote control described in [TELEGRAM.md](TELEGRAM.md): a two-step wizard (token and Chat ID are checked against Telegram; an existing hub and its fingerprint are shown for you to confirm), status with the service state, the hub's server list (online, AI on/off, exit name, fingerprint), pending join requests with Approve / Reject, revoke, connection test, edit (name, token, Chat ID, multi-server) and unbind, plus a collapsible activity list. The token is **write-only**: no response returns it, it is cleared from the page after use, and error messages never repeat it. A bot with an active webhook is refused — the panel never offers to delete it.
+
+API: `GET /api/telegram` (status), `POST /api/telegram/probe|bind|unbind|test`, `PATCH /api/telegram`, `POST /api/telegram/pending/{id}/approve|reject`, `DELETE /api/telegram/servers/{id}`. Everything except the status read and the connection test needs the password re-confirmed (the same rule as other changes to who or what controls the server).
 
 ## Security model
 

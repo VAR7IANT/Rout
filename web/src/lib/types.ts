@@ -548,3 +548,74 @@ export interface PanelRepairResult {
   pending: boolean
   diagnosis: string
 }
+
+// ---- Telegram Bot remote management -----------------------------------------------------
+// The bot token is write-only: no call ever returns it.
+
+export type TelegramRole = 'hub' | 'agent'
+export type TelegramConnState = 'unbound' | 'starting' | 'connected' | 'connecting' | 'pending' | 'revoked' | 'error' | 'stopped'
+
+export interface TelegramServer {
+  id: string
+  name: string
+  self: boolean
+  online: boolean
+  last_seen?: string
+  fingerprint: string
+  version?: string
+  ai_enabled?: boolean
+  exit_name?: string
+}
+
+export interface TelegramPending {
+  id: string
+  name: string
+  fingerprint: string
+  requested_at: string
+}
+
+export interface TelegramStatus {
+  bound: boolean
+  role?: TelegramRole
+  server_id?: string
+  server_name?: string
+  bot_username?: string
+  chat_id_masked?: string
+  fingerprint?: string
+  service: { installed: boolean; running: boolean; managed: boolean }
+  connection: { state: TelegramConnState; detail?: string; last_ok?: string }
+  hub?: { endpoints: string[]; fingerprint: string; multi_server: boolean; port: number }
+  follows?: { endpoints: string[]; fingerprint: string }
+  servers: TelegramServer[]
+  pending: TelegramPending[]
+  audit: string[]
+}
+
+export interface TelegramProbe {
+  bot_username: string
+  suggested_name: string
+  webhook_active: boolean
+  hub: { found: false } | { found: true; endpoints: string[]; fingerprint: string; hub_name?: string }
+}
+
+export interface TelegramBindRequest {
+  token: string
+  chat_id: string
+  server_name?: string
+  role: TelegramRole
+  /** Required for an agent: must equal the fingerprint the probe reported for the hub. */
+  trust_hub_fp?: string
+  multi_server?: boolean
+}
+
+export interface TelegramPatch {
+  server_name?: string
+  token?: string
+  chat_id?: string
+  multi_server?: boolean
+}
+
+export interface TelegramTestResult {
+  ok: boolean
+  steps: { level: CheckLevel; text: string }[]
+}

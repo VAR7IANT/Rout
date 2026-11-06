@@ -1,5 +1,15 @@
 # Upgrading and rollback safety
 
+## To v0.6.0: Telegram Bot remote management
+
+Back up first as usual (`sudo rout backup --full`), then `sudo rout update`. **Nothing is migrated and nothing restarts**: nodes, relays, exits, AI routing, subscriptions, tokens and the panel keep working unchanged, and a host that never binds a bot gets no new service, no new file and no listening port. `state.json` is untouched by this release; the AI Smart Routing menu gains one entry (*Telegram Bot management*) after the existing ones, so no menu number moves.
+
+Created only when you bind: `/etc/rout/telegram.json` (0600; Bot Token and this server's private key), `telegram-status.json`, `telegram-audit.log`, the `rout-telegram` service and its helper copy `/opt/rout/bin/rout-telegram-v1`. They are **not** part of `rout backup`, the panel's backup bundle or a restore: after restoring on a new machine, bind again. On hosts that have a binding, `rout update` refreshes the helper and restarts only the Telegram service (`rout telegram refresh` does the same by hand).
+
+Mixed versions: a v0.6.0 hub and v0.6.0 agents share a versioned protocol; update every server of a fleet, hub first or last, and an agent that cannot talk to the hub simply shows as offline in the chat — proxies are never affected.
+
+Rollback: restore the previous manager (`mv /usr/local/bin/rout.previous /usr/local/bin/rout`). An older manager ignores the Telegram files; the `rout-telegram` service would keep running the v0.6.0 helper copy, so remove it first with `rout telegram unbind` (or leave it bound and keep v0.6.0 for that service only).
+
 ## To v0.5.1: one-click panel HTTPS, zh-TW CLI and AI exits through relays
 
 Back up first: `sudo rout backup --full`. Then `sudo rout update`. Nothing restarts and nothing is migrated: nodes, relays, exits, AI routing, subscriptions, tokens, `/s/TOKEN` URLs, the subscription HTTPS site and the panel keep working unchanged. The main menu gains entry **8** (the numbers 1–7 are unchanged). Existing AI routing keeps its exit and bindings; new exit kinds appear only when you create them.
