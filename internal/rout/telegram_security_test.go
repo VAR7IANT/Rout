@@ -107,7 +107,7 @@ func TestTelegramRejectsEveryoneButTheOwnersPrivateChat(t *testing.T) {
 		t.Fatalf("the bot answered a stranger %d times", n)
 	}
 	// a group, even with the owner's own user id in it: ignored completely
-	before := tg.count("Rout Control")
+	before := tg.count(listMarker)
 	tg.say(-100500, testChat, "supergroup", "/start")
 	tg.say(-100500, 999, "group", "/start")
 	// the right chat but the wrong sender
@@ -115,7 +115,7 @@ func TestTelegramRejectsEveryoneButTheOwnersPrivateChat(t *testing.T) {
 	// a bot
 	tg.push(tgUpdate{Message: &tgMessage{MessageID: 9, From: &tgUser{ID: testChat, IsBot: true}, Chat: tgChat{ID: testChat, Type: "private"}, Text: "/start"}})
 	time.Sleep(400 * time.Millisecond)
-	if len(msgsTo(tg, -100500)) != 0 || tg.count("Rout Control") != before {
+	if len(msgsTo(tg, -100500)) != 0 || tg.count(listMarker) != before {
 		t.Fatal("a non-owner context produced a server list")
 	}
 
@@ -719,7 +719,7 @@ func TestTelegramUnbindLeavesNoControlChannel(t *testing.T) {
 		t.Fatal("the hub's token and private key were not deleted")
 	}
 	// pressing an old button now does nothing
-	list, _ := tg.find("Rout Control")
+	list, _ := tg.find(listMarker)
 	id := tg.tap(list.ID, "L~AAAAAAAAAAA")
 	time.Sleep(300 * time.Millisecond)
 	if a, ok := answered(tg, id); ok && a.Text != "" && !strings.Contains(a.Text, "失效") {

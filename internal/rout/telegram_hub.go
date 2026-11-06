@@ -60,6 +60,24 @@ type tgHub struct {
 	srv   *http.Server
 	// onPending is called (outside the lock) when a new server asks to join.
 	onPending func(TelegramPendingRecord)
+	// pendingMu guards onPending: it is set by the component that owns the hub while handlers
+	// may already be running.
+	pendingMu sync.Mutex
+}
+
+func (h *tgHub) setOnPending(f func(TelegramPendingRecord)) {
+	h.pendingMu.Lock()
+	h.onPending = f
+	h.pendingMu.Unlock()
+}
+
+func (h *tgHub) notifyPending(rec TelegramPendingRecord) {
+	h.pendingMu.Lock()
+	f := h.onPending
+	h.pendingMu.Unlock()
+	if f != nil {
+		f(rec)
+	}
 }
 
 func newTelegramHub(a *App) *tgHub {
@@ -345,9 +363,7 @@ func (h *tgHub) hEnroll(w http.ResponseWriter, r *http.Request, q tgReq) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "busy"})
 		return
 	}
-	if h.onPending != nil {
-		h.onPending(rec)
-	}
+	h.notifyPending(rec)
 	writeJSON(w, http.StatusOK, map[string]string{"state": "pending"})
 }
 

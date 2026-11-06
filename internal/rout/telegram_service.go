@@ -323,7 +323,36 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 		return ctx.Err()
 	}
 	hub := newTelegramHub(a)
-	defer hub.close()
+	// Nothing started here may outlive this function: a goroutine that writes the runtime status
+	// or the audit log after the component returned would overwrite the next instance's state
+	// (and, in tests, race with the removal of the directory).
+	var bot *tgBot
+	var tickerDone chan struct{}
+	tctx, stopTicker := context.WithCancel(ctx)
+	defer func() {
+		stopTicker()
+		if tickerDone != nil {
+			<-tickerDone
+		}
+		hub.close() // no handler can start another notice after this
+		if bot != nil {
+			bot.wg.Wait()
+		}
+	}()
+	// The bot and the hook that tells the owner about a join request exist before the listener
+	// accepts anyone: an agent that enrolls the moment the port opens must find them in place.
+	bot = newTelegramBot(a, hub, cl)
+	bot.rt = rt
+	hub.setOnPending(func(rec TelegramPendingRecord) {
+		// Never make an agent's enrollment request wait for Telegram.
+		bot.wg.Add(1)
+		go func() {
+			defer bot.wg.Done()
+			if cur, e := a.LoadTelegram(); e == nil {
+				bot.notifyPending(ctx, cur, rec)
+			}
+		}()
+	})
 	if cfg.Hub.MultiServer {
 		if e := hub.listen(cfg); e != nil {
 			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateError, a.tgErr(e) })
@@ -333,16 +362,6 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 		if a.telegram != nil && a.telegram.onHub != nil {
 			a.telegram.onHub(hub)
 		}
-	}
-	bot := newTelegramBot(a, hub, cl)
-	bot.rt = rt
-	hub.onPending = func(rec TelegramPendingRecord) {
-		// Never make an agent's enrollment request wait for Telegram.
-		go func() {
-			if cur, e := a.LoadTelegram(); e == nil {
-				bot.notifyPending(ctx, cur, rec)
-			}
-		}()
 	}
 	rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateOK, "" })
 	if e := bot.announce(ctx, cfg); e != nil {
@@ -358,7 +377,11 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 	for _, p := range cfg.Hub.Pending {
 		bot.notifyPending(ctx, cfg, p)
 	}
-	go a.telegramHubTicker(ctx, hub, bot, rt)
+	tickerDone = make(chan struct{})
+	go func() {
+		defer close(tickerDone)
+		a.telegramHubTicker(tctx, hub, bot, rt)
+	}()
 	return bot.run(ctx, rt)
 }
 

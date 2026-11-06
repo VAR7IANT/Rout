@@ -798,3 +798,52 @@ func TestTelegramOnlyOneHubKeepsTheUpdateStream(t *testing.T) {
 		t.Fatalf("the new hub did not answer: %+v", list)
 	}
 }
+
+// An agent that enrolls the instant the hub's port opens (a hub restarting while its agents
+// reconnect) must find the join hook in place; run under -race this also checks that the hook is
+// not written while a handler reads it.
+func TestTelegramEnrollmentArrivingWhileTheHubStartsIsSafe(t *testing.T) {
+	tg := newFakeTelegram(t, testBotToken, testChat)
+	n := newTGNode(t, tg, "US-GIA")
+	if _, e := n.a.TelegramBind(context.Background(), TelegramBindRequest{Token: testBotToken, ChatID: testChat}); e != nil {
+		t.Fatal(e)
+	}
+	if e := n.a.TelegramSetMultiServer(true, 0, nil); e != nil {
+		t.Fatal(e)
+	}
+	racer, _ := newTelegramIdentity(randomID(8))
+	sid := randomID(8)
+	result := make(chan string, 1)
+	orig := n.a.telegram.onHub
+	n.a.telegram.onHub = func(h *tgHub) {
+		orig(h)
+		// The port is open and the rest of the startup has not run: knock now, and hold the
+		// startup until the hub has answered, so the request cannot be served "later".
+		var ch tgStateOut
+		if _, e := hubPostErr(h.addr(), racer, "/v1/enroll/challenge", enrollIn{ServerID: sid, Name: "Racer"}, &ch); e != nil {
+			result <- "challenge: " + e.Error()
+			return
+		}
+		proof := deriveTelegramKeys(testBotToken).enrollProof(ch.Nonce, sid, racer.fingerprint())
+		var st tgStateOut
+		if _, e := hubPostErr(h.addr(), racer, "/v1/enroll", enrollIn{ServerID: sid, Name: "Racer", Nonce: ch.Nonce, Proof: proof}, &st); e != nil {
+			result <- "enroll: " + e.Error()
+			return
+		}
+		result <- st.State
+	}
+	n.start()
+	select {
+	case got := <-result:
+		if got != "pending" {
+			t.Fatalf("enrollment answer: %q", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no answer to the early enrollment")
+	}
+	// the owner is told, even though the request came in before the bot started polling
+	waitFor(t, "approval prompt for the early request", 8*time.Second, func() bool { return tg.count("<b>Racer</b>") == 1 })
+	if len(n.hubConfig(t).Hub.Pending) != 1 {
+		t.Fatalf("pending: %+v", n.hubConfig(t).Hub.Pending)
+	}
+}

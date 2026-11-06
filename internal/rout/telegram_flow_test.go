@@ -15,12 +15,15 @@ import (
 
 const testChat int64 = 111
 
+// listMarker identifies the server list message; the pinned announcement also says "Rout Control".
+const listMarker = "<b>Rout Control</b>"
+
 func openList(t *testing.T, tg *fakeTelegram) fakeMsg {
 	t.Helper()
-	before := tg.count("Rout Control")
+	before := tg.count(listMarker)
 	tg.say(testChat, testChat, "private", "/start")
-	waitFor(t, "server list", 8*time.Second, func() bool { return tg.count("Rout Control") > before })
-	m, _ := tg.find("Rout Control")
+	waitFor(t, "server list", 8*time.Second, func() bool { return tg.count(listMarker) > before })
+	m, _ := tg.find(listMarker)
 	return m
 }
 

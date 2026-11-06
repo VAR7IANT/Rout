@@ -169,7 +169,8 @@ func (b *tgBot) run(ctx context.Context, rt *tgRTBox) error {
 			cfg.Offset = next
 		}
 	}
-	b.wg.Wait()
+	// Background operations and notices are waited for by the component that owns the bot, after
+	// it has stopped accepting new work (see runTelegramHub).
 	return ctx.Err()
 }
 
