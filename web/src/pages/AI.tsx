@@ -9,6 +9,7 @@ import type { AIRoute, AISimulation, AIView, ChainProtocol, ChainSpec, DiagResul
 import { DiagResultView, HopPath, PathChain, findIPs, type HopKind } from '../components/shared'
 import { Badge, Button, Card, EmptyState, Field, Input, Notice, PageHead, Segmented, Select, Spinner, Switch, Textarea, type Tone } from '../components/ui'
 import { Icon } from '../components/icons'
+import { TelegramCard } from './Telegram'
 
 type Mode = 'existing' | 'relay' | 'remote' | 'forwarder'
 
@@ -38,6 +39,7 @@ export function AIPage() {
       </div>
       <TestCard view={v} />
       <SimulateCard />
+      <TelegramCard />
       <LimitsCard view={v} />
     </div>
   )
