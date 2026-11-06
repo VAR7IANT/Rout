@@ -118,3 +118,7 @@ Only TCP crosses the chain; a Hysteria2/TUIC end needs a relay that forwards UDP
 ## Panel HTTPS on IPv6-only and NAT hosts (v0.5.1)
 
 The panel backend listens on `127.0.0.1:8790`; Caddy serves the public side on whatever families the host has. On an **IPv6-only** server only an AAAA record is needed and Let's Encrypt validates over IPv6 (HTTP-01 on TCP 80 / TLS-ALPN-01 on TCP 443); an A record pointing elsewhere makes validation fail and is reported. On a **NAT** host (the public address is not on an interface) issuance works only when the provider forwards public TCP 80 and 443 unchanged to this host; a NAT VPS with only high mapped ports cannot get a certificate by HTTP-01/TLS-ALPN-01 and should use the SSH tunnel. Rout detects this, explains it and asks for explicit confirmation; it never modifies the host firewall.
+
+## Node outbound IP family
+
+Nodes have their own per-node outbound policy (Auto, IPv4 first, IPv6 first, IPv4 only, IPv6 only), enforced for names *and* for bare IP addresses, with explicit limits for outbound proxies. It is separate from the relay policy above: see [NODE_EGRESS.md](NODE_EGRESS.md).

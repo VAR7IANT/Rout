@@ -5,6 +5,7 @@ Create proxy nodes, relay traffic to this or another server and manage reusable 
 - Five node protocols: **VLESS Reality, AnyTLS Reality, Shadowsocks 2022, Hysteria2, TUIC v5**
 - Guided TCP/UDP relays to a service on this server or to a remote server, with a full path preview, loop checks and the original node's credentials kept
 - Reusable **SOCKS5 / HTTP / certificate-verified HTTPS CONNECT outbound proxies** shared by many nodes, with no silent direct-IP fallback
+- Per-node **outbound IP family**: Auto, IPv4 first, IPv6 first, **IPv4 only**, **IPv6 only** — "only" really excludes the other family, for names and for bare addresses (see [Outbound IP family per node](#outbound-ip-family-per-node))
 - Exact per-node **traffic accounting and hard monthly quotas** in the kernel (nftables)
 - **systemd and OpenRC**, IPv4-only, IPv6-only and dual-stack hosts; existing NAT-VPS mappings from older versions keep working
 - Low-memory friendly: engines are streamed to disk and verified incrementally, never held in memory (see [Low-memory installation](#low-memory-installation))
@@ -115,6 +116,24 @@ Choose [1]:
 IPv4 is the default and the last choice is remembered. A single-family host is told what it has and is not asked. Dual stack is two sockets on one port, verified at creation to be able to coexist; it does not rely on a dual-stack wildcard, so it behaves the same whatever `net.ipv6.bindv6only` or the kernel's IPv4-mapped support say. The mode is stored on the relay (`inbound_mode`) and is never silently turned into dual stack; the public address is kept consistent with it (an IPv6 literal is never advertised by an IPv4 entry). Only a dual-stack relay prints a second link for the other address.
 
 Nodes use the same three choices when they are created. sing-box cannot set `IPV6_V6ONLY`, so an explicit **IPv6** node listens on `::` and refuses IPv4 clients by source address in its routing rules (the first rule rejects `0.0.0.0/0`); it is not offered as dual stack, its metering counts IPv6 only, and it prints no IPv4 link. Nodes created by older versions keep their saved listening address and behavior.
+
+### Outbound IP family per node
+
+Independent of the inbound mode above, every node can choose which IP family it uses to reach the Internet. In the terminal: *Create node → Advanced options → Outbound IP family*, or *Manage nodes → choose a node → Outbound IP family*; in the panel: *Nodes → New nodes* and the node drawer.
+
+```text
+Outbound IP family (what the node uses to reach the Internet)
+   1  Auto          No restriction; the system chooses. Same as earlier versions (recommended)
+   2  IPv4 first    Prefers IPv4 and falls back to IPv6 when it fails
+   3  IPv6 first    Prefers IPv6 and falls back to IPv4 when it fails (this is not IPv6 only)
+   4  IPv4 only     IPv6 addresses and AAAA-only names are refused explicitly, with no IPv6 fallback
+   5  IPv6 only     IPv4 addresses and A-only names are refused explicitly, with no IPv4 fallback
+Choose [1]:
+```
+
+Auto is the default, adds nothing to the node's configuration and is what every existing node keeps. **IPv6 first is not IPv6 only**: only the "only" policies exclude the other family. Excluding it takes more than a DNS preference — with sing-box 1.14.3, `domain_resolver.strategy = ipv6_only` does not stop a client that asks for an IPv4 *address*, so Rout also writes a routing rule that rejects the other family's literals (verified against the real engine; see [docs/NODE_EGRESS.md](docs/NODE_EGRESS.md)). Changing the policy restarts only that node, keeps its UUID, port, certificate and links, rolls back on failure, and survives `rout apply`, restarts and backup/restore. On a VPS without a route for a family, an "only" policy for that family asks for explicit confirmation.
+
+With an **outbound proxy** (SOCKS5, HTTP CONNECT, HTTPS CONNECT, a remote node) the policy governs only how this server reaches the proxy server; which family the proxy uses towards the website is the proxy's decision, and Rout says so instead of claiming to enforce it. *Test IPv6 egress* sends real requests through the node's own exit, compares them with the host's own network (labelled as a host test) and reports pass, fail or **could not be verified**.
 
 ### Legacy NAT-VPS mappings
 
