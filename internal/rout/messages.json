@@ -2043,5 +2043,6 @@
  "只有控制中心可以批准服务器":"Only the control hub can approve servers",
  "只有控制中心可以撤销服务器":"Only the control hub can revoke servers",
  "不能移除本机；如需停用请解绑":"This server cannot be removed; unbind it to stop using it",
- "Telegram Bot 远程管理：绑定、状态、测试、解绑、多服务器、批准或撤销服务器（无参数打开菜单）":"Telegram Bot remote management: bind, status, test, unbind, multi-server, approve or revoke servers (menu without arguments)"
+ "Telegram Bot 远程管理：绑定、状态、测试、解绑、多服务器、批准或撤销服务器（无参数打开菜单）":"Telegram Bot remote management: bind, status, test, unbind, multi-server, approve or revoke servers (menu without arguments)",
+ "服务已超过 5 分钟没有更新状态，可能没有在运行":"The service has not updated its status for over 5 minutes and may not be running"
 }

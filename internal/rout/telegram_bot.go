@@ -37,6 +37,7 @@ type tgBot struct {
 	taps     []time.Time
 	annText  string
 	wg       sync.WaitGroup
+	rt       *tgRTBox // runtime status shared with the service (may be nil in tests of the bot alone)
 }
 
 func newTelegramBot(a *App, h *tgHub, cl *tgClient) *tgBot {
@@ -49,9 +50,12 @@ func esc(s string) string          { return html.EscapeString(s) }
 // ---- audit -----------------------------------------------------------------------------------
 
 // audit appends one line: time, who (masked), what. Never a token, key or exit address.
-func (b *tgBot) audit(who, action, detail string) {
-	line := fmt.Sprintf("%s\t%s\t%s\t%s\n", b.app.tgNow().Format(time.RFC3339), who, action, tgScrub(detail, 160))
-	p := b.app.telegramAuditPath()
+func (b *tgBot) audit(who, action, detail string) { b.app.tgAudit(who, action, detail) }
+
+// tgAudit writes one audit line; it is shared by the bot and the hub.
+func (a *App) tgAudit(who, action, detail string) {
+	line := fmt.Sprintf("%s\t%s\t%s\t%s\n", a.tgNow().Format(time.RFC3339), who, action, tgScrub(detail, 160))
+	p := a.telegramAuditPath()
 	if st, e := os.Stat(p); e == nil && st.Size() > 256<<10 {
 		os.Rename(p, p+".1")
 	}
@@ -113,6 +117,15 @@ func (b *tgBot) run(ctx context.Context, rt *tgRTBox) error {
 					return ctx.Err()
 				}
 			case tgIsConflict(e):
+				// If the other consumer is another Rout hub (two servers bound at the same moment,
+				// or a hub was forced while the old one still ran), the one whose announcement is
+				// not the pinned one gives way for good instead of fighting over the update stream.
+				if oh := b.otherHub(ctx, cfg); oh != nil {
+					rt.set(func(r *TelegramRuntime) {
+						r.State, r.Detail = tgStateConflict, tgScrub(b.app.Error(oh), 200, cfg.Token)
+					})
+					return oh
+				}
 				rt.set(func(r *TelegramRuntime) {
 					r.State, r.Detail = tgStateConflict, "另一个程序正在接收这个机器人的消息（getUpdates 或 webhook）；Rout 不会覆盖它"
 				})
@@ -139,6 +152,11 @@ func (b *tgBot) run(ctx context.Context, rt *tgRTBox) error {
 			rt.set(func(r *TelegramRuntime) { r.State, r.Detail = tgStateOK, "" })
 		}
 		for _, up := range ups {
+			// The long poll can last half a minute: handle each update against the configuration
+			// as it is now (approvals, renames and the server list change meanwhile).
+			if cur, er := b.app.LoadTelegram(); er == nil {
+				cfg = cur
+			}
 			b.handle(ctx, cfg, up)
 			// Confirm each update only after it was handled.
 			next := up.UpdateID + 1
@@ -223,6 +241,20 @@ func (b *tgBot) onMessage(ctx context.Context, cfg TelegramConfig, m *tgMessage)
 func (b *tgBot) cb(cfg TelegramConfig, text string, parts ...string) tgButton {
 	data := strings.Join(parts, ":")
 	return tgButton{Text: text, Data: data + "~" + cfg.keys().cbTag(cfg.ChatID, data)}
+}
+
+// ack answers a button press and reports whether the press is still current. A press that Telegram
+// no longer accepts an answer for ("query is too old") was made long ago, for instance while this
+// hub was down, and arrives only now from Telegram's backlog: running it would carry out an
+// instruction the owner gave hours earlier and has probably forgotten, so it is dropped.
+func (b *tgBot) ack(ctx context.Context, id string) bool {
+	e := b.cl.answerCallback(ctx, id, "", false)
+	var ae *tgAPIError
+	if errors.As(e, &ae) && ae.Code == 400 && (strings.Contains(ae.Desc, "too old") || strings.Contains(ae.Desc, "query ID is invalid")) {
+		b.audit("-", "stale_press_ignored", "")
+		return false
+	}
+	return true
 }
 
 func (b *tgBot) onCallback(ctx context.Context, cfg TelegramConfig, cb *tgCallback) {
@@ -403,7 +435,7 @@ func (b *tgBot) showServer(ctx context.Context, cfg TelegramConfig, msg int64, i
 		b.showList(ctx, cfg, msg, esc(b.t("该服务器已不在列表中")))
 		return
 	}
-	if v.Online && !v.Local {
+	if v.Online && !v.Local && !b.hub.isBusy(id) {
 		if res, e := b.hub.dispatch(ctx, cfg, id, tgCommand{ID: randomID(8), Kind: tgCmdStatus}, 8*time.Second); e == nil && res.Status != nil {
 			v.Status = res.Status
 			v.Status.Name = v.Name
@@ -558,7 +590,9 @@ func (b *tgBot) confirm(ctx context.Context, cfg TelegramConfig, cb *tgCallback,
 		b.cl.answerCallback(ctx, cb.ID, b.t("这个确认已失效或已使用，请重新操作"), true)
 		return
 	}
-	b.cl.answerCallback(ctx, cb.ID, "", false)
+	if !b.ack(ctx, cb.ID) {
+		return
+	}
 	if c.kind == "revoke" {
 		b.audit(maskChatID(cfg.ChatID), "revoke_server", c.exitName)
 		if e := b.hub.revoke(c.serverID); e != nil {
@@ -595,7 +629,9 @@ func (b *tgBot) toggle(ctx context.Context, cfg TelegramConfig, cb *tgCallback, 
 		b.cl.answerCallback(ctx, cb.ID, b.t("服务器离线"), true)
 		return
 	}
-	b.cl.answerCallback(ctx, cb.ID, "", false)
+	if !b.ack(ctx, cb.ID) {
+		return
+	}
 	label := b.t("正在关闭 AI 分流…")
 	if on {
 		label = b.t("正在开启 AI 分流…")
@@ -703,46 +739,63 @@ func (b *tgBot) notifyPending(ctx context.Context, cfg TelegramConfig, rec Teleg
 		esc(b.t("名称：")) + " <b>" + esc(rec.Name) + "</b>\n" +
 		esc(b.t("证书指纹：")) + " <code>" + esc(fingerprintGroups(rec.FP)) + "</code>\n\n" +
 		esc(b.t("请到该服务器的 Rout 菜单（Telegram Bot 管理 → 查看绑定状态）核对指纹，一致再允许。不认识的请求请拒绝。"))
-	b.cl.sendMessage(ctx, cfg.ChatID, text, &tgMarkup{Keyboard: [][]tgButton{{
+	if _, e := b.cl.sendMessage(ctx, cfg.ChatID, text, &tgMarkup{Keyboard: [][]tgButton{{
 		b.cb(cfg, "✅ "+b.t("允许"), "A", rec.ID),
 		b.cb(cfg, "🚫 "+b.t("拒绝"), "D", rec.ID),
-	}}})
+	}}}); e != nil {
+		// The request is saved either way: it is still listed in the menu and the panel.
+		b.audit(maskChatID(cfg.ChatID), "join_notice_failed", rec.Name+" "+tgScrub(tgFriendly(e), 120))
+	}
 	b.audit(maskChatID(cfg.ChatID), "join_request", rec.Name+" "+tgShort(rec.FP))
 }
 
 func (b *tgBot) decide(ctx context.Context, cfg TelegramConfig, cb *tgCallback, msg int64, allow bool, reqID string) {
+	if !b.ack(ctx, cb.ID) {
+		return
+	}
 	var name string
 	if allow {
 		rec, e := b.hub.approve(reqID)
 		if e != nil {
-			b.cl.answerCallback(ctx, cb.ID, b.t(e.Error()), true)
 			b.cl.editMessage(ctx, cfg.ChatID, msg, esc(b.t("该请求已处理或已过期")), nil)
 			return
 		}
 		name = rec.Name
 		b.audit(maskChatID(cfg.ChatID), "join_allowed", name+" "+tgShort(rec.FP))
-		b.cl.answerCallback(ctx, cb.ID, b.t("已允许"), false)
 		b.cl.editMessage(ctx, cfg.ChatID, msg, "✅ "+esc(fmt.Sprintf(b.t("已允许 %s 加入"), name)), nil)
 		return
 	}
 	rec, e := b.hub.reject(reqID)
 	if e != nil {
-		b.cl.answerCallback(ctx, cb.ID, b.t(e.Error()), true)
 		b.cl.editMessage(ctx, cfg.ChatID, msg, esc(b.t("该请求已处理或已过期")), nil)
 		return
 	}
 	b.audit(maskChatID(cfg.ChatID), "join_rejected", rec.Name+" "+tgShort(rec.FP))
-	b.cl.answerCallback(ctx, cb.ID, b.t("已拒绝"), false)
 	b.cl.editMessage(ctx, cfg.ChatID, msg, "🚫 "+esc(fmt.Sprintf(b.t("已拒绝 %s"), rec.Name)), nil)
 }
 
 // ---- announcement ----------------------------------------------------------------------------
+
+// otherHub reports another Rout hub if the chat's pinned announcement belongs to one.
+func (b *tgBot) otherHub(ctx context.Context, cfg TelegramConfig) error {
+	ch, e := b.cl.getChat(ctx, cfg.ChatID)
+	if e != nil || ch.PinnedMessage == nil {
+		return nil
+	}
+	if an, er := cfg.keys().openAnnouncement(ch.PinnedMessage.Text); er == nil && an.HubID != cfg.ServerID {
+		return &tgOtherHubError{name: an.Name}
+	}
+	return nil
+}
 
 // announce publishes (or refreshes) the pinned, encrypted hub address. It refuses to overwrite
 // an announcement that belongs to another hub.
 func (b *tgBot) announce(ctx context.Context, cfg TelegramConfig) error {
 	keys := cfg.keys()
 	want := b.hub.announcement(cfg)
+	if b.rt != nil {
+		b.rt.set(func(r *TelegramRuntime) { r.Endpoints = want.Endpoints })
+	}
 	ch, e := b.cl.getChat(ctx, cfg.ChatID)
 	if e != nil {
 		return e
@@ -781,6 +834,12 @@ func (b *tgBot) publishNew(ctx context.Context, cfg TelegramConfig, an tgAnnounc
 	}
 	if e = b.cl.pin(ctx, cfg.ChatID, m.MessageID); e != nil {
 		return fmt.Errorf("无法置顶控制中心地址：%s", tgFriendly(e))
+	}
+	if oh := b.otherHub(ctx, cfg); oh != nil {
+		// Someone else announced at the same moment and their pin is the newer: withdraw ours.
+		b.cl.unpin(ctx, cfg.ChatID, m.MessageID)
+		b.cl.deleteMessage(ctx, cfg.ChatID, m.MessageID)
+		return oh
 	}
 	return b.app.mutateTelegram(func(c *TelegramConfig) error { c.Hub.AnnounceMsgID = m.MessageID; return nil })
 }

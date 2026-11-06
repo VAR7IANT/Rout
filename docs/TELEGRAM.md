@@ -67,7 +67,7 @@ A closed set — there is no generic "run" command, no file access, no way to as
 
 Every command has a random ID, an expiry, is validated on arrival and is de-duplicated by ID (a redelivered command is answered from a cache, not run twice). Disabling AI routing keeps the selected exit and the bindings; switching an exit changes only the **bound** inbounds and re-renders only them. Failures roll back through Rout's `Commit`, and the message you see states what is still in effect.
 
-Exit names, kinds and "usable / why not" are shown; hosts, ports, users, passwords and links are not. Text that crosses the wire or reaches the chat is additionally scrubbed (URLs, IP addresses, `password=…` patterns, long key-like strings, the token) and HTML-escaped.
+Exit names, kinds and "usable / why not" are shown; hosts, ports, users, passwords and links are not. Diagnostics print addresses in formats no generic pattern can anticipate (a host name in a DNS step, a bare IPv6 literal, `host:port`), so every string the configuration names — each exit's host, user name, password and link, a chain hop's address, every relay's destination — is removed **by value** (case-insensitively) before a step or error leaves the server, on top of generic scrubbing of URLs, IPv4/IPv6 literals, `password=…` patterns, long key-like strings and the token. Everything is HTML-escaped. The hub also bounds and scrubs what an agent sends (status fields, list lengths, step levels), so a buggy or compromised agent cannot put arbitrary text or secrets into your chat; the price is that the *observed exit IP* of the test is not shown in Telegram (use the menu or the panel for that).
 
 ## Authorization and replay protection in the chat
 
@@ -84,6 +84,7 @@ Exit names, kinds and "usable / why not" are shown; hosts, ports, users, passwor
 | `/etc/rout/telegram.json` | Token, Chat ID, this server's private key and pinned peers. **0600**, in the 0700 config directory. **Not** part of `state.json`, `rout backup` or the panel's backup bundle, and listed in the permission check/repair. |
 | `telegram-status.json`, `telegram-audit.log` | Runtime state and audit trail. No secrets. |
 | Service | `rout-telegram` (systemd or OpenRC), running a private copy `rout-telegram-v1` of the manager so `rout update` never swaps the binary under it; `Restart=always`, enabled at boot, same sandbox options as the panel service. Logs: `journalctl -u rout-telegram` / `/var/log/rout-telegram.log`; the panel's log viewer knows the unit. |
+| Rename | Renaming a server on that server (menu, `rout telegram rename`, panel) is adopted by the hub from the authenticated agent's next report, so the chat and the hub's panel show the new name. The name is only a label (the record is keyed by the certificate); a name that is invalid, already used by another server or the hub (case-insensitively) or changes more than once every 30 s is ignored, and the first refusal is audited. |
 | Reboot / restart | Everything is read from disk: no re-binding, no second approval; agents reconnect with back-off and jitter; the hub keeps its port and offset. |
 | Upgrade | `rout update` refreshes the helper copy and restarts the service only on hosts that bound a bot. The configuration format is versioned. |
 | Token / Chat ID change | Menu / panel on the **hub**. Telegram must accept the new values first. The hub republishes its announcement under the new token (the old one is withdrawn), and each approved server takes the new credentials from the hub over the authenticated channel when it next connects (offline servers sync when they return). If the hub's address changes in the same moment as the token, a server that can neither read the new announcement nor reach the old address must be re-bound locally. |
@@ -91,6 +92,18 @@ Exit names, kinds and "usable / why not" are shown; hosts, ports, users, passwor
 | Uninstall | `rout uninstall` unbinds first (best effort for the Telegram side), then removes the service, helper and all files. |
 | Hub replaced | If the hub VPS is gone, bind another server with *"the old hub is gone"* (`rout telegram bind --hub`). Servers pinned to the old hub stop (`hub_changed`) until you *Re-trust control hub* on each and approve them again. |
 | Telegram or hub unreachable | Proxy nodes, relays, subscriptions and AI routing keep running untouched; the service only retries. |
+
+## Liveness and robustness details
+
+* **Busy is not offline.** An agent runs commands one at a time and the AI exit test can take a minute; it sends a heartbeat meanwhile, so the hub keeps showing it online, and opening its page does not wait for a status the busy agent cannot give (a second operation on the same server is refused as "busy").
+* **Offline** means no poll or heartbeat for the long-poll length plus ten seconds. Buttons that act on a server are not offered while it is offline, and a stale one fails immediately.
+* **Clocks.** Command validity is a relative TTL measured by the receiving agent, and the hub does not check the validity period of an agent's self-signed certificate (it is authorised by its fingerprint), so a server with a wrong clock keeps working.
+* **Dead addresses.** Connecting to a hub address (or Telegram) is bounded to ten seconds (fifteen for Telegram), so an address that swallows packets does not delay trying the next one.
+* **Backlog.** Telegram keeps button presses made while the hub was down. A press Telegram no longer accepts an answer for ("query is too old") is dropped and audited instead of carrying out an instruction the owner gave hours earlier. Enrollment decisions and confirmations are dropped the same way.
+* **Two hubs.** If two servers become hub at the same moment, or a hub is forced while the old one still runs, the one whose announcement is not the pinned one stops (`conflict`) instead of fighting over `getUpdates`.
+* **Stale status.** The runtime status file is rewritten every few seconds by a running service; one that has not been touched for five minutes is shown as *stopped*, never as "connected".
+* **Rate limits.** A short Bot API flood limit (`retry_after` ≤ 10 s) on anything but the update poll is waited out and retried once.
+* **Cost.** The status reported every poll and by the panel is computed from the saved configuration alone; it does not query the service manager once per node, and the panel never looks up this server's public address on a refresh.
 
 ## Network prerequisites and NAT
 
@@ -114,7 +127,7 @@ Exit names, kinds and "usable / why not" are shown; hosts, ports, users, passwor
 
 ## Not verified / known limits
 
-Automated tests use an in-process fake Telegram Bot API with real mutually authenticated TLS between real hub and agent code; see below. **Not verified** because they need real infrastructure: the live Telegram service (pinning and `getChat` of a private chat's pinned message, rate limits, message-edit corner cases), several real VPSs across a real network, NAT/firewall reachability, real systemd/OpenRC runs of the new unit, and real phone clients. Other limits: groups/channels are not supported; there is one hub per bot token; a hub address change at the same time as a token change needs a local re-bind; the dedupe cache is in memory (a process restart between executing a command and reporting it can re-run an idempotent command, which then reports "nothing changed").
+Automated tests use an in-process fake Telegram Bot API with real mutually authenticated TLS between real hub and agent code; see below. The generated systemd unit is parsed by the real `systemd-analyze verify` and the OpenRC script by `sh -n` and `shellcheck` wherever those tools exist (CI has them), which proves the definitions are well formed, **not** that the services start, restart or survive a reboot. **Not verified** because they need real infrastructure: the live Telegram service (pinning and `getChat` of a private chat's pinned message, rate limits, message-edit corner cases, and the exact Telegram answer for an old button press that the backlog guard relies on — if Telegram still accepted it, the guard simply does nothing and the earlier behaviour remains), several real VPSs across a real network, NAT/firewall reachability, systemd and OpenRC actually running the new service, and real phone clients. Other limits: groups/channels are not supported; there is one hub per bot token; a hub address change at the same time as a token change needs a local re-bind; an approved server can choose its own display name (not its identity), so use the fingerprint, not the name, when in doubt; the dedupe cache is in memory (a process restart between executing a command and reporting it can re-run an idempotent command, which then reports "nothing changed").
 
 ## Automated tests
 

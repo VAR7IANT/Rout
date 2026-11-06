@@ -120,6 +120,10 @@ func openB64(key []byte, s string) ([]byte, error) {
 // both the hub's TLS server certificate and an agent's TLS client certificate.
 type tgIdentity struct{ CertPEM, KeyPEM string }
 
+// tgIdentityClock is the time new certificates are issued at; tests move it to model a server
+// whose clock is wrong (the hub must not depend on a self-signed certificate's validity period).
+var tgIdentityClock = time.Now
+
 func newTelegramIdentity(serverID string) (tgIdentity, error) {
 	key, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if e != nil {
@@ -129,7 +133,7 @@ func newTelegramIdentity(serverID string) (tgIdentity, error) {
 	if e != nil {
 		return tgIdentity{}, e
 	}
-	now := time.Now()
+	now := tgIdentityClock()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial, Subject: pkix.Name{CommonName: "rout-" + serverID},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(20, 0, 0),

@@ -52,7 +52,7 @@ func (a *App) telegramOpenRC() string {
 	name := a.telegramService()
 	return "#!/sbin/openrc-run\nname=" + shellQuote(name) + "\nsupervisor=supervise-daemon\ncommand=" + shellQuote(a.telegramHelper()) + "\ncommand_args=" + shellQuote(quoteArgs(a.telegramArgs(), shellQuote)) +
 		"\nrespawn_delay=5\nrespawn_max=0\noutput_log=" + shellQuote("/var/log/"+name+".log") + "\nerror_log=" + shellQuote("/var/log/"+name+".log") + "\npidfile=" + shellQuote("/run/"+name+".pid") +
-		"\n\ndepend() { need net; }\nstart_pre() { umask 077; if [ -f \"$output_log\" ] && [ \"$(wc -c < \"$output_log\")\" -gt " + itoa(openrcLogLimit) + " ]; then mv -f \"$output_log\" \"$output_log.1\"; fi; touch \"$output_log\"; chmod 600 \"$output_log\"; }\n"
+		"\n\ndepend() { use net; }\nstart_pre() { umask 077; if [ -f \"$output_log\" ] && [ \"$(wc -c < \"$output_log\")\" -gt " + itoa(openrcLogLimit) + " ]; then mv -f \"$output_log\" \"$output_log.1\"; fi; touch \"$output_log\"; chmod 600 \"$output_log\"; }\n"
 }
 
 // TelegramServiceState describes the installed service.
@@ -335,6 +335,7 @@ func (a *App) runTelegramHub(ctx context.Context, cfg TelegramConfig) error {
 		}
 	}
 	bot := newTelegramBot(a, hub, cl)
+	bot.rt = rt
 	hub.onPending = func(rec TelegramPendingRecord) {
 		// Never make an agent's enrollment request wait for Telegram.
 		go func() {

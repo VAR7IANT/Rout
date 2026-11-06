@@ -33,6 +33,7 @@ type fakeTelegram struct {
 	webhook  string
 	pollGen  int  // id of the newest getUpdates request; an older one is terminated with a 409
 	rogue    bool // another program is consuming getUpdates
+	stale    int  // the next N answerCallbackQuery calls fail as Telegram does for an old press
 	conflict int  // 409s handed out
 	tokens   map[string]bool
 	answered []fakeAnswer
@@ -63,9 +64,10 @@ func newFakeTelegram(t *testing.T, token string, chat int64) *fakeTelegram {
 
 func (f *fakeTelegram) URL() string { return f.srv.URL }
 
-func (f *fakeTelegram) addToken(tok string) { f.mu.Lock(); f.tokens[tok] = true; f.mu.Unlock() }
-func (f *fakeTelegram) setRogue(on bool)    { f.mu.Lock(); f.rogue = on; f.mu.Unlock() }
-func (f *fakeTelegram) setWebhook(u string) { f.mu.Lock(); f.webhook = u; f.mu.Unlock() }
+func (f *fakeTelegram) addToken(tok string)        { f.mu.Lock(); f.tokens[tok] = true; f.mu.Unlock() }
+func (f *fakeTelegram) setRogue(on bool)           { f.mu.Lock(); f.rogue = on; f.mu.Unlock() }
+func (f *fakeTelegram) makeNextPressesStale(n int) { f.mu.Lock(); f.stale = n; f.mu.Unlock() }
+func (f *fakeTelegram) setWebhook(u string)        { f.mu.Lock(); f.webhook = u; f.mu.Unlock() }
 func (f *fakeTelegram) stats() (calls map[string]int, conflicts int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -113,7 +115,10 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 	if fe := f.failNext[method]; fe != nil {
 		delete(f.failNext, method)
 		f.mu.Unlock()
-		f.fail(w, fe.Code, fe.Desc)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(fe.Code)
+		b, _ := json.Marshal(fe.Desc)
+		fmt.Fprintf(w, `{"ok":false,"error_code":%d,"description":%s,"parameters":{"retry_after":%d}}`, fe.Code, b, fe.RetryAfter)
 		return
 	}
 	f.mu.Unlock()
@@ -183,6 +188,14 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.reply(w, true)
 	case "answerCallbackQuery":
+		f.mu.Lock()
+		if f.stale > 0 {
+			f.stale--
+			f.mu.Unlock()
+			f.fail(w, 400, "Bad Request: query is too old and response timeout expired or query ID is invalid")
+			return
+		}
+		f.mu.Unlock()
 		var id, text string
 		var alert bool
 		json.Unmarshal(p["callback_query_id"], &id)

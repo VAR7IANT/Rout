@@ -425,12 +425,11 @@ func (a *App) diskHasAIRules(p Profile) bool {
 	return e == nil && bytes.Contains(b, []byte(`"sniff"`))
 }
 
-// AIStatus reads the persisted configuration and the real state of each node.
-func (a *App) AIStatus() (AIStatus, error) {
-	s, e := a.Load()
-	if e != nil {
-		return AIStatus{}, e
-	}
+// aiSummary is everything AIStatus reports that follows from the saved state alone: the
+// configuration, the chosen exit, its problems and the number of bound inbounds. It starts no
+// process and renders no node, so a caller that polls (the Telegram control plane reports every
+// few seconds) does not pay one service query per node. AIStatus builds on it.
+func (a *App) aiSummary(s State) AIStatus {
 	st := AIStatus{Config: s.aiConfigured(), Problems: s.AIProblems(), RuleSetAvailable: AIRuleSetCurrent}
 	if ex, er := FindExit(s, st.Config.AIOutboundID); er == nil {
 		st.ExitName, st.ExitProtocol = ex.Name, ex.Proxy.Kind()
@@ -439,6 +438,22 @@ func (a *App) AIStatus() (AIStatus, error) {
 			st.Problems = append(st.Problems, warning)
 		}
 	}
+	bound := st.Config.aiBound()
+	for _, p := range s.Profiles {
+		if p.Kind == "node" && bound[p.ID] {
+			st.BoundCount++
+		}
+	}
+	return st
+}
+
+// AIStatus reads the persisted configuration and the real state of each node.
+func (a *App) AIStatus() (AIStatus, error) {
+	s, e := a.Load()
+	if e != nil {
+		return AIStatus{}, e
+	}
+	st := a.aiSummary(s)
 	bound := st.Config.aiBound()
 	for _, p := range s.Profiles {
 		if p.Kind != "node" {
@@ -454,9 +469,6 @@ func (a *App) AIStatus() (AIStatus, error) {
 			n.InSync = a.configInSync(eff)
 		} else {
 			n.InSync = !a.diskHasAIRules(p)
-		}
-		if n.Bound {
-			st.BoundCount++
 		}
 		st.Nodes = append(st.Nodes, n)
 	}

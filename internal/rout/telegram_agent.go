@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -42,13 +43,17 @@ const (
 )
 
 type TelegramRuntime struct {
-	Role      string                  `json:"role"`
-	State     string                  `json:"state"`
-	Detail    string                  `json:"detail,omitempty"`
-	Since     time.Time               `json:"since"`
-	UpdatedAt time.Time               `json:"updated_at"`
-	BotUser   string                  `json:"bot_username,omitempty"`
-	Listen    string                  `json:"listen,omitempty"`
+	Role      string    `json:"role"`
+	State     string    `json:"state"`
+	Detail    string    `json:"detail,omitempty"`
+	Since     time.Time `json:"since"`
+	UpdatedAt time.Time `json:"updated_at"`
+	BotUser   string    `json:"bot_username,omitempty"`
+	Listen    string    `json:"listen,omitempty"`
+	// Endpoints are the hub addresses agents are told to dial (as last announced). The panel
+	// shows them from here: working them out again would mean looking up this server's public
+	// address on every page refresh.
+	Endpoints []string                `json:"endpoints,omitempty"`
 	HubName   string                  `json:"hub_name,omitempty"`
 	Servers   []TelegramRuntimeServer `json:"servers,omitempty"`
 }
@@ -112,8 +117,9 @@ type tgAgent struct {
 	cfg    TelegramConfig
 	hc     *http.Client
 	cache  *tgCmdCache
-	active int // index of the endpoint that last worked
 	rt     TelegramRuntime
+	mu     sync.Mutex // guards active (the heartbeat posts while a command runs)
+	active int        // index of the endpoint that last worked
 }
 
 // tgCmdCache remembers the results of the last commands by ID, so a command the hub delivers
@@ -169,7 +175,8 @@ func (a *App) newTelegramAgent(cfg TelegramConfig) (*tgAgent, error) {
 			return nil
 		},
 	}
-	tr := &http.Transport{TLSClientConfig: tc, DisableKeepAlives: false, TLSHandshakeTimeout: 15 * time.Second, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 2}
+	wait := a.tgConnectWait()
+	tr := &http.Transport{TLSClientConfig: tc, DisableKeepAlives: false, DialContext: (&net.Dialer{Timeout: wait}).DialContext, TLSHandshakeTimeout: wait, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 2}
 	return &tgAgent{app: a, cfg: cfg, hc: &http.Client{Transport: tr}, cache: a.tgCache()}, nil
 }
 
@@ -185,8 +192,11 @@ func (g *tgAgent) status(state, detail string) {
 func (g *tgAgent) post(ctx context.Context, path string, in, out any, timeout time.Duration) (int, error) {
 	var last error
 	eps := g.cfg.Agent.Endpoints
+	g.mu.Lock()
+	start := g.active
+	g.mu.Unlock()
 	for i := 0; i < len(eps); i++ {
-		ep := eps[(g.active+i)%len(eps)]
+		ep := eps[(start+i)%len(eps)]
 		b, _ := json.Marshal(in)
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		req, _ := http.NewRequestWithContext(cctx, http.MethodPost, "https://"+ep+path, bytes.NewReader(b))
@@ -210,7 +220,9 @@ func (g *tgAgent) post(ctx context.Context, path string, in, out any, timeout ti
 			last = e
 			continue
 		}
-		g.active = (g.active + i) % len(eps)
+		g.mu.Lock()
+		g.active = (start + i) % len(eps)
+		g.mu.Unlock()
 		if out != nil && len(raw) > 0 {
 			json.Unmarshal(raw, out)
 		}
@@ -326,14 +338,51 @@ func (g *tgAgent) run(ctx context.Context) error {
 		g.markState("approved")
 		g.status(tgStateOK, "")
 		received := time.Now()
+		stopBeat := g.heartbeat(ctx, len(out.Commands) > 0)
 		for _, c := range out.Commands {
 			res := g.execute(ctx, c, received)
 			if _, e := g.post(ctx, "/v1/result", resultIn{Result: res}, nil, 20*time.Second); e != nil {
-				break // the hub redelivers; the cache answers without executing again
+				// The hub redelivers and the cache answers without executing again; pause so a
+				// path that polls but cannot report does not spin.
+				sleepCtx(ctx, jitter(retry))
+				break
 			}
 		}
+		stopBeat()
 	}
 	return ctx.Err()
+}
+
+// heartbeat tells the hub this server is alive while it executes commands, which are sequential
+// and can take a minute (the AI exit test): otherwise the hub, which sees no poll in that time,
+// would show the server offline in the middle of an operation the owner started.
+func (g *tgAgent) heartbeat(ctx context.Context, on bool) (stop func()) {
+	if !on {
+		return func() {}
+	}
+	_, agentWait, _ := g.app.tgDurations()
+	every := agentWait / 3
+	if every < 20*time.Millisecond {
+		every = 20 * time.Millisecond
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				g.post(ctx, "/v1/ping", struct{}{}, nil, 10*time.Second)
+			}
+		}
+	}()
+	return func() { close(done); <-finished }
 }
 
 func (g *tgAgent) postPoll(ctx context.Context, st tgServerStatus, out *pollOut, denied *tgStateOut, timeout time.Duration) (int, error) {
@@ -426,7 +475,10 @@ func (g *tgAgent) rediscover(ctx context.Context) error {
 			}
 			return nil
 		}); e == nil {
-			g.cfg.Agent.Endpoints, g.active = an.Endpoints, 0
+			g.cfg.Agent.Endpoints = an.Endpoints
+			g.mu.Lock()
+			g.active = 0
+			g.mu.Unlock()
 		}
 	}
 	return nil

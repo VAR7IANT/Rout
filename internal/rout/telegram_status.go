@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// tgRuntimeStale is how long the runtime status may go without an update before it is distrusted.
+const tgRuntimeStale = 5 * time.Minute
+
 // TelegramSummary is everything the menu, the command line and the panel show about the
 // binding. It never contains the Bot Token or any private key.
 type TelegramSummary struct {
@@ -65,6 +68,12 @@ func (a *App) TelegramSummary() (TelegramSummary, error) {
 	s = TelegramSummary{Bound: true, Role: cfg.Role, Name: cfg.Name, ServerID: cfg.ServerID, BotUser: cfg.BotUser, ChatMasked: maskChatID(cfg.ChatID),
 		Fingerprint: fingerprintGroups(cfg.identity().fingerprint()), Service: a.TelegramServiceState()}
 	if rt, ok := a.LoadTelegramRuntime(); ok {
+		// The file is rewritten every few seconds by a running service. One that has not been
+		// touched for minutes belongs to a service that is no longer running (a crash, a manual
+		// stop without a service manager): showing its last "connected" would be a lie.
+		if rt.State != tgStateStopped && a.tgNow().Sub(rt.UpdatedAt) > tgRuntimeStale {
+			rt.State, rt.Detail = tgStateStopped, "服务已超过 5 分钟没有更新状态，可能没有在运行"
+		}
 		s.Runtime = &rt
 	}
 	online := map[string]bool{}

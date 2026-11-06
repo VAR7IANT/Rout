@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func (a *App) tgClient(token string) *tgClient {
 	}
 	// ProxyFromEnvironment: servers behind an HTTPS proxy keep working; the token is never
 	// part of anything but the request path.
-	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 45 * time.Second, MaxIdleConns: 2, IdleConnTimeout: 60 * time.Second}
+	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 15 * time.Second}).DialContext, TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 45 * time.Second, MaxIdleConns: 2, IdleConnTimeout: 60 * time.Second}
 	return &tgClient{base: strings.TrimRight(base, "/"), token: token, hc: &http.Client{Transport: tr}}
 }
 
@@ -70,7 +71,26 @@ type tgEnvelope struct {
 	} `json:"parameters"`
 }
 
+// call performs one Bot API request. A 429 with a short retry_after on anything but the update
+// poll (which has its own back-off) is waited out and retried once, so a momentary flood limit
+// does not lose the message that tells the owner an operation finished.
 func (c *tgClient) call(ctx context.Context, method string, params, out any) error {
+	e := c.callOnce(ctx, method, params, out)
+	var ae *tgAPIError
+	if method != "getUpdates" && errors.As(e, &ae) && ae.Code == 429 && ae.RetryAfter > 0 && ae.RetryAfter <= 10 {
+		t := time.NewTimer(time.Duration(ae.RetryAfter) * time.Second)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			return c.callOnce(ctx, method, params, out)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return e
+}
+
+func (c *tgClient) callOnce(ctx context.Context, method string, params, out any) error {
 	var body io.Reader
 	if params != nil {
 		b, e := json.Marshal(params)

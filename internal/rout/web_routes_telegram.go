@@ -122,18 +122,25 @@ func (s *WebServer) telegramView(c *reqCtx) (telegramView, error) {
 	}
 	switch sum.Role {
 	case tgRoleHub:
-		cfg, er := a.LoadTelegram()
-		if er != nil {
-			return v, er
+		// The address agents are told to dial comes from what the service announced (or the
+		// manual list): the panel refreshes every few seconds and must never look up this
+		// server's public address, or start a service query per node, on each refresh.
+		eps := append([]string(nil), sum.Advertise...)
+		if len(eps) == 0 && sum.Runtime != nil {
+			eps = append(eps, sum.Runtime.Endpoints...)
 		}
-		v.Hub = &telegramHubView{Endpoints: newTelegramHub(a).endpoints(cfg), Fingerprint: sum.Fingerprint, MultiServer: sum.MultiServer, Port: sum.Port}
-		if v.Hub.Endpoints == nil {
-			v.Hub.Endpoints = []string{}
+		if !sum.MultiServer {
+			eps = nil
 		}
+		if eps == nil {
+			eps = []string{}
+		}
+		v.Hub = &telegramHubView{Endpoints: eps, Fingerprint: sum.Fingerprint, MultiServer: sum.MultiServer, Port: sum.Port}
 		self := telegramServerView{ID: sum.ServerID, Name: sum.Name, Self: true, Online: true, Fingerprint: sum.Fingerprint, Version: Version}
-		if st, er := a.AIStatus(); er == nil {
-			en := st.Config.Enabled
-			self.AIEnabled, self.ExitName = &en, st.ExitName
+		if st, er := a.Load(); er == nil {
+			ai := a.aiSummary(st)
+			en := ai.Config.Enabled
+			self.AIEnabled, self.ExitName = &en, ai.ExitName
 		}
 		v.Servers = append(v.Servers, self)
 		known := map[string]TelegramRuntimeServer{}

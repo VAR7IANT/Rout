@@ -16,26 +16,34 @@ import (
 
 // ---- helpers ---------------------------------------------------------------------------------
 
-// hubPost makes a raw mTLS call to the hub as an arbitrary identity (what an attacker with a
-// certificate of their own, or a buggy agent, could do).
-func hubPost(t *testing.T, addr string, id tgIdentity, path string, in, out any) int {
-	t.Helper()
+// hubPostErr makes a raw mTLS call to the hub as an arbitrary identity (what an attacker with a
+// certificate of their own, or a buggy agent, could do). It is safe to call from a goroutine.
+func hubPostErr(addr string, id tgIdentity, path string, in, out any) (int, error) {
 	cert, e := id.tlsCert()
 	if e != nil {
-		t.Fatal(e)
+		return 0, e
 	}
 	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}}}
 	defer hc.CloseIdleConnections()
 	b, _ := json.Marshal(in)
 	resp, e := hc.Post("https://"+addr+path, "application/json", bytes.NewReader(b))
 	if e != nil {
-		t.Fatalf("post %s: %v", path, e)
+		return 0, e
 	}
 	defer resp.Body.Close()
 	if out != nil {
 		json.NewDecoder(resp.Body).Decode(out)
 	}
-	return resp.StatusCode
+	return resp.StatusCode, nil
+}
+
+func hubPost(t *testing.T, addr string, id tgIdentity, path string, in, out any) int {
+	t.Helper()
+	code, e := hubPostErr(addr, id, path, in, out)
+	if e != nil {
+		t.Fatalf("post %s: %v", path, e)
+	}
+	return code
 }
 
 func msgsTo(tg *fakeTelegram, chat int64) []fakeMsg {

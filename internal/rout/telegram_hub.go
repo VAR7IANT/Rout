@@ -55,6 +55,7 @@ type tgHub struct {
 	nonce map[string]tgNonce
 	rate  map[string][]time.Time
 	busy  map[string]bool
+	names map[string]*tgNameState
 	ln    net.Listener
 	srv   *http.Server
 	// onPending is called (outside the lock) when a new server asks to join.
@@ -62,7 +63,7 @@ type tgHub struct {
 }
 
 func newTelegramHub(a *App) *tgHub {
-	return &tgHub{app: a, peers: map[string]*tgPeer{}, nonce: map[string]tgNonce{}, rate: map[string][]time.Time{}, busy: map[string]bool{}}
+	return &tgHub{app: a, peers: map[string]*tgPeer{}, nonce: map[string]tgNonce{}, rate: map[string][]time.Time{}, busy: map[string]bool{}, names: map[string]*tgNameState{}}
 }
 
 // ---- listener ------------------------------------------------------------------------------
@@ -121,6 +122,7 @@ func (h *tgHub) handler() http.Handler {
 	mux.HandleFunc("/v1/result", h.wrap(h.hResult, true))
 	mux.HandleFunc("/v1/bye", h.wrap(h.hBye, true))
 	mux.HandleFunc("/v1/leave", h.wrap(h.hLeave, true))
+	mux.HandleFunc("/v1/ping", h.wrap(h.hPing, true))
 	return mux
 }
 
@@ -146,10 +148,8 @@ func tgPeerFingerprint(r *http.Request) (string, error) {
 	if !ok || pub.Curve != elliptic.P256() {
 		return "", errors.New("unsupported key")
 	}
-	now := time.Now()
-	if now.Before(c.NotBefore) || now.After(c.NotAfter) {
-		return "", errors.New("certificate not valid now")
-	}
+	// The certificate is self-signed and authorised by its fingerprint, so its validity period
+	// adds nothing; checking it would lock out a server whose clock is wrong.
 	return certFingerprint(c.Raw), nil
 }
 
@@ -387,12 +387,17 @@ func (h *tgHub) hPoll(w http.ResponseWriter, r *http.Request, q tgReq) {
 	json.NewDecoder(r.Body).Decode(&in)
 	_, agentWait, _ := h.app.tgDurations()
 	stop := make(chan struct{})
+	name := ag.Name
+	if in.Status != nil && in.Status.ServerID == ag.ID {
+		name = h.adoptName(q.cfg, ag, in.Status.Name)
+	}
 	h.mu.Lock()
-	p := h.peerLocked(ag.ID, ag.Name, q.fp)
+	p := h.peerLocked(ag.ID, name, q.fp)
 	p.lastSeen = h.app.tgNow()
 	if in.Status != nil && in.Status.ServerID == ag.ID {
 		st := *in.Status
-		st.Name = ag.Name
+		st.sanitize()
+		st.Name = name
 		p.status = &st
 	}
 	if p.stopPoll != nil {
@@ -441,6 +446,7 @@ func (h *tgHub) hResult(w http.ResponseWriter, r *http.Request, q tgReq) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request"})
 		return
 	}
+	in.Result.sanitize()
 	h.mu.Lock()
 	if p := h.peers[ag.ID]; p != nil && p.fp == q.fp {
 		p.lastSeen = h.app.tgNow()
@@ -449,8 +455,9 @@ func (h *tgHub) hResult(w http.ResponseWriter, r *http.Request, q tgReq) {
 				p.jobs = append(p.jobs[:i], p.jobs[i+1:]...)
 				if in.Result.Status != nil && in.Result.Status.ServerID == ag.ID {
 					st := *in.Result.Status
-					st.Name = ag.Name
+					st.Name = p.name
 					p.status = &st
+					in.Result.Status = &st
 				}
 				select {
 				case j.done <- in.Result:
@@ -462,6 +469,88 @@ func (h *tgHub) hResult(w http.ResponseWriter, r *http.Request, q tgReq) {
 	}
 	h.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+}
+
+// hPing is the heartbeat an agent sends while it executes a command, which can take a minute:
+// without it the server would look offline in the middle of a test.
+func (h *tgHub) hPing(w http.ResponseWriter, r *http.Request, q tgReq) {
+	ag, _ := tgFindAgent(q.cfg, q.fp)
+	h.mu.Lock()
+	if p := h.peers[ag.ID]; p != nil && p.fp == q.fp {
+		p.lastSeen = h.app.tgNow()
+	}
+	h.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+}
+
+// tgNameState limits how an agent's name changes are adopted.
+type tgNameState struct {
+	last    time.Time
+	refused string
+}
+
+// adoptName takes the display name an approved agent reports after it was renamed on that
+// server. The record is keyed by the certificate, so a name is only a label that grants nothing,
+// but it is what the owner reads before pressing a button: an invalid name, a name already used
+// by another server (or the hub) and a name that changes more than once every 30 seconds are
+// ignored, and the first refusal of a name is audited.
+func (h *tgHub) adoptName(cfg TelegramConfig, ag TelegramAgentRecord, reported string) string {
+	reported = strings.TrimSpace(reported)
+	if reported == "" || reported == ag.Name || validDisplayName(reported) != nil {
+		return ag.Name
+	}
+	taken := strings.EqualFold(reported, cfg.Name)
+	for _, other := range cfg.Hub.Agents {
+		if other.ID != ag.ID && strings.EqualFold(other.Name, reported) {
+			taken = true
+		}
+	}
+	h.mu.Lock()
+	ns := h.names[ag.ID]
+	if ns == nil {
+		ns = &tgNameState{}
+		h.names[ag.ID] = ns
+	}
+	if taken {
+		first := ns.refused != reported
+		ns.refused = reported
+		h.mu.Unlock()
+		if first {
+			h.app.tgAudit("-", "rename_refused", ag.Name+" -> "+reported)
+		}
+		return ag.Name
+	}
+	if time.Since(ns.last) < 30*time.Second {
+		h.mu.Unlock()
+		return ag.Name
+	}
+	ns.last = time.Now()
+	h.mu.Unlock()
+	adopted := false
+	e := h.app.mutateTelegram(func(c *TelegramConfig) error {
+		if c.Hub == nil {
+			return nil
+		}
+		for i := range c.Hub.Agents {
+			if c.Hub.Agents[i].ID == ag.ID && c.Hub.Agents[i].FP == ag.FP {
+				c.Hub.Agents[i].Name = reported
+				adopted = true
+			}
+		}
+		return nil
+	})
+	if e != nil || !adopted {
+		return ag.Name
+	}
+	h.app.tgAudit("-", "renamed", ag.Name+" -> "+reported)
+	return reported
+}
+
+// isBusy reports whether an operation on the server is running.
+func (h *tgHub) isBusy(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.busy[id]
 }
 
 // syncCredentialsLocked brings an approved server up to date after the Bot Token or Chat ID

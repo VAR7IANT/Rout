@@ -235,6 +235,17 @@ type telegramHooks struct {
 	retry     time.Duration // base reconnect delay
 	listen    string        // hub listen address override (tests: 127.0.0.1:0)
 	onHub     func(*tgHub)  // tests: called once the hub is listening
+	connect   time.Duration // how long a connection to the hub or Telegram may take to establish
+}
+
+// tgConnectWait bounds establishing a connection (TCP and TLS): an endpoint that swallows packets
+// must not hold an agent for the operating system's minutes-long default before the next
+// address is tried.
+func (a *App) tgConnectWait() time.Duration {
+	if a.telegram != nil && a.telegram.connect > 0 {
+		return a.telegram.connect
+	}
+	return 10 * time.Second
 }
 
 func (a *App) tgNow() time.Time {
