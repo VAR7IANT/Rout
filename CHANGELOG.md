@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.5.2
 
-**Node outbound IP family.** Each node can choose how it reaches the Internet: **Auto** (default, exactly the previous behaviour), **IPv4 first**, **IPv6 first**, **IPv4 only** or **IPv6 only**. No version is assigned here. Details, the sing-box findings and the limits: [docs/NODE_EGRESS.md](docs/NODE_EGRESS.md).
+**Node outbound IP family.** Each node can choose how it reaches the Internet: **Auto** (default, exactly the previous behaviour), **IPv4 first**, **IPv6 first**, **IPv4 only** or **IPv6 only**. Details, the sing-box findings and the limits: [docs/NODE_EGRESS.md](docs/NODE_EGRESS.md).
 
 - **A real "only", not a DNS preference.** With the pinned sing-box 1.14.3, `domain_resolver.strategy = ipv6_only` fails A-only *names* but does **not** stop a client that asks for an IPv4 *address* (checked with the real engine). Rout therefore also writes a route rule (`ip_version` → reject) on a Direct node, which refuses IPv4 literals and IPv4-mapped IPv6 literals under IPv6 only (the mirror for IPv4 only). IPv6 first / IPv4 first are preferences with fallback and are not IPv6 only / IPv4 only. The removed `domain_strategy` is never generated.
 - **Terminal:** *Create node → Advanced options → Outbound IP family* (fixed numbers 1–5, default Auto; quick create asks nothing) and *Manage nodes → choose a node → Outbound IP family* (new last entry, earlier numbers unchanged: change the policy, *Test IPv6 egress*, *Show outbound IPs*). The node card shows the policy for non-Auto nodes. A family the host has no route for is annotated and needs explicit confirmation for an "only" policy.

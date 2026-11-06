@@ -1,6 +1,6 @@
 # Upgrading and rollback safety
 
-## Unreleased: node outbound IP family
+## To v0.5.2: node outbound IP family
 
 Nothing to migrate. Existing nodes read as **Auto** and keep their configuration byte for byte (`state.json` gets no new key for them); the policy is stored per node in the existing `outbound_policy` field once you choose one. Backups and restores carry it. **Downgrading:** v0.5.1 loads such a state but does not apply the field to nodes, so they would leave without the restriction; see [NODE_EGRESS.md](NODE_EGRESS.md#6-persistence-and-upgrades).
 
