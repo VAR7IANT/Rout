@@ -162,12 +162,29 @@ type NodeView struct {
 	Subscriptions []string     `json:"subscriptions"`
 	Warnings      []string     `json:"warnings"`
 	HasLink       bool         `json:"has_link"`
+	// OutboundPolicy is the effective outbound IP family (auto, ipv4_first, ipv6_first,
+	// ipv4_only, ipv6_only). Scope says what it governs: "direct" (the node's own connections to
+	// the destination) or "proxy" (only the connection to its outbound proxy server).
+	// OutboundEnforced is true only when Rout can guarantee the family of the connection that
+	// leaves for the Internet.
+	//
+	// Only nodes carry these. A relay (which embeds this view) keeps its own outbound_policy field
+	// and has nothing to say about "enforced": its policy is a different feature.
+	OutboundPolicy   string `json:"outbound_policy,omitempty"`
+	OutboundScope    string `json:"outbound_scope,omitempty"`
+	OutboundEnforced *bool  `json:"outbound_enforced,omitempty"`
+	OutboundNote     string `json:"outbound_note,omitempty"`
 }
 
 func (a *App) nodeView(s State, p Profile, now time.Time, tv *TrafficView) NodeView {
 	v := NodeView{ID: p.ID, Name: p.Name, Kind: p.Kind, Protocol: p.Protocol, Label: ProtocolLabel(p.Protocol), Enabled: p.Enabled,
 		State: a.serviceStateOf(p), Listen: p.Listen, Port: p.Port, PublicHost: p.PublicHost, PublicPort: p.PublicPort,
 		Networks: p.Networks(), Inbound: p.inboundMode(), SNI: p.SNI, ExitID: p.ExitID, Created: p.CreatedAt, Subscriptions: []string{}, Warnings: []string{}}
+	if p.Kind == "node" {
+		info := p.egressInfo()
+		enforced := info.Enforced
+		v.OutboundPolicy, v.OutboundScope, v.OutboundEnforced, v.OutboundNote = info.Policy, info.Scope, &enforced, a.T(p.egressScopeNote())
+	}
 	if net.ParseIP(p.PublicHost) != nil {
 		v.Family = familyOf(p.PublicHost)
 	}

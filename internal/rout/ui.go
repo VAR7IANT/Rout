@@ -28,6 +28,7 @@ type UI struct {
 	probeProxy   func(Proxy) (string, error)
 	routes       func() familyRoutes // test hook: which families the host can route
 	diag         *diagEnv            // test hook: replaces the diagnostics environment
+	egress       *egressEnv          // test hook: replaces the egress-test environment
 	checkReality func(string) error
 	// Presentation state: the logo appears once per session; tests can force it,
 	// simulate a color terminal or fix the width.
@@ -289,6 +290,9 @@ func (u *UI) nodeCard(s State, i int, p Profile, db *TrafficState) {
 	}
 	if p.AIRoute != nil {
 		segs = append(segs, u.a.T("AI 分流"))
+	}
+	if line := u.nodeEgressLine(p); line != "" {
+		segs = append(segs, line)
 	}
 	u.segments("      ", segs...)
 	if days, ok := p.CertificateDays(time.Now()); ok {
@@ -1018,6 +1022,8 @@ func (u *UI) nodeMenu(id string) error {
 		if _, ok := p.CertificateExpiry(); ok {
 			items = append(items, item("cert", "证书管理"))
 		}
+		// Appended last so the numbers of the existing entries never change.
+		items = append(items, item("egress", "出站网络策略"))
 		v := u.menu("", items, "返回")
 		if u.err != nil || v == "" {
 			return u.err
@@ -1096,6 +1102,8 @@ func (u *UI) nodeAction(s State, p Profile, v string) error {
 		return u.trafficManage(p)
 	case "cert":
 		return u.certificate(s, p)
+	case "egress":
+		return u.nodeEgressMenu(p)
 	case "name":
 		p.Name = u.ask("节点名称", p.Name)
 	case "address":

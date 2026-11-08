@@ -53,9 +53,17 @@ func (a *App) headlessUI() *UI {
 // webTestHooks replace the parts of the host the panel inspects, so tests do not depend on
 // the machine they run on.
 type webTestHooks struct {
-	ui   func(*UI)
-	diag *diagEnv
-	now  func() time.Time
+	ui     func(*UI)
+	diag   *diagEnv
+	egress *egressEnv
+	now    func() time.Time
+}
+
+func (a *App) egressEnvironment() egressEnv {
+	if a.webHooks != nil && a.webHooks.egress != nil {
+		return *a.webHooks.egress
+	}
+	return defaultEgressEnv()
 }
 
 func (a *App) diagEnvironment() diagEnv {
@@ -180,6 +188,10 @@ type NodeSpec struct {
 	RealitySNI string   `json:"reality_sni"`
 	ExitID     string   `json:"exit_id"`
 	Port       int      `json:"port"` // only with a single protocol; 0 picks a free port
+	// OutboundPolicy is the nodes' outbound IP family: "" or auto, ipv4_first, ipv6_first,
+	// ipv4_only, ipv6_only. Force confirms an "only" policy the host has no route for.
+	OutboundPolicy string `json:"outbound_policy"`
+	Force          bool   `json:"force"`
 }
 
 // CreateNodes creates the nodes and returns them as stored.
@@ -208,6 +220,15 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 	case "", inIPv4, inIPv6, inDual:
 	default:
 		return nil, errors.New("监听方式无效")
+	}
+	policy, e := normalizeNodePolicy(spec.OutboundPolicy)
+	if e != nil {
+		return nil, e
+	}
+	if !spec.Force {
+		if e = checkPolicyRoute(policy); e != nil {
+			return nil, e
+		}
 	}
 	sni := strings.TrimSpace(spec.RealitySNI)
 	if sni == "" {
@@ -249,6 +270,7 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 				return old, e
 			}
 			p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
+			p.OutboundPolicy = policy
 			p.SNI = sni
 			if protocol == "hy2" || protocol == "tuic" {
 				p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = setup.PublicHost, cert, key, true
