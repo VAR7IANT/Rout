@@ -132,7 +132,7 @@ func (u *UI) webListenSetup(setup ServerSetup, inbound string, protocols ...stri
 		}
 	}
 	caps := u.listenCapabilities(networks...)
-	items := nodeListenOptions(caps)
+	items := listenItemsFor(nodeListenOptions(caps), caps, protocols)
 	if len(items) == 0 {
 		return setup, errors.New("本机没有可用的监听地址")
 	}
@@ -230,6 +230,9 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 			return nil, e
 		}
 	}
+	if spec.ExitID != "" && hasSnell(spec.Protocols) {
+		return nil, errors.New("Snell 引擎不支持出站代理，请不要为 Snell 节点选择出站")
+	}
 	sni := strings.TrimSpace(spec.RealitySNI)
 	if sni == "" {
 		sni = "addons.mozilla.org"
@@ -272,6 +275,9 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 			p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
 			p.OutboundPolicy = policy
 			p.SNI = sni
+			if p.snellNode() {
+				p.SNI = ""
+			}
 			if protocol == "hy2" || protocol == "tuic" {
 				p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = setup.PublicHost, cert, key, true
 			}

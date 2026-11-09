@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic"}
-var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5"}
+var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias}
+var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)"}
 
 func (u *UI) selectProtocols() []string {
 	u.say("可创建的协议：")
@@ -73,8 +73,8 @@ func (u *UI) realityTarget(sni string, ask bool) (string, error) {
 func portConflict(s State, p Profile) error {
 	for _, other := range s.Profiles {
 		if other.ID != p.ID && other.Port == p.Port {
-			for _, n := range p.Networks() {
-				if sharesNetwork(other.Networks(), []string{n}) {
+			for _, n := range p.meterNetworks() {
+				if sharesNetwork(other.meterNetworks(), []string{n}) {
 					return fmt.Errorf("%s 与 %s 占用相同 %s 端口", other.Name, p.Name, strings.ToUpper(n))
 				}
 			}
@@ -113,7 +113,7 @@ func (u *UI) createSummary(setup ServerSetup, s State, ids []string) {
 	for _, id := range ids {
 		p, _ := Find(s, id)
 		ports := strings.ToUpper(strings.Join(p.Networks(), "+"))
-		fmt.Fprintf(u.writer(), "  %s  %s  %s %d  →  %s\n", pad(p.Name, 26), pad(ProtocolLabel(p.Protocol), 8), ports, p.Port, net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
+		fmt.Fprintf(u.writer(), "  %s  %s  %s %d  →  %s\n", pad(p.Name, 26), pad(nodeLabel(p), 8), ports, p.Port, net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
 	}
 }
 
@@ -190,6 +190,9 @@ func (u *UI) create() error {
 		}
 		p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
 		p.SNI = realitySNI
+		if p.snellNode() {
+			p.SNI = ""
+		}
 		if protocol == "hy2" || protocol == "tuic" {
 			p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = tlsSNI, cert, key, true
 		}
@@ -200,7 +203,10 @@ func (u *UI) create() error {
 			return fmt.Errorf("%s: %w", p.Name, e)
 		}
 		next = replace(next, p)
-		if exitID != "" {
+		if exitID != "" && p.snellNode() {
+			// snell-server has no upstream proxy: the node connects directly.
+			u.warnf("%s 使用直连：Snell 引擎不支持出站代理", p.Name)
+		} else if exitID != "" {
 			if next, e = BindExit(next, p.ID, exitID); e != nil {
 				return e
 			}
@@ -255,6 +261,7 @@ confirm:
 		if e = u.printLinks(p, &setup); e != nil {
 			return e
 		}
+		u.snellNotes(p, setup)
 	}
 	return u.saveServer(serverDefaults)
 }
@@ -339,11 +346,15 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 		each(createProtocols, func(p *Profile) { p.OutboundPolicy = norm })
 	case "credentials":
 		each(createProtocols, func(p *Profile) {
-			u.printf("配置 %s 的认证凭据\n", ProtocolLabel(p.Protocol))
+			u.printf("配置 %s 的认证凭据\n", nodeLabel(*p))
 			if p.Protocol == "vless" || p.Protocol == "tuic" {
 				p.UUID = u.ask("UUID", p.UUID)
 			}
-			if p.Protocol != "vless" {
+			if p.snellNode() {
+				if pw := strings.TrimSpace(u.secret("Snell PSK（12–255 个字符：字母、数字和 . _ ~ + -；留空保持随机）")); pw != "" {
+					p.Password = pw
+				}
+			} else if p.Protocol != "vless" {
 				if pw := u.secret("密码（SS2022 使用 16 字节 Base64 密钥）"); pw != "" {
 					p.Password = pw
 				}

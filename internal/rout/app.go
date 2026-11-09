@@ -47,7 +47,20 @@ func (a *App) engineName(p Profile) string {
 	if p.Kind == "relay" {
 		return "gost"
 	}
+	if p.snellNode() {
+		return snellEngine(p.snellVersion())
+	}
 	return "sing-box"
+}
+
+// checkProfileConfig validates the configuration a node's engine will read from dir. Snell
+// has no dry-run mode, so its file is checked by Rout itself; every other node is checked
+// by sing-box.
+func (a *App) checkProfileConfig(p Profile, dir string) error {
+	if p.snellNode() {
+		return checkSnellConf(filepath.Join(dir, snellConf), p)
+	}
+	return a.checkConfig(filepath.Join(dir, "config.json"))
 }
 func AtomicWrite(path string, b []byte, mode os.FileMode) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
@@ -235,7 +248,7 @@ func CheckAvailable(p Profile) error {
 	if p.nativeRelay() {
 		return nativeBindProbe(p)
 	}
-	for _, n := range p.Networks() {
+	for _, n := range p.meterNetworks() {
 		addr := net.JoinHostPort(p.Listen, itoa(p.Port))
 		if n == "tcp" {
 			l, e := net.Listen("tcp", addr)
@@ -268,6 +281,13 @@ func writeProfileIn(p Profile, dir string) error {
 		if e := AtomicWrite(filepath.Join(dir, "tls.key"), []byte(p.KeyPEM), 0600); e != nil {
 			return e
 		}
+	}
+	if p.snellNode() {
+		conf, e := snellServerConf(p)
+		if e != nil {
+			return e
+		}
+		return AtomicWrite(filepath.Join(dir, snellConf), []byte(conf), 0600)
 	}
 	c, e := serverConfig(p, dir)
 	if e != nil {
@@ -350,10 +370,10 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 			}
 		}
 		if p.Enabled {
-			for _, network := range p.Networks() {
+			for _, network := range p.meterNetworks() {
 				owned := false
 				for _, active := range old.Profiles {
-					if active.Enabled && active.Port == p.Port && (active.Listen == p.Listen || active.ID == p.ID) && sharesNetwork(active.Networks(), []string{network}) {
+					if active.Enabled && active.Port == p.Port && (active.Listen == p.Listen || active.ID == p.ID) && sharesNetwork(active.meterNetworks(), []string{network}) {
 						if active.ID == p.ID {
 							owned = true
 						} else if after, er := Find(next, active.ID); er != nil || !after.Enabled {
@@ -414,7 +434,7 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 			return e
 		}
 		if p.Kind == "node" {
-			if e = a.checkConfig(filepath.Join(dir, "config.json")); e != nil {
+			if e = a.checkProfileConfig(p, dir); e != nil {
 				return fmt.Errorf("%s (%s): %w", p.Name, p.Protocol, e)
 			}
 		}

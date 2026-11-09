@@ -43,6 +43,11 @@ func (a *App) diagnoseNode(ctx context.Context, p Profile, env diagEnv, opts dia
 			return rep
 		}
 	}
+	if p.snellNode() {
+		// Rout has no Snell client: the handshake can only be proven from Surge.
+		d.add(5, diagWarn, "Snell 协议握手无法在本机验证，请在 Surge 中测试该节点（端口可达不代表代理可用）")
+		return rep
+	}
 	if !opts.Full || env.full == nil {
 		d.add(5, diagWarn, "尚未验证代理协议握手（端口可达不代表代理可用）")
 		return rep

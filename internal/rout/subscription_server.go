@@ -123,7 +123,7 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	format, e := subscriptionFormat(r.URL.RawQuery)
 	if e != nil {
-		plain(w, http.StatusBadRequest, "unsupported format; use base64, mihomo or clash once")
+		plain(w, http.StatusBadRequest, "unsupported format; use base64, mihomo, clash or surge once")
 		return
 	}
 	contentType := "text/plain; charset=utf-8"
@@ -157,6 +157,19 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		body = renderMihomoInfo(proxies, warnings, cfg.mihomoTestURL(), info)
 		contentType = "application/yaml; charset=utf-8"
+		w.Header().Set("X-Rout-Skipped-Nodes", strconv.Itoa(len(warnings)))
+	} else if format == "surge" {
+		lines, warnings := s.exportSurge(sub)
+		for i := range warnings {
+			warnings[i] = Translate("en", warnings[i])
+		}
+		h.report(sub, SubscriptionExport{Warnings: warnings}, "surge")
+		if len(lines) == 0 {
+			w.Header().Set("Retry-After", "300")
+			plain(w, http.StatusServiceUnavailable, "no Surge-compatible nodes; the Surge format lists Snell nodes only: "+strings.Join(warnings, "; "))
+			return
+		}
+		body = renderSurge(lines)
 		w.Header().Set("X-Rout-Skipped-Nodes", strconv.Itoa(len(warnings)))
 	} else {
 		var exp SubscriptionExport
@@ -390,6 +403,8 @@ func subscriptionFormat(raw string) (string, error) {
 		return "base64", nil
 	case "mihomo", "clash":
 		return "mihomo", nil
+	case "surge":
+		return "surge", nil
 	}
 	return "", errors.New("unsupported subscription format")
 }

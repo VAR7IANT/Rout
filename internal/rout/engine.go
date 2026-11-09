@@ -2,6 +2,7 @@ package rout
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -28,8 +29,12 @@ type Asset struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
-	// "musl" marks a statically linked build for hosts without glibc (Alpine).
+	// "musl" marks a statically linked build for hosts without glibc (Alpine). "glibc" marks a
+	// build that only runs where glibc's loader exists and has no musl counterpart.
 	Libc string `json:"libc,omitempty"`
+	// Binary is the file to take out of the archive when it is not named like the engine
+	// (Snell's archives hold "snell-server").
+	Binary string `json:"binary,omitempty"`
 }
 type Engine struct {
 	Version string  `json:"version"`
@@ -193,30 +198,71 @@ func hostLibc() string {
 
 // engineAsset picks the pinned archive for this architecture and C library. A static
 // (libc-neutral) asset serves every host; a musl asset is preferred where glibc is absent.
+// A glibc-only asset is returned only on a glibc host: on Alpine nothing is returned rather
+// than a binary that cannot start.
 func engineAsset(name, arch, libc string) Asset {
-	var generic, musl Asset
+	var generic, musl, glibc Asset
 	for _, v := range engines()[name].Assets {
-		if !strings.Contains(v.Name, "linux-"+arch) && !strings.Contains(v.Name, "linux_"+arch) {
+		if !assetForArch(v.Name, arch) {
 			continue
 		}
-		if v.Libc == "musl" {
+		switch v.Libc {
+		case "musl":
 			musl = v
-		} else if v.Libc == "" {
+		case "glibc":
+			glibc = v
+		case "":
 			generic = v
 		}
 	}
 	if libc == "musl" && musl.URL != "" {
 		return musl
 	}
-	return generic
+	if generic.URL != "" {
+		return generic
+	}
+	if libc == "glibc" {
+		return glibc
+	}
+	return Asset{}
+}
+
+// assetForArch matches an asset name against Go's GOARCH. Surge calls arm64 "aarch64".
+func assetForArch(assetName, arch string) bool {
+	names := []string{arch}
+	if arch == "arm64" {
+		names = append(names, "aarch64")
+	}
+	for _, n := range names {
+		if strings.Contains(assetName, "linux-"+n) || strings.Contains(assetName, "linux_"+n) {
+			return true
+		}
+	}
+	return false
+}
+
+// glibcOnlyEngine reports whether every build of the engine needs glibc, so that a musl host
+// can be told so instead of being sent to a generic "no download" error.
+func glibcOnlyEngine(name string) bool {
+	found := false
+	for _, v := range engines()[name].Assets {
+		if v.Libc == "" || v.Libc == "musl" {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // engineRuns proves an installed engine can execute on this host (a glibc-linked
 // binary on Alpine cannot), so a broken install is replaced instead of trusted.
 func engineRuns(name, path string) bool {
 	flag := "version"
-	if name == "gost" {
+	switch {
+	case name == "gost":
 		flag = "-V"
+	case isSnellEngine(name):
+		flag = "--version"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -231,6 +277,19 @@ func engineUsable(name, path string) bool {
 	return e == nil && st.Mode().IsRegular() && st.Mode()&0111 != 0 && engineRuns(name, path)
 }
 
+// pinnedAsset is the verified download for a host, or the reason there is none. A platform
+// without an official build is refused; no other file is ever substituted for it.
+func pinnedAsset(name, arch, libc string) (Asset, error) {
+	asset := engineAsset(name, arch, libc)
+	if asset.URL == "" && libc == "musl" && glibcOnlyEngine(name) {
+		return Asset{}, fmt.Errorf("%s 官方只提供需要 glibc 的构建，当前系统（musl／Alpine）无法运行。Snell v5 是静态构建，可以改用 Snell v5，或换用 glibc 系统", name)
+	}
+	if asset.URL == "" || len(asset.SHA256) != 64 {
+		return Asset{}, errors.New("缺少经过校验的内核下载信息")
+	}
+	return asset, nil
+}
+
 func (a *App) EnsureEngine(name string) error {
 	path := a.enginePath(name)
 	if engineUsable(name, path) {
@@ -239,9 +298,9 @@ func (a *App) EnsureEngine(name string) error {
 	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		return errors.New("仅支持 Linux amd64/arm64")
 	}
-	asset := engineAsset(name, runtime.GOARCH, hostLibc())
-	if asset.URL == "" || len(asset.SHA256) != 64 {
-		return errors.New("缺少经过校验的内核下载信息")
+	asset, e := pinnedAsset(name, runtime.GOARCH, hostLibc())
+	if e != nil {
+		return e
 	}
 	if e := os.MkdirAll(a.BinDir, 0755); e != nil {
 		return e
@@ -277,12 +336,24 @@ func (a *App) installEngine(name, path string, asset Asset) error {
 		return e
 	}
 	defer os.RemoveAll(tmp)
+	binary := asset.Binary
+	if binary == "" {
+		binary = name
+	}
 	archive := filepath.Join(tmp, "engine.tar.gz")
+	if strings.HasSuffix(asset.Name, ".zip") {
+		archive = filepath.Join(tmp, "engine.zip")
+	}
 	if e = download(asset.URL, archive, asset.SHA256); e != nil {
 		return e
 	}
 	staged := filepath.Join(tmp, "engine.bin")
-	if e = extractEngine(archive, name, staged); e != nil {
+	if strings.HasSuffix(archive, ".zip") {
+		e = extractEngineZip(archive, binary, staged)
+	} else {
+		e = extractEngine(archive, binary, staged)
+	}
+	if e != nil {
 		return e
 	}
 	// The archive is no longer needed; free its disk space before the final steps.
@@ -348,6 +419,66 @@ func extractEngine(archive, name, dst string) (err error) {
 		}
 		if e != nil {
 			if errors.Is(e, io.ErrUnexpectedEOF) {
+				return errors.New("下载归档已损坏")
+			}
+			return e
+		}
+		return nil
+	}
+	return errors.New("下载归档中没有找到内核")
+}
+
+// extractEngineZip writes the named regular file of a .zip archive to dst (mode 0755). Only
+// the base name is matched, so no path inside the archive is ever used to write anywhere, and
+// the data is bounded by the declared size, which must also be the real size.
+func extractEngineZip(archive, name, dst string) (err error) {
+	zr, e := zip.OpenReader(archive)
+	if e != nil {
+		return errors.New("下载归档已损坏")
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if !f.Mode().IsRegular() || filepath.Base(f.Name) != name {
+			continue
+		}
+		if f.UncompressedSize64 == 0 || f.UncompressedSize64 > maxEngineBytes {
+			return errors.New("内核文件大小无效")
+		}
+		in, e := f.Open()
+		if e != nil {
+			return errors.New("下载归档已损坏")
+		}
+		defer in.Close()
+		out, e := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+		if e != nil {
+			return e
+		}
+		defer func() {
+			if err != nil {
+				os.Remove(dst)
+			}
+		}()
+		size := int64(f.UncompressedSize64)
+		e = copyN(&flushWriter{f: out}, in, size)
+		if e == nil {
+			// The archive must end where it said, and its checksum (verified by the reader at
+			// the end of the stream) must hold: one more byte or a bad CRC means it lied.
+			var extra [1]byte
+			if n, er := in.Read(extra[:]); n > 0 || (er != nil && er != io.EOF) {
+				e = io.ErrUnexpectedEOF
+			}
+		}
+		if e == nil {
+			e = out.Chmod(0755)
+		}
+		if e == nil {
+			e = out.Sync()
+		}
+		if ce := out.Close(); e == nil {
+			e = ce
+		}
+		if e != nil {
+			if errors.Is(e, io.ErrUnexpectedEOF) || errors.Is(e, zip.ErrChecksum) || errors.Is(e, zip.ErrFormat) {
 				return errors.New("下载归档已损坏")
 			}
 			return e

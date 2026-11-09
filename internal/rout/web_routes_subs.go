@@ -78,7 +78,7 @@ func (s *WebServer) subscriptionRoutes() {
 		}
 		nodes := []subNodeChoice{}
 		for _, p := range sortedProfiles(st, "node") {
-			nodes = append(nodes, subNodeChoice{ID: p.ID, Name: p.Name, Protocol: p.Protocol, Label: ProtocolLabel(p.Protocol), Kind: "node", Enabled: p.Enabled})
+			nodes = append(nodes, subNodeChoice{ID: p.ID, Name: p.Name, Protocol: p.Protocol, Label: nodeLabel(p), Kind: "node", Enabled: p.Enabled})
 		}
 		for _, p := range sortedProfiles(st, "relay") {
 			nodes = append(nodes, subNodeChoice{ID: p.ID, Name: p.Name, Protocol: p.Protocol, Label: ProtocolLabel(p.Protocol), Kind: "relay", Enabled: p.Enabled})

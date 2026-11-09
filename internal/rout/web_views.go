@@ -177,7 +177,7 @@ type NodeView struct {
 }
 
 func (a *App) nodeView(s State, p Profile, now time.Time, tv *TrafficView) NodeView {
-	v := NodeView{ID: p.ID, Name: p.Name, Kind: p.Kind, Protocol: p.Protocol, Label: ProtocolLabel(p.Protocol), Enabled: p.Enabled,
+	v := NodeView{ID: p.ID, Name: p.Name, Kind: p.Kind, Protocol: p.Protocol, Label: nodeLabel(p), Enabled: p.Enabled,
 		State: a.serviceStateOf(p), Listen: p.Listen, Port: p.Port, PublicHost: p.PublicHost, PublicPort: p.PublicPort,
 		Networks: p.Networks(), Inbound: p.inboundMode(), SNI: p.SNI, ExitID: p.ExitID, Created: p.CreatedAt, Subscriptions: []string{}, Warnings: []string{}}
 	if p.Kind == "node" {
@@ -201,7 +201,7 @@ func (a *App) nodeView(s State, p Profile, now time.Time, tv *TrafficView) NodeV
 			v.Warnings = append(v.Warnings, "cert_expiring")
 		}
 	}
-	if _, e := p.URI(); e == nil {
+	if _, e := p.Share(); e == nil {
 		v.HasLink = true
 	}
 	for _, sub := range s.Subscriptions {
@@ -367,6 +367,8 @@ type SubItemView struct {
 	Base64Why string   `json:"base64_why,omitempty"`
 	MihomoOK  bool     `json:"mihomo_ok"`
 	MihomoWhy string   `json:"mihomo_why,omitempty"`
+	SurgeOK   bool     `json:"surge_ok"`
+	SurgeWhy  string   `json:"surge_why,omitempty"`
 	Notes     []string `json:"notes,omitempty"`
 }
 
@@ -436,6 +438,11 @@ func (a *App) subscriptionView(s State, sub Subscription, now time.Time, tokens 
 					iv.MihomoOK = true
 				} else {
 					iv.MihomoWhy = a.Error(e)
+				}
+				if _, e := p.SurgeLine(p.PublicHost, p.PublicPort); e == nil {
+					iv.SurgeOK = true
+				} else {
+					iv.SurgeWhy = a.T("Surge 格式目前只包含 Snell 节点")
 				}
 			}
 			v.Local++

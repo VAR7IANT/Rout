@@ -38,7 +38,7 @@ func (u *UI) nodeListeningSetup(setup ServerSetup, protocols ...string) (ServerS
 		}
 	}
 	caps := u.listenCapabilities(networks...)
-	items := nodeListenOptions(caps)
+	items := listenItemsFor(nodeListenOptions(caps), caps, protocols)
 	if len(items) == 0 {
 		return setup, errors.New("本机没有可用的监听地址")
 	}

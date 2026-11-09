@@ -2,6 +2,7 @@ package rout
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"path/filepath"
 )
@@ -47,6 +48,10 @@ func proxyConfig(p Proxy) M {
 
 // HTTP and unverified third-party SOCKS UDP are TCP-only. No direct fallback exists.
 func serverConfig(p Profile, dir string) (M, error) {
+	if p.snellNode() {
+		// snell-server reads its own INI file (snell.go), never a sing-box JSON document.
+		return nil, errors.New("Snell 节点使用 snell-server 配置文件")
+	}
 	if p.Kind == "relay" {
 		if p.nativeRelay() {
 			cfg, e := nativeRelayConfigOf(p)
@@ -140,6 +145,9 @@ func serverConfig(p Profile, dir string) (M, error) {
 
 // ClientConfig exports a complete, portable sing-box configuration without server secrets.
 func ClientConfig(p Profile, host string, port, localPort int) (M, error) {
+	if p.snellNode() {
+		return nil, errNoClientConfig
+	}
 	var out M
 	if p.Kind == "relay" {
 		u, e := RewriteURI(p.TargetURI, host, port, p.Name)

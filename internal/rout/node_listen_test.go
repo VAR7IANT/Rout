@@ -142,6 +142,24 @@ func TestNodeListeningProtocolConfiguration(t *testing.T) {
 				}
 				p := fixture(t, proto)
 				p.Listen = setup.Listen
+				if p.snellNode() {
+					// snell-server reads its own file: the chosen listening mode must reach it.
+					conf, e := snellServerConf(p)
+					if e != nil {
+						t.Fatal(e)
+					}
+					want := choice.listen + ":" + itoa(p.Port)
+					if choice.listen == "::" {
+						want = "::0:" + itoa(p.Port)
+						if p.snellVersion() == snellV6 {
+							want = "[::]:" + itoa(p.Port)
+						}
+					}
+					if !strings.Contains(conf, "listen = "+want+"\n") {
+						t.Fatalf("want listen %s in:\n%s", want, conf)
+					}
+					return
+				}
 				before, _ := serverConfig(fixture(t, proto), "/config")
 				cfg, e := serverConfig(p, "/config")
 				if e != nil {
@@ -192,7 +210,7 @@ func TestNodeCreationPreservesExistingNodesAndServerDefaults(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	u, out := testUI(a, "New\n1 2 3 4 5\n\n\n")
+	u, out := testUI(a, "New\n1 2 3 4 5 6 7\n\n\n")
 	u.caps = func() listenCaps { return listenCaps{V4: true, V6: true, DualStack: true} }
 	if e := u.create(); e != nil {
 		t.Fatal(e, out.String())
