@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
 
 **Native Snell (Surge) protocol.** Snell v5 and v6 (beta) are created and managed by Rout itself, next to VLESS Reality, AnyTLS, Shadowsocks 2022, Hysteria2 and TUIC. Nothing else has to be installed; existing nodes, relays, exits, AI routing, subscriptions, tokens, traffic data and the web panel are unchanged (the existing test suite passes as before; the one test that iterates every create-menu protocol now also checks Snell's configuration). Full guide: [docs/SNELL.md](docs/SNELL.md).
 
@@ -13,7 +13,6 @@
 - **Languages.** All new text exists in 简体中文, English and 繁體中文.
 - **Tests.** 33 new test functions (plus table cases and subtests): configuration for every variant (only documented keys), PSK rules, version/engine selection, Surge syntax, multi-instance lifecycle and isolation, port conflicts (TCP/UDP), NAT, systemd/OpenRC definitions, nftables rules, refusals, subscriptions, create/edit flows, web API, state round trip, engine install and hostile-archive tests, plus a **CI test that runs the real official engines** on Rout's configuration (Linux, `ROUT_TEST_ENGINES`). A test that a lying zip is rejected found and fixed an unchecked CRC in the new extractor.
 - **Not verified here:** a real VPS / NAT VPS / arm64 host with real systemd, and Surge iOS connecting (see [Verification status](docs/SNELL.md#verification-status) and the Surge iOS acceptance checklist).
-- Recommended next version: v0.6.0 (a new protocol). Nothing was tagged or released.
 
 ## v0.5.2
 
