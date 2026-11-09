@@ -563,3 +563,45 @@ func TestWebSnellOutboundPolicyFollowsTheEngine(t *testing.T) {
 		t.Errorf("an egress test claimed to run through Snell: %s", w.Body.String())
 	}
 }
+
+// An aggregate subscription (local nodes mixed with third-party ones) accepts Snell nodes like
+// a plain one does, and its Surge, Base64 and Mihomo outputs each carry what their client can.
+func TestSnellInAnAggregateSubscription(t *testing.T) {
+	sc := newAggScene(t)
+	snell := aiTestNode(t, sc.a, "snell", "Agg-Snell")
+	snell6 := aiTestNode(t, sc.a, "snell6", "Agg-Snell6")
+	items := []SubItem{
+		{Kind: itemLocal, NodeID: snell.ID},
+		sc.rnode(t, sc.links, "HK Reality"),
+		sc.local(0),
+		{Kind: itemLocal, NodeID: snell6.ID},
+	}
+	sub, token, e := sc.a.CreateAggregateSubscription("Mixed with Snell", AggregateSpec{Items: items})
+	if e != nil {
+		t.Fatalf("Snell cannot join an aggregate subscription: %v", e)
+	}
+	h := sc.server()
+	code, body := sc.fetchFormat(t, h, token, "surge")
+	want5, _ := snell.Share()
+	want6, _ := snell6.Share()
+	if code != 200 || strings.TrimSpace(body) != want5+"\n"+want6 {
+		t.Fatalf("Surge list of an aggregate: %d\n%s", code, body)
+	}
+	// Base64 keeps its own nodes and never carries Snell.
+	code, body = sc.fetchFormat(t, h, token, "")
+	if code != 200 {
+		t.Fatal(code, body)
+	}
+	for _, l := range decodeBody(t, body) {
+		if strings.Contains(l, snell.Password) || strings.Contains(l, snell6.Password) {
+			t.Fatalf("a Snell PSK reached the Base64 list: %q", l)
+		}
+	}
+	// Editing the aggregate to add or drop a Snell node works too.
+	if e = sc.a.SetSubscriptionItems(sub.ID, AggregateSpec{Items: items[:3]}); e != nil {
+		t.Fatalf("update: %v", e)
+	}
+	if code, body = sc.fetchFormat(t, h, token, "surge"); code != 200 || strings.TrimSpace(body) != want5 {
+		t.Fatalf("after the update: %d\n%s", code, body)
+	}
+}
