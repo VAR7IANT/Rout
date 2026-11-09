@@ -1,6 +1,8 @@
 # Changelog
 
-## v0.6.0
+## v0.6.1
+
+**This is the first published release with native Snell.** The `v0.6.0` tag was pushed on a commit whose test run failed (a test pinned the old version string), so no `v0.6.0` release or asset was ever published; the version was not reused and the fix ships as v0.6.1. There is no other difference.
 
 **Native Snell (Surge) protocol.** Snell v5 and v6 (beta) are created and managed by Rout itself, next to VLESS Reality, AnyTLS, Shadowsocks 2022, Hysteria2 and TUIC. Nothing else has to be installed; existing nodes, relays, exits, AI routing, subscriptions, tokens, traffic data and the web panel are unchanged (the existing test suite passes as before; the one test that iterates every create-menu protocol now also checks Snell's configuration). Full guide: [docs/SNELL.md](docs/SNELL.md).
 
