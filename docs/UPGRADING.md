@@ -1,5 +1,13 @@
 # Upgrading and rollback safety
 
+## Next release: native Snell (Surge)
+
+Back up first: `sudo rout backup --full`. Nothing restarts and nothing is migrated: existing nodes keep their configuration byte for byte, no key is added to them, and the web panel, subscriptions, tokens, traffic data and AI routing are untouched. Snell is opt-in: a Snell node is created from the menu (or the panel) like any other.
+
+New, created only when you create a Snell node: the engine files `/opt/rout/bin/snell-v5-v5.0.1` and/or `snell-v6-v6.0.0` (downloaded from `dl.nssurge.com`, SHA-256 pinned), and per node `rout-<id>.service` plus `/etc/rout/profiles/<id>/snell-server.conf` (0600). A Snell node's entry in `state.json` has `"protocol": "snell"` and `"snell_version": "5"` or `"6"`; the PSK is stored in `password` like other credentials (state file and backups are 0600). Nothing else about the state format changes.
+
+Rollback: **delete the Snell nodes first** (menu, panel or `rout delete ID`). An older manager does not know the protocol and refuses to load a `state.json` that contains a Snell node ("unsupported node protocol"), exactly as it would for any unknown protocol; after deleting them the previous manager loads the state normally. Snell engines left in `/opt/rout/bin` are harmless and can be deleted by hand. Subscriptions that listed a Snell node lose it when the node is deleted.
+
 ## To v0.5.2: node outbound IP family
 
 Nothing to migrate. Existing nodes read as **Auto** and keep their configuration byte for byte (`state.json` gets no new key for them); the policy is stored per node in the existing `outbound_policy` field once you choose one. Backups and restores carry it. **Downgrading:** v0.5.1 loads such a state but does not apply the field to nodes, so they would leave without the restriction; see [NODE_EGRESS.md](NODE_EGRESS.md#6-persistence-and-upgrades).

@@ -11,6 +11,7 @@ https://sub.example.com/s/TOKEN                 # Base64 (unchanged default)
 https://sub.example.com/s/TOKEN?format=base64   # explicit Base64
 https://sub.example.com/s/TOKEN?format=mihomo   # complete native Mihomo YAML
 https://sub.example.com/s/TOKEN?format=clash    # alias for Mihomo
+https://sub.example.com/s/TOKEN?format=surge    # Surge proxy lines (Snell nodes)
 ```
 
 Keep the original saved URL in Shadowrocket and other Base64 clients. In Clash Verge Rev, FlClash or Mihomo Party, create a remote configuration from that same URL with `?format=mihomo` appended. This does not create a Rout subscription or rotate its token. `clash` requires a modern Mihomo core; it does not imply compatibility with the discontinued Clash core. Existing templates and newly shown URLs use the actual configured domain/prefix, never a fixed domain.
@@ -27,6 +28,7 @@ Requests still require a valid enabled token and share the same connection/concu
 | Shadowsocks 2022 | Actual cipher/password and public endpoint; TCP-only entries disable UDP |
 | Hysteria2 | Actual password/SNI and SHA256 fingerprint of the configured server leaf certificate |
 | TUIC v5 | Actual UUID/password/SNI, canonical h3 ALPN/bbr congestion control and server certificate fingerprint |
+| Snell v5 / v6 | Not representable in Base64 or Mihomo (Snell has no share link; Mihomo documents Snell v1-v5 but Rout does not export it). Carried only by `?format=surge`, see below |
 | Share-link relays | Forwarded public endpoint/NAT port with original credentials/TLS identity; supported VLESS plain/TLS/Reality, Trojan, SS, Hysteria2 and TUIC links; representable TCP/WS/gRPC, ALPN, browser fingerprint, certificate pin and protocol options are retained |
 
 Rout has no VMess node/relay model; this release does not invent one. Mihomo v1.19.32 cannot express Rout's **AnyTLS Reality** backend; it is explicitly omitted, never converted to plain AnyTLS. UDP-only Shadowsocks, unchecked insecure TLS, unknown/duplicate relay parameters, unsupported ciphers/transports and a separate gRPC authority that Mihomo cannot preserve are also diagnosed. Plain TLS AnyTLS relay links are supported where representable.
@@ -257,3 +259,15 @@ For unsupported layouts/platforms, keep the loopback service and configure your 
 Unit/race tests cover v0.3.4 persistence, token validity, ordering/Base64 output, URL preservation, DNS families/Cloudflare, conflicts, ownership/adoption, rollback, port changes, diagnostics, bilingual menus and routing/traffic invariance. Isolated real Caddy tests cover a fresh signed-package installation, automatic private test-CA certificates, real TLS responses, preservation of an unrelated site and saved URL, repair/restart/removal, error-log redaction and failed replacement rollback. Disposable systemd CI tests upgrade the checksum-verified v0.3.4 release binary and a helper built from the pinned v0.3.5 release commit (which has no binary assets), and verify the original token/body and persisted Reality/AI/traffic/relay state, restart and boot-state preservation.
 
 The pinned Mihomo v1.19.32 core also validates generated configurations and sends real TCP/UDP traffic through VLESS Reality Vision, SS, Hysteria2 and TUIC, including rejection of wrong pins. GUI clients (Clash Verge Rev, FlClash and Mihomo Party) have not been exercised here. These tests do not claim public ACME issuance on your domain, real Shadowrocket interaction or production verification. Check public certificate issuance, external reachability, mobile client refresh and existing proxy/AI behavior on the actual VPS before release.
+
+## Surge format (Snell)
+
+`?format=surge` returns the subscription's **Snell** nodes as Surge proxy lines, one per line, `text/plain`, in the saved order:
+
+```text
+Tokyo-Snell = snell, 203.0.113.10, 34567, psk=…, version=5
+Tokyo-Snell6 = snell, 2001:db8::7, 34568, psk=…, version=6
+```
+
+Use it as the `policy-path` of a Surge external policy group, or copy the lines into `[Proxy]`. The list is computed on every request from the current node, so a changed PSK, port, public address or name, a disabled node and a deleted node are reflected on the next refresh. Other nodes of the same subscription are not converted (Surge needs no list for them here): they are omitted, counted in `X-Rout-Skipped-Nodes`, and described in the sanitized service log; a subscription with no enabled Snell node returns `503` like any other format with nothing to serve. The same token, limits, uniform `404` and `HEAD`/`GET` rules apply. Snell nodes are skipped (with a diagnostic) by the Base64 and Mihomo/Clash outputs; Rout never turns one into another protocol.
+
