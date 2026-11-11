@@ -52,7 +52,7 @@ The password can only be set from the CLI, never through the API. It is stored a
 | Sources | third-party subscriptions: add, refresh, per-node enable, parse issues, tags |
 | System | version/update status, service control, logs, backup and restore, subscription HTTPS status, panel HTTPS health (DNS, ports, Caddy, ACME, certificate, Host allow-list, login page) with a re-authenticated repair, panel settings, sessions and audit log |
 
-Interface languages: 简体中文, 繁體中文, English. Light and dark theme follow the system by default and can be switched in the header. The layout adapts from 320 px phones to desktop: tables turn into cards, the side navigation becomes a bottom tab bar, long IPv6 addresses, domains and links wrap instead of widening the page.
+Interface languages: 简体中文, 繁體中文, English. The interface is terminal-styled (monospace, dark by default whatever the system setting; a light "paper" theme can be chosen in the sidebar, or in the menu on phones). `Ctrl K` / `⌘K` opens a command palette that jumps to any page, switches language or theme, and signs out; `/` focuses the filter of a list page. The layout adapts from 320 px phones to desktop: tables turn into cards, the side navigation becomes a bottom tab bar, long IPv6 addresses, domains and links wrap instead of widening the page.
 
 ## Security model
 

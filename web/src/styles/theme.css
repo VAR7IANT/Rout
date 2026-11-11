@@ -1,0 +1,80 @@
+/* Design tokens. The panel is a terminal: near-black surfaces, one phosphor-green accent,
+   hairline borders, square corners, monospace everywhere. Dark is the default regardless of
+   the system setting; [data-theme='light'] is the "paper" variant. */
+:root {
+  color-scheme: dark;
+
+  --bg: #0a0c0b;
+  --panel: #0f1211;
+  --panel-2: #141817;
+  --sunken: #070908;
+  --line: #222927;
+  --line-strong: #39433f;
+  --text: #d3dad6;
+  --muted: #8b9690;
+  --faint: #5d6862; /* decoration only (meter rests, separators), never body text */
+
+  --accent: #4ade80;
+  --accent-strong: #86efac;
+  --accent-dim: #1e6b41;
+  --accent-soft: rgba(74, 222, 128, 0.1);
+  --on-accent: #04130a;
+
+  --ok: #4ade80;
+  --ok-soft: rgba(74, 222, 128, 0.1);
+  --warn: #fbbf24;
+  --warn-soft: rgba(251, 191, 36, 0.1);
+  --error: #f87171;
+  --error-soft: rgba(248, 113, 113, 0.1);
+  --info: #67e8f9;
+
+  --plot-a: #4ade80;
+  --plot-b: #67e8f9;
+
+  --scrim: rgba(0, 0, 0, 0.66);
+  --shadow: 0 0 0 1px var(--line-strong), 0 18px 48px rgba(0, 0, 0, 0.6);
+  --glow: 0 0 8px rgba(74, 222, 128, 0.45);
+
+  --mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'PingFang SC', 'PingFang TC', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans CJK TC', monospace;
+
+  --radius: 2px;
+  --gap: 14px;
+  --gutter: 24px;
+  --side: 216px;
+  --bar: 38px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f1efe7;
+  --panel: #faf9f3;
+  --panel-2: #f4f2ea;
+  --sunken: #e8e6dc;
+  --line: #d6d3c6;
+  --line-strong: #b4b0a0;
+  --text: #1a1e1c;
+  --muted: #5a625d;
+  --faint: #9a9f97;
+
+  --accent: #0c7a3c;
+  --accent-strong: #095c2d;
+  --accent-dim: #8fc7a6;
+  --accent-soft: rgba(12, 122, 60, 0.1);
+  --on-accent: #ffffff;
+
+  --ok: #0c7a3c;
+  --ok-soft: rgba(12, 122, 60, 0.1);
+  --warn: #8a5a00;
+  --warn-soft: rgba(176, 116, 0, 0.13);
+  --error: #b3261e;
+  --error-soft: rgba(179, 38, 30, 0.1);
+  --info: #0b6a7a;
+
+  --plot-a: #0c7a3c;
+  --plot-b: #0b6a7a;
+
+  --scrim: rgba(26, 30, 28, 0.42);
+  --shadow: 0 0 0 1px var(--line-strong), 0 18px 40px rgba(26, 30, 28, 0.22);
+  --glow: none;
+}

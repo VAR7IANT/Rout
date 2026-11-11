@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Web panel rewritten.** The React + TypeScript front end (`web/`) was rebuilt from an empty tree with a terminal-style interface: monospace throughout, dark by default (a light "paper" theme is optional), bracketed status tags, text block meters, stepped plots. The API, its URLs and every request body are unchanged, so no server-side change or migration is involved; pages, features and the three interface languages are the same as in v0.6.1.
+- New in the panel: a command palette (`Ctrl K` / `⌘K`) to jump to a page, switch language or theme, or sign out; `/` focuses the filter on list pages; the System page keeps its tab in the address (`/system?tab=network`), so links and Back return to it; deleting a third-party source that subscriptions still use asks for the "remove it from them too" choice inside the confirmation.
+- Fixes found while rewriting: signing out no longer raises an unhandled error when the logout request fails (the browser forgets its token either way); dialogs focus their first field instead of the close button.
+- The message catalog (simplified Chinese, traditional Chinese, English) and the API type definitions were carried over as data. Tests were rewritten: 82 Vitest tests (API client, formatting, catalog coverage, sign-in and password re-entry, components, and page tests that assert the request bodies). Checked in a browser against a local `rout web serve` at desktop and phone widths in both themes with an empty configuration; **not** checked against a server with real nodes, relays or subscriptions.
+
 ## v0.6.1
 
 **This is the first published release with native Snell.** The `v0.6.0` tag was pushed on a commit whose test run failed (a test pinned the old version string), so no `v0.6.0` release or asset was ever published; the version was not reused and the fix ships as v0.6.1. There is no other difference.
