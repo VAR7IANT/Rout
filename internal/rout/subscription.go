@@ -276,7 +276,7 @@ func renderSubscription(uris []string) string {
 // valid share link, disabled ones included) and warnings for entries that cannot.
 func (s State) SubscriptionCandidates() (ok []Profile, warnings []string) {
 	for _, p := range s.Profiles {
-		if _, e := p.URI(); e != nil {
+		if _, e := p.Share(); e != nil {
 			warnings = append(warnings, fmt.Sprintf("%s 不能加入订阅：%s", p.Name, e.Error()))
 			continue
 		}
@@ -337,7 +337,7 @@ func checkSubscriptionNodes(s State, ids []string) error {
 		if e != nil {
 			return e
 		}
-		if _, e = p.URI(); e != nil {
+		if _, e = p.Share(); e != nil {
 			return fmt.Errorf("%s 不能加入订阅：%w", p.Name, e)
 		}
 	}

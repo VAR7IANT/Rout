@@ -304,6 +304,9 @@ func (a *App) nodeEgressTest(id string, quick bool, env egressEnv) (EgressReport
 	if p.Kind != "node" {
 		return EgressReport{}, errors.New("只有节点有出站网络策略；中转请在『修改网络』中设置")
 	}
+	if p.snellNode() {
+		return EgressReport{}, errNoClientConfig
+	}
 	if !p.Enabled {
 		return EgressReport{}, errors.New("节点已停用")
 	}

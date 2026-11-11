@@ -172,7 +172,7 @@ func (u *UI) aiSelectInbounds() error {
 			if chosen[p.ID] {
 				mark = u.paint(accent, "[x]")
 			}
-			fmt.Fprintf(u.writer(), "  %2d  %s %s %s\n", i+1, mark, u.bold(p.Name), u.dim("["+p.ID+"] "+ProtocolLabel(p.Protocol)))
+			fmt.Fprintf(u.writer(), "  %2d  %s %s %s\n", i+1, mark, u.bold(p.Name), u.dim("["+p.ID+"] "+nodeLabel(p)))
 		}
 		u.hint("输入编号切换选中，可多个，如 1 3 · s 保存 · 0 取消")
 		raw := normalizeInput(u.ask("选择", ""))

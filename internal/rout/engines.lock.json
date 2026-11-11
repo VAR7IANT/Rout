@@ -40,5 +40,41 @@
         "sha256": "d03699e3f385d4ff5dad68046712adfcc7515325a064d2ab046e0bece30f8f8f"
       }
     ]
+  },
+  "snell-v5": {
+    "version": "v5.0.1",
+    "assets": [
+      {
+        "name": "snell-server-v5.0.1-linux-amd64.zip",
+        "url": "https://dl.nssurge.com/snell/snell-server-v5.0.1-linux-amd64.zip",
+        "sha256": "9bea1c2b9e35b73b31634856c04d18c393072b9e5dcde6a32781d8b8f908c539",
+        "binary": "snell-server"
+      },
+      {
+        "name": "snell-server-v5.0.1-linux-aarch64.zip",
+        "url": "https://dl.nssurge.com/snell/snell-server-v5.0.1-linux-aarch64.zip",
+        "sha256": "2f178bf5ac468ce1a130454efa40a0603fbbe4e47ecc4880a989f4abc7f824cf",
+        "binary": "snell-server"
+      }
+    ]
+  },
+  "snell-v6": {
+    "version": "v6.0.0",
+    "assets": [
+      {
+        "name": "snell-server-v6.0.0-linux-amd64.zip",
+        "url": "https://dl.nssurge.com/snell/snell-server-v6.0.0-linux-amd64.zip",
+        "sha256": "8a9c4463ca87cfa5eaa37c6af0d37ab93ea275aa12391985bb2a375ca3abd7f2",
+        "binary": "snell-server",
+        "libc": "glibc"
+      },
+      {
+        "name": "snell-server-v6.0.0-linux-aarch64.zip",
+        "url": "https://dl.nssurge.com/snell/snell-server-v6.0.0-linux-aarch64.zip",
+        "sha256": "a0b2915cbc77dc3baf8fa069e741c20808d8a10c3a8a93e709a0a580645c3bd7",
+        "binary": "snell-server",
+        "libc": "glibc"
+      }
+    ]
   }
 }

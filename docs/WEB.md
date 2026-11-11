@@ -45,7 +45,7 @@ The password can only be set from the CLI, never through the API. It is stored a
 | Page | Contents |
 | --- | --- |
 | Dashboard | CPU, memory, disk, network, IPv4/IPv6 availability, node/relay/exit/subscription counts and states, live and cumulative traffic, alerts, certificate status, quota reminders |
-| Nodes | list, search/filter, bulk start/stop/delete, create/edit (VLESS Reality, AnyTLS, Hysteria2, SS2022, TUIC; local IPv4/IPv6, NAT relay, SOCKS5/HTTP/remote exit), share link and QR, connection/traffic test |
+| Nodes | list, search/filter, bulk start/stop/delete, create/edit (VLESS Reality, AnyTLS, Hysteria2, SS2022, TUIC, Snell v5 / v6 beta; local IPv4/IPv6, NAT relay, SOCKS5/HTTP/remote exit), share link and QR, connection/traffic test |
 | AI Routing | enable/disable, inbound node checklist, AI exit selection (existing exit, through an existing relay, remote node link, forwarder on another server), path preview for ordinary and AI traffic, end-to-end exit test with the observed exit IP, rule simulation, identification limits |
 | Relays & exits | local/remote/NAT relays, TCP/UDP, IPv4/IPv6/dual listen, outbound policy, SOCKS5/HTTP(S)/remote-node exits and relay chains, which exits/AI depend on a relay, references and delete protection, entry → exit path, layered tests |
 | Subscriptions | CRUD, enable/disable, node add/remove/sort, plan (quota, reset, expiry), Base64 and Mihomo URLs, QR, token rotation, aggregates (local + remote items) |

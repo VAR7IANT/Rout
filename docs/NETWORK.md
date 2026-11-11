@@ -60,6 +60,7 @@ A plain TCP port mapping can carry TCP and nothing else.
 | --- | --- |
 | VLESS (Reality), AnyTLS, Trojan | TCP |
 | Shadowsocks | TCP and/or UDP |
+| Snell v5 / v6 | TCP (Snell v5 may also use UDP on the same port for its QUIC Proxy Mode; Rout reserves and meters it, but a TCP-only mapping is accepted, see [SNELL.md](SNELL.md)) |
 | Hysteria2, TUIC (QUIC) | UDP |
 | SSH, HTTP/HTTPS | TCP |
 

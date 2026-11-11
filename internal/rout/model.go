@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.5.2"
+const Version = "0.6.1"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -95,6 +95,9 @@ type Profile struct {
 	// accept ("tcp", "udp", "both"); empty means unknown. A TCP-only destination (for
 	// example a NAT that maps only TCP) can never carry UDP protocols such as Hysteria2.
 	TargetNetwork string `json:"target_network,omitempty"`
+
+	// SnellVersion is "5" or "6" on a Snell node (see snell.go); empty means 5.
+	SnellVersion string `json:"snell_version,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{12}$`)
@@ -115,6 +118,10 @@ func RandomPassword(n int) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 func NewProfile(protocol string) (Profile, error) {
+	snellVersion := ""
+	if protocol == snell6Alias {
+		protocol, snellVersion = protoSnell, snellV6
+	}
 	p := Profile{ID: RandomHex(6), Name: protocol, Kind: "node", Enabled: true, Protocol: protocol, Listen: "0.0.0.0", Password: RandomPassword(24), Method: "2022-blake3-aes-128-gcm", SNI: "addons.mozilla.org"}
 	now := time.Now()
 	p.CreatedAt = &now
@@ -137,6 +144,17 @@ func NewProfile(protocol string) (Profile, error) {
 	}
 	if protocol == "ss" {
 		p.Password = RandomPassword(16)
+	}
+	if protocol == protoSnell {
+		psk, e := NewSnellPSK()
+		if e != nil {
+			return p, e
+		}
+		p.Password, p.SnellVersion = psk, snellVersion
+		p.Method, p.SNI, p.UUID = "", "", ""
+		if snellVersion == "" {
+			p.SnellVersion = snellV5
+		}
 	}
 	return p, nil
 }
@@ -400,6 +418,10 @@ func (p Profile) Validate() error {
 		if e != nil || len(b) != 16 {
 			return errors.New("SS2022 密钥应为 16 字节 Base64")
 		}
+	case protoSnell:
+		if e := p.checkSnell(); e != nil {
+			return e
+		}
 	case "hy2", "tuic":
 		if !validHost(p.SNI) {
 			return errors.New("TLS SNI 无效")
@@ -427,6 +449,9 @@ func (p Profile) Validate() error {
 // Combinations that are structurally valid but cannot carry traffic. Checked for new or
 // edited entries only, so an existing state file always stays loadable and repairable.
 func (p Profile) CheckCompatibility() error {
+	if p.snellNode() && p.Outbound != nil {
+		return errors.New("Snell 引擎不支持出站代理")
+	}
 	if p.Kind == "node" && p.Protocol == "ss" && p.Network == "udp" && p.Outbound != nil {
 		return errors.New("仅 UDP 的 Shadowsocks 不能使用出站代理（出站代理只转发 TCP），请使用 TCP＋UDP 映射或改为直连")
 	}
@@ -476,7 +501,7 @@ func (s State) Validate() error {
 		ids[p.ID] = true
 		// Reserve the same network/port across addresses: conservative and portable.
 		if p.Enabled {
-			for _, network := range p.Networks() {
+			for _, network := range p.meterNetworks() {
 				key := network + ":" + strconv.Itoa(p.Port)
 				if prev, ok := ports[key]; ok {
 					return fmt.Errorf("%s 与 %s 占用相同 %s 端口", prev, p.Name, network)
@@ -629,6 +654,8 @@ func (p Profile) URIAt(host string, port int) (string, error) {
 		q.Set("sni", p.SNI)
 		q.Set("congestion_control", "bbr")
 		q.Set("alpn", "h3")
+	case protoSnell:
+		return "", errNoShareLink
 	default:
 		return "", errors.New("不支持的协议")
 	}

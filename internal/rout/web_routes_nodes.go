@@ -417,11 +417,15 @@ func (s *WebServer) profileLink(kind string) func(c *reqCtx) (any, error) {
 		if e != nil {
 			return nil, e
 		}
-		link, e := p.URI()
+		link, e := p.Share()
 		if e != nil {
 			return nil, e
 		}
 		s.audit.add(s.now(), clientIP(c.r), "reveal link "+p.ID)
+		if p.snellNode() {
+			// Snell has no share link: the "link" is the Surge profile line.
+			return map[string]string{"link": link, "format": "surge"}, nil
+		}
 		return map[string]string{"link": link}, nil
 	}
 }

@@ -72,6 +72,8 @@ func (a *App) relayHelper() string { return filepath.Join(a.BinDir, "rout-relay-
 func (a *App) serviceCommand(p Profile) (string, []string) {
 	conf := filepath.Join(a.profileDir(p.ID), "config.json")
 	switch {
+	case p.snellNode():
+		return a.enginePath(a.engineName(p)), []string{"-c", filepath.Join(a.profileDir(p.ID), snellConf)}
 	case p.nativeRelay():
 		return a.relayHelper(), []string{"relay-serve", conf}
 	case p.Kind == "relay":
@@ -387,7 +389,7 @@ func (a *App) Restart(id string) error {
 		return e
 	}
 	if p.Kind == "node" {
-		if e = a.checkConfig(filepath.Join(a.profileDir(p.ID), "config.json")); e != nil {
+		if e = a.checkProfileConfig(p, a.profileDir(p.ID)); e != nil {
 			return e
 		}
 	}
@@ -424,15 +426,18 @@ func (a *App) Logs(p Profile) error {
 
 func redactProxySecrets(text string, s State) string {
 	secrets := map[string]bool{}
+	addValue := func(v string) {
+		if v != "" {
+			secrets[v], secrets[url.QueryEscape(v)], secrets[url.PathEscape(v)] = true, true, true
+			quoted := strconv.Quote(v)
+			secrets[quoted[1:len(quoted)-1]] = true
+			encoded, _ := json.Marshal(v)
+			secrets[string(encoded[1:len(encoded)-1])] = true
+		}
+	}
 	add := func(p Proxy) {
 		for _, v := range append(p.secretsOf(), base64.StdEncoding.EncodeToString([]byte(p.Username+":"+p.Password))) {
-			if v != "" {
-				secrets[v], secrets[url.QueryEscape(v)], secrets[url.PathEscape(v)] = true, true, true
-				quoted := strconv.Quote(v)
-				secrets[quoted[1:len(quoted)-1]] = true
-				encoded, _ := json.Marshal(v)
-				secrets[string(encoded[1:len(encoded)-1])] = true
-			}
+			addValue(v)
 		}
 	}
 	for _, ex := range s.Exits {
@@ -441,6 +446,11 @@ func redactProxySecrets(text string, s State) string {
 	for _, p := range s.Profiles {
 		if p.Outbound != nil {
 			add(*p.Outbound)
+		}
+		// A Snell PSK is the node's only secret and its engine logs on its own terms: it
+		// never reaches the screen, whichever node's log is being shown.
+		if p.snellNode() {
+			addValue(p.Password)
 		}
 	}
 	var keys []string

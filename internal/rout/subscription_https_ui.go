@@ -288,6 +288,7 @@ func (u *UI) showExistingSubscriptionURL() {
 	u.printf("Base64：%s/s/{access_token}\n", base)
 	u.printf("Mihomo：%s/s/{access_token}?format=mihomo\n", base)
 	u.printf("Clash：%s/s/{access_token}?format=clash\n", base)
+	u.printf("Surge (Snell)：%s/s/{access_token}?format=surge\n", base)
 	u.hint("此处仅显示链接模板；完整链接请在“查看订阅”中查看，旧订阅仍可使用之前保存的 URL")
 }
 

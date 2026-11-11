@@ -166,7 +166,7 @@ func (u *UI) initLanguage(force bool) error {
 }
 
 func ProtocolLabel(p string) string {
-	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
+	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", protoSnell: "Snell", snell6Alias: "Snell6", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
 }
 
 // outboundLabel names the outbound proxy a node uses ("Direct connection" if none).
@@ -283,7 +283,7 @@ func (u *UI) nodeCard(s State, i int, p Profile, db *TrafficState) {
 		prefix = u.paint(accent, fmt.Sprintf("%2d.", i))
 	}
 	fmt.Fprintf(u.writer(), "  %s %s %s\n", prefix, u.bold(p.Name), u.dim("["+p.ID+"]"))
-	u.segments("      ", ProtocolLabel(p.Protocol), u.nodeStatusStyled(p), fmt.Sprintf("%s %d", u.a.T("监听端口"), p.Port), u.a.T("公网")+" "+net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
+	u.segments("      ", nodeLabel(p), u.nodeStatusStyled(p), fmt.Sprintf("%s %d", u.a.T("监听端口"), p.Port), u.a.T("公网")+" "+net.JoinHostPort(p.PublicHost, itoa(p.PublicPort)))
 	segs := []string{u.a.T("出站：") + u.outboundLabel(s, p)}
 	if use := u.usage(db, p); use != "" {
 		segs = append(segs, use)
@@ -323,7 +323,7 @@ func (u *UI) list(s State) {
 	db := u.trafficDB()
 	for i, p := range s.Profiles {
 		u.nodeCard(s, i+1, p, db)
-		if uri, e := p.URI(); e == nil {
+		if uri, e := p.Share(); e == nil {
 			fmt.Fprintln(u.writer(), "      "+uri)
 			if st, er := u.a.LoadSettings(); er == nil && st.Server != nil {
 				if label, alt, ok := altLink(*st.Server, p); ok {
@@ -745,7 +745,7 @@ func (u *UI) outboundAction(s State, v string) error {
 	return nil
 }
 func (u *UI) copy(p Profile) error {
-	uri, e := p.URI()
+	uri, e := p.Share()
 	if e != nil {
 		return e
 	}
@@ -795,7 +795,7 @@ func (u *UI) export(p Profile) error {
 func AllLinks(s State) string {
 	var b strings.Builder
 	for _, p := range s.Profiles {
-		if uri, e := p.URI(); e == nil {
+		if uri, e := p.Share(); e == nil {
 			fmt.Fprintf(&b, "# %s [%s]\n%s\n", p.Name, p.ID, uri)
 		}
 	}
@@ -810,7 +810,7 @@ func (u *UI) allLinks(s State) string {
 	}
 	var b strings.Builder
 	for _, p := range s.Profiles {
-		uri, e := p.URI()
+		uri, e := p.Share()
 		if e != nil {
 			continue
 		}
@@ -937,7 +937,7 @@ func (u *UI) nodeDetail(id string) error {
 		u.heading(p.Name)
 		pop()
 		w := u.writer()
-		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("协议"), 8), ProtocolLabel(p.Protocol))
+		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("协议"), 8), nodeLabel(p))
 		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("地址"), 8), p.PublicHost)
 		fmt.Fprintf(w, "  %s  %d\n", pad(u.a.T("端口"), 8), p.PublicPort)
 		fmt.Fprintf(w, "  %s  %s\n", pad(u.a.T("状态"), 8), u.nodeStatusStyled(p))
@@ -1019,11 +1019,18 @@ func (u *UI) nodeMenu(id string) error {
 		popNode()
 		u.nodeCard(s, 0, p, u.trafficDB())
 		items := []menuItem{item("name", "重命名"), item("address", "修改端口或公网地址"), item("exit", "选择出站代理"), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据")}
+		if p.snellNode() {
+			// snell-server has no upstream proxy, so there is nothing to choose there.
+			items = append(items[:2], items[3:]...)
+		}
 		if _, ok := p.CertificateExpiry(); ok {
 			items = append(items, item("cert", "证书管理"))
 		}
 		// Appended last so the numbers of the existing entries never change.
 		items = append(items, item("egress", "出站网络策略"))
+		if p.snellNode() {
+			items = append(items, item("listen", "修改监听地址"), item("psk", "设置 PSK"))
+		}
 		v := u.menu("", items, "返回")
 		if u.err != nil || v == "" {
 			return u.err
@@ -1104,6 +1111,18 @@ func (u *UI) nodeAction(s State, p Profile, v string) error {
 		return u.certificate(s, p)
 	case "egress":
 		return u.nodeEgressMenu(p)
+	case "listen":
+		if e := u.snellListenMenu(&p); e != nil {
+			return e
+		}
+	case "psk":
+		if e := u.snellPSKMenu(&p); e != nil {
+			if errors.Is(e, errCancelled) {
+				u.say("已取消")
+				return nil
+			}
+			return e
+		}
 	case "name":
 		p.Name = u.ask("节点名称", p.Name)
 	case "address":
@@ -1136,7 +1155,7 @@ func (u *UI) nodeAction(s State, p Profile, v string) error {
 		return e
 	}
 	u.good("已保存")
-	if v == "credentials" || v == "address" {
+	if v == "credentials" || v == "address" || v == "listen" || v == "psk" {
 		return u.copy(p)
 	}
 	return nil
@@ -1224,7 +1243,7 @@ func (u *UI) services() error {
 					u.say("暂无节点")
 				}
 				for _, p := range s.Profiles {
-					kind := ProtocolLabel(p.Protocol)
+					kind := nodeLabel(p)
 					if p.Kind == "relay" {
 						kind = u.a.T("中转")
 					}

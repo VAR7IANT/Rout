@@ -193,6 +193,9 @@ func mihomoNode(p Profile) (M, error) {
 	if p.Protocol == "anytls" {
 		return nil, errors.New("Mihomo 不支持 AnyTLS Reality，请使用 Base64 或支持的节点")
 	}
+	if p.snellNode() {
+		return nil, errors.New("Rout 暂不把 Snell 导出为 Mihomo 节点（未经验证，且 Mihomo 不支持 Snell v6），请使用 Surge 格式")
+	}
 	if e := p.Ready(); e != nil {
 		return nil, errors.New("节点证书尚未生效或已过期，请更新证书")
 	}

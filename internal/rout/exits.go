@@ -148,6 +148,9 @@ func BindExit(s State, nodeID, exitID string) (State, error) {
 	if p.Kind != "node" {
 		return s, errors.New("中转节点不使用出站代理；如需出站代理，请在目标节点上设置")
 	}
+	if p.snellNode() && exitID != "" {
+		return s, errors.New("Snell 引擎不支持出站代理")
+	}
 	if ex, er := FindExit(s, exitID); er == nil && ex.isChain() {
 		return s, errors.New("转发出口链路仅用于 AI 智能分流，不能作为节点的出站代理")
 	}

@@ -107,7 +107,14 @@ func (u *UI) doctor(fix bool) error {
 	for _, p := range s.Profiles {
 		needed[a.engineName(p)] = true
 	}
-	for _, name := range []string{"sing-box", "gost"} {
+	names := []string{"sing-box", "gost"}
+	for _, name := range []string{"snell-v5", "snell-v6"} {
+		// Snell engines are listed only where they are in use or installed.
+		if _, e := os.Stat(a.enginePath(name)); needed[name] || e == nil {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
 		path := a.enginePath(name)
 		st, e := os.Stat(path)
 		if e != nil || st.Mode()&0111 == 0 {
@@ -119,8 +126,11 @@ func (u *UI) doctor(fix bool) error {
 			continue
 		}
 		flag := "version"
-		if name == "gost" {
+		switch {
+		case name == "gost":
 			flag = "-V"
+		case isSnellEngine(name):
+			flag = "--version"
 		}
 		out, e := runOutput(10*time.Second, path, flag)
 		if e != nil {
@@ -185,12 +195,20 @@ func (d *doctorRun) profile(s State, p Profile, manager string, now time.Time) {
 	if e := p.CheckCompatibility(); e != nil {
 		d.bad("%s：%s", label, a.Error(e))
 	}
-	if config, e := serverConfig(p, a.profileDir(p.ID)); e == nil {
+	if p.snellNode() {
+		expected, e := snellServerConf(p)
+		actual, er := os.ReadFile(filepath.Join(a.profileDir(p.ID), snellConf))
+		if e == nil && (er != nil || string(actual) != expected) {
+			d.warn("%s：运行配置与状态不一致，运行 rout apply 修复", label)
+		} else if e == nil && a.checkProfileConfig(p, a.profileDir(p.ID)) != nil {
+			d.bad("%s：Snell 配置检查失败", label)
+		}
+	} else if config, e := serverConfig(p, a.profileDir(p.ID)); e == nil {
 		expected, _ := JSON(config)
 		actual, er := os.ReadFile(filepath.Join(a.profileDir(p.ID), "config.json"))
 		if er != nil || !bytes.Equal(expected, actual) {
 			d.warn("%s：运行配置与状态不一致，运行 rout apply 修复", label)
-		} else if p.Kind == "node" && a.checkConfig(filepath.Join(a.profileDir(p.ID), "config.json")) != nil {
+		} else if p.Kind == "node" && a.checkProfileConfig(p, a.profileDir(p.ID)) != nil {
 			d.bad("%s：sing-box 配置检查失败", label)
 		}
 	}

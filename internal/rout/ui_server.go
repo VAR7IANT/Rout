@@ -207,7 +207,7 @@ func altLink(setup ServerSetup, p Profile) (label, uri string, ok bool) {
 	if !ok {
 		return "", "", false
 	}
-	uri, e := p.URIAt(host, p.PublicPort)
+	uri, e := p.ShareAt(host, p.PublicPort)
 	if e != nil {
 		return "", "", false
 	}
@@ -217,9 +217,12 @@ func altLink(setup ServerSetup, p Profile) (label, uri string, ok bool) {
 // printLinks shows a node's link and, on a dual-stack host, the same node's link for the
 // other address family (same port and credentials: one service serves both).
 func (u *UI) printLinks(p Profile, setup *ServerSetup) error {
-	uri, e := p.URI()
+	uri, e := p.Share()
 	if e != nil {
 		return e
+	}
+	if p.snellNode() {
+		fmt.Fprintln(u.writer(), u.a.T("Surge 配置（粘贴到 [Proxy] 段；Surge 无 Snell 分享链接）："))
 	}
 	fmt.Fprintln(u.writer(), uri)
 	if setup == nil {

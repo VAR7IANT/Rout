@@ -65,6 +65,9 @@ func aiEligible(p Profile) error {
 	if p.Protocol == "ss" && p.Network == "udp" {
 		return errors.New("仅 UDP 的 Shadowsocks 无法承载 AI 服务的 TCP 流量")
 	}
+	if p.snellNode() {
+		return errors.New("Snell 引擎没有路由规则，不能绑定 AI 智能分流")
+	}
 	return nil
 }
 

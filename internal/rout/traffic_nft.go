@@ -507,7 +507,7 @@ func (m nftMeter) tableRules(p Profile, r TrafficRecord) string {
 			if direction == "down" {
 				field = "sport"
 			}
-			for _, network := range p.Networks() {
+			for _, network := range p.meterNetworks() {
 				s += network + " " + field + " @alive goto " + direction + "_allow\n"
 			}
 			s += "drop\n"
@@ -538,7 +538,7 @@ func (m nftMeter) tableRules(p Profile, r TrafficRecord) string {
 			}
 			match = family + " " + address + " " + p.Listen + " "
 		}
-		for _, network := range p.Networks() {
+		for _, network := range p.meterNetworks() {
 			s += fmt.Sprintf("%s%s %s %d jump %s_gate\n", match, network, field, p.Port, direction)
 		}
 		s += "}\n"

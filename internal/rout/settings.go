@@ -233,7 +233,7 @@ func PlanPort(p Profile, setup ServerSetup, s State) (Profile, error) {
 		}
 		reserved := false
 		for _, old := range s.Profiles {
-			if old.Port == port && old.ID != p.ID && sharesNetwork(old.Networks(), p.Networks()) {
+			if old.Port == port && old.ID != p.ID && sharesNetwork(old.meterNetworks(), p.meterNetworks()) {
 				reserved = true
 				break
 			}

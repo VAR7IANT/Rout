@@ -275,7 +275,7 @@ func Run(args []string) (result error) {
 		return a.Probe(p)
 	case "export":
 		if len(args) == 2 {
-			uri, e := p.URI()
+			uri, e := p.Share()
 			if e == nil {
 				fmt.Println(uri)
 			}

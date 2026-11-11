@@ -192,7 +192,7 @@ func (a *App) trafficActive() bool {
 	return e == nil
 }
 func trafficShape(p Profile) string {
-	shape := []any{p.Listen, p.Port, p.Networks(), p.trafficPolicy().LimitBytes}
+	shape := []any{p.Listen, p.Port, p.meterNetworks(), p.trafficPolicy().LimitBytes}
 	if p.InboundMode == inIPv6 {
 		shape = append(shape, "ipv6-only") // legacy profiles keep their original fingerprint
 	}
