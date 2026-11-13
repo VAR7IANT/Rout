@@ -415,25 +415,137 @@ func pipe(a, b net.Conn) {
 
 // ---- UDP -------------------------------------------------------------------
 
+const (
+	// udpPendingMax is how many datagrams a client may send while its session is still
+	// being dialed; they are forwarded in order once the destination socket exists, and
+	// anything beyond is dropped (as a congested UDP path would).
+	udpPendingMax = 16
+	// udpDialConcurrency bounds the destination dials in flight on one socket, so a burst
+	// of new (possibly spoofed) sources cannot start thousands of lookups at once.
+	udpDialConcurrency = 64
+	udpDialTimeout     = 5 * time.Second
+)
+
+// udpSession is one client's mapping to a destination socket. A session is created as
+// soon as the client's first datagram arrives and is dialed in the background: the read
+// loop never waits for DNS or a dial, so one slow destination lookup cannot stall the
+// other clients of the same port.
 type udpSession struct {
-	up     net.Conn
-	client net.Addr
+	client netip.AddrPort
 	last   atomic.Int64 // unix nanoseconds of last traffic either way
+	ready  atomic.Bool  // up is set and the pending datagrams were sent
+
+	mu      sync.Mutex
+	up      net.Conn // nil while dialing
+	pending [][]byte // datagrams received while dialing
+	closed  bool
+}
+
+// send forwards one datagram, or queues it while the session is still dialing. It
+// reports false when the session is unusable and must be removed.
+func (s *udpSession) send(b []byte) (dropped bool, ok bool) {
+	if s.ready.Load() {
+		_, e := s.up.Write(b)
+		return false, e == nil
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return true, true
+	}
+	if up := s.up; up != nil {
+		s.mu.Unlock()
+		_, e := up.Write(b)
+		return false, e == nil
+	}
+	if len(s.pending) >= udpPendingMax {
+		s.mu.Unlock()
+		return true, true
+	}
+	s.pending = append(s.pending, append([]byte(nil), b...))
+	s.mu.Unlock()
+	return false, true
+}
+
+// attach installs the dialed socket and flushes the queued datagrams in arrival order.
+// It reports false when the session was closed meanwhile (the caller closes up).
+func (s *udpSession) attach(up net.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	for _, b := range s.pending {
+		if _, e := up.Write(b); e != nil {
+			break
+		}
+	}
+	s.pending = nil
+	s.up = up
+	s.ready.Store(true)
+	return true
+}
+
+func (s *udpSession) close() {
+	s.mu.Lock()
+	up := s.up
+	s.closed = true
+	s.pending = nil
+	s.mu.Unlock()
+	if up != nil {
+		up.Close()
+	}
+}
+
+// udpPeer reads and writes datagrams with netip.AddrPort addresses. A *net.UDPConn does
+// so without allocating per packet; any other PacketConn (tests) goes through net.Addr.
+type udpPeer struct {
+	pc  net.PacketConn
+	udp *net.UDPConn
+}
+
+func (p udpPeer) read(b []byte) (int, netip.AddrPort, error) {
+	if p.udp != nil {
+		return p.udp.ReadFromUDPAddrPort(b)
+	}
+	n, from, e := p.pc.ReadFrom(b)
+	if e != nil {
+		return n, netip.AddrPort{}, e
+	}
+	ap, pe := netip.ParseAddrPort(from.String())
+	if pe != nil {
+		return 0, netip.AddrPort{}, pe
+	}
+	return n, ap, nil
+}
+
+func (p udpPeer) write(b []byte, to netip.AddrPort) error {
+	var e error
+	if p.udp != nil {
+		_, e = p.udp.WriteToUDPAddrPort(b, to)
+	} else {
+		_, e = p.pc.WriteTo(b, net.UDPAddrFromAddrPort(to))
+	}
+	return e
 }
 
 func (r *relayRuntime) serveUDP(ctx context.Context, pc net.PacketConn, idle time.Duration, max int) {
+	peer := udpPeer{pc: pc}
+	peer.udp, _ = pc.(*net.UDPConn)
 	var mu sync.Mutex
-	sessions := map[string]*udpSession{}
+	sessions := map[netip.AddrPort]*udpSession{}
 	var wg sync.WaitGroup
-	closeSession := func(key string, s *udpSession) {
+	dialSem := make(chan struct{}, udpDialConcurrency)
+	remove := func(s *udpSession) {
 		mu.Lock()
-		if sessions[key] == s {
-			delete(sessions, key)
+		if sessions[s.client] == s {
+			delete(sessions, s.client)
 		}
 		mu.Unlock()
-		s.up.Close()
+		s.close()
 	}
-	// Idle sessions are removed so a client that vanished frees its socket.
+	// Idle sessions are removed so a client that vanished frees its socket. A session that
+	// is still dialing is left alone: its dial has its own timeout.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -445,28 +557,65 @@ func (r *relayRuntime) serveUDP(ctx context.Context, pc net.PacketConn, idle tim
 				return
 			case <-t.C:
 				now := time.Now().UnixNano()
-				mu.Lock()
-				var stale []string
-				for k, s := range sessions {
-					if time.Duration(now-s.last.Load()) > idle {
-						stale = append(stale, k)
-					}
-				}
 				var victims []*udpSession
-				for _, k := range stale {
-					victims = append(victims, sessions[k])
-					delete(sessions, k)
+				mu.Lock()
+				for k, s := range sessions {
+					if s.ready.Load() && time.Duration(now-s.last.Load()) > idle {
+						victims = append(victims, s)
+						delete(sessions, k)
+					}
 				}
 				mu.Unlock()
 				for _, s := range victims {
-					s.up.Close()
+					s.close()
 				}
 			}
 		}
 	}()
+	// connect dials the destination for a new session, then copies its replies back to
+	// the client until the session ends.
+	connect := func(s *udpSession) {
+		defer wg.Done()
+		dctx, cancel := context.WithTimeout(ctx, udpDialTimeout)
+		var up net.Conn
+		var de error
+		select {
+		case dialSem <- struct{}{}:
+			up, _, de = r.dialer.DialUDP(dctx, r.cfg.Target)
+			<-dialSem
+		case <-dctx.Done():
+			de = dctx.Err()
+		}
+		cancel()
+		if de != nil {
+			remove(s)
+			if ctx.Err() == nil {
+				r.stats.dialFail.Add(1)
+				r.log.limited("udpdial:"+kindOf(de), "cannot reach %s for %s: %v", r.cfg.Target, s.client, de)
+			}
+			return
+		}
+		if !s.attach(up) {
+			up.Close()
+			return
+		}
+		r.stats.udpSessions.Add(1)
+		defer remove(s)
+		rb := make([]byte, udpPacketMax)
+		for {
+			m, e := up.Read(rb)
+			if e != nil {
+				return
+			}
+			s.last.Store(time.Now().UnixNano())
+			if e = peer.write(rb[:m], s.client); e != nil {
+				return
+			}
+		}
+	}
 	buf := make([]byte, udpPacketMax)
 	for {
-		n, from, e := pc.ReadFrom(buf)
+		n, from, e := peer.read(buf)
 		if e != nil {
 			if ctx.Err() != nil || errors.Is(e, net.ErrClosed) {
 				break
@@ -475,57 +624,34 @@ func (r *relayRuntime) serveUDP(ctx context.Context, pc net.PacketConn, idle tim
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		key := from.String()
 		mu.Lock()
-		s := sessions[key]
-		count := len(sessions)
-		mu.Unlock()
+		s := sessions[from]
 		if s == nil {
-			if count >= max {
+			if len(sessions) >= max {
+				mu.Unlock()
 				r.stats.udpDropped.Add(1)
 				r.log.limited("udpfull", "udp session limit reached; dropping packets from new clients")
 				continue
 			}
-			dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			up, _, de := r.dialer.DialUDP(dctx, r.cfg.Target)
-			cancel()
-			if de != nil {
-				r.stats.dialFail.Add(1)
-				r.log.limited("udpdial:"+kindOf(de), "cannot reach %s for %s: %v", r.cfg.Target, key, de)
-				continue
-			}
-			s = &udpSession{up: up, client: from}
-			s.last.Store(time.Now().UnixNano())
-			mu.Lock()
-			sessions[key] = s
-			mu.Unlock()
-			r.stats.udpSessions.Add(1)
+			s = &udpSession{client: from}
+			sessions[from] = s
 			wg.Add(1)
-			go func(key string, s *udpSession) {
-				defer wg.Done()
-				defer closeSession(key, s)
-				rb := make([]byte, udpPacketMax)
-				for {
-					m, e := s.up.Read(rb)
-					if e != nil {
-						return
-					}
-					s.last.Store(time.Now().UnixNano())
-					if _, e = pc.WriteTo(rb[:m], s.client); e != nil {
-						return
-					}
-				}
-			}(key, s)
+			go connect(s)
 		}
+		mu.Unlock()
 		s.last.Store(time.Now().UnixNano())
-		if _, e := s.up.Write(buf[:n]); e != nil {
-			closeSession(key, s)
+		dropped, ok := s.send(buf[:n])
+		if dropped {
+			r.stats.udpDropped.Add(1)
+		}
+		if !ok {
+			remove(s)
 		}
 	}
 	mu.Lock()
 	for k, s := range sessions {
-		s.up.Close()
 		delete(sessions, k)
+		s.close()
 	}
 	mu.Unlock()
 	wg.Wait()
