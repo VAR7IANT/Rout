@@ -182,6 +182,11 @@ const (
 
 var errLockBusy = errors.New("另一个 rout 操作仍在进行，请稍后重试")
 
+// errStateChanged is returned by Commit when state.json no longer matches the state the
+// change was built from. Callers that can rebuild the change retry on it (errors.Is);
+// nothing may match its text, which is translated and may be reworded.
+var errStateChanged = errors.New("配置已被其他操作修改，请重新打开菜单")
+
 func lockFile(path string, wait time.Duration) (func(), error) {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return nil, e
@@ -354,7 +359,7 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 		return e
 	}
 	if !reflect.DeepEqual(current, old) {
-		return errors.New("配置已被其他操作修改，请重新打开菜单")
+		return errStateChanged
 	}
 	changed := map[string]bool{}
 	edited := map[string]bool{}
