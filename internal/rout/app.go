@@ -336,6 +336,14 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 	if e := next.Validate(); e != nil {
 		return e
 	}
+	// Engines are downloaded before the configuration lock is taken. A download can take
+	// minutes on a slow link, and every other rout operation (menu, panel, traffic
+	// monitor) waits for this lock and gives up after configLockWait. The installer has
+	// its own lock, so concurrent commits still download each engine once.
+	ensured, e := a.prefetchEngines(old, next, force, only)
+	if e != nil {
+		return e
+	}
 	unlock, e := a.lock()
 	if e != nil {
 		return e
@@ -412,8 +420,8 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 				}
 				return fmt.Errorf("%s (%s): %w", p.Name, p.Protocol, e)
 			}
-			if name := a.engineName(p); name != "" {
-				if e := a.EnsureEngine(name); e != nil {
+			if name := a.engineName(p); name != "" && !ensured[name] {
+				if e := ensureEngine(a, name); e != nil {
 					return e
 				}
 			}
@@ -578,6 +586,34 @@ func (a *App) commit(old, next State, force bool, only map[string]bool) error {
 		}
 	}
 	return nil
+}
+
+// ensureEngine installs an engine if it is missing; tests replace it.
+var ensureEngine = func(a *App, name string) error { return a.EnsureEngine(name) }
+
+// prefetchEngines installs, without holding the configuration lock, every engine that the
+// profiles this commit will (re)write need. It mirrors the changed set computed under the
+// lock: new or edited profiles, plus the forced ones. A profile that is not Ready is left
+// for the locked pass, which reports or skips it exactly as before. The names returned are
+// not checked again under the lock.
+func (a *App) prefetchEngines(old, next State, force bool, only map[string]bool) (map[string]bool, error) {
+	ensured := map[string]bool{}
+	for _, p := range next.Profiles {
+		prev, err := Find(old, p.ID)
+		edited := err != nil || !runtimeEqual(prev, p)
+		if !edited && !(force && (only == nil || only[p.ID])) {
+			continue
+		}
+		name := a.engineName(p)
+		if name == "" || ensured[name] || p.Ready() != nil {
+			continue
+		}
+		if e := ensureEngine(a, name); e != nil {
+			return nil, e
+		}
+		ensured[name] = true
+	}
+	return ensured, nil
 }
 
 func runtimeEqual(a, b Profile) bool {
