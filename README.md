@@ -19,7 +19,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.6.1`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.6.2`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -31,7 +31,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.6.1
+Rout 0.6.2
   ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   ! Tokyo-HY2 certificate expires in 12 days
 

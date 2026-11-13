@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.6.2
 
+Panel rewrite plus three reliability fixes. Configuration files, API requests and the command line are unchanged; no migration is needed.
+
+- **Native UDP relay no longer stalls a port behind one slow destination.** Opening the connection to a client's destination used to run inside the port's only read loop, so one slow or unreachable destination held up every other client of that relay for up to five seconds. Each new client is now connected on its own; its first datagrams wait in a short queue (16, the rest are dropped and counted) and a failed connection is retried on the client's next datagram.
+- **Installing an engine no longer blocks other rout operations.** A change that needed an engine downloaded it while holding the configuration lock, so on a slow link the menu, the web panel and the traffic monitor gave up with "another rout operation is still in progress". The download now happens before the lock is taken; a failed download still refuses the change and writes nothing.
+- **Panel edits that collide retry reliably.** When two panel operations change the configuration at the same time, the later one is rebuilt and retried. That decision no longer depends on the wording of the error message, and a conflict that persists after three tries is answered with HTTP 409 (`conflict`) instead of a generic 400.
 - **Web panel rewritten.** The React + TypeScript front end (`web/`) was rebuilt from an empty tree with a terminal-style interface: monospace throughout, dark by default (a light "paper" theme is optional), bracketed status tags, text block meters, stepped plots. The API, its URLs and every request body are unchanged, so no server-side change or migration is involved; pages, features and the three interface languages are the same as in v0.6.1.
 - New in the panel: a command palette (`Ctrl K` / `⌘K`) to jump to a page, switch language or theme, or sign out; `/` focuses the filter on list pages; the System page keeps its tab in the address (`/system?tab=network`), so links and Back return to it; deleting a third-party source that subscriptions still use asks for the "remove it from them too" choice inside the confirmation.
 - Fixes found while rewriting: signing out no longer raises an unhandled error when the logout request fails (the browser forgets its token either way); dialogs focus their first field instead of the close button.
