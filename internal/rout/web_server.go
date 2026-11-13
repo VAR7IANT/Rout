@@ -322,6 +322,8 @@ func (s *WebServer) writeError(w http.ResponseWriter, c *reqCtx, err error) {
 			ae = &apiError{Status: http.StatusConflict, Code: "busy", Msg: err.Error()}
 		case errors.Is(err, errRefreshBusy):
 			ae = &apiError{Status: http.StatusConflict, Code: "busy", Msg: err.Error()}
+		case errors.Is(err, errStateChanged):
+			ae = &apiError{Status: http.StatusConflict, Code: "conflict", Msg: err.Error()}
 		default:
 			ae = &apiError{Status: http.StatusBadRequest, Code: "error", Msg: err.Error()}
 		}

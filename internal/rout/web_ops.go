@@ -33,7 +33,7 @@ func (a *App) webMutate(change func(old State) (State, error)) error {
 		if last = a.Commit(old, next, false); last == nil {
 			return nil
 		}
-		if !strings.Contains(last.Error(), "配置已被其他操作修改") {
+		if !errors.Is(last, errStateChanged) {
 			return last
 		}
 		time.Sleep(100 * time.Millisecond)
