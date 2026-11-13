@@ -1,0 +1,293 @@
+/* The frame around every page: sidebar, status bar, phone tab bar, sign-in and boot screens. */
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  z-index: 100;
+  padding: 6px 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.skip:focus {
+  left: 8px;
+  top: 8px;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--side) minmax(0, 1fr);
+  grid-template-rows: var(--bar) minmax(0, 1fr);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* ---- logo ----------------------------------------------------------------------------- */
+
+.logo {
+  display: block;
+  color: var(--accent);
+  text-shadow: var(--glow);
+}
+.logo pre {
+  font-size: 11px;
+  line-height: 1.15;
+  text-shadow: none; /* a glow blurs strokes this small */
+}
+.logo--compact {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.logo__block {
+  letter-spacing: 0;
+}
+
+/* ---- sidebar -------------------------------------------------------------------------- */
+
+.side {
+  grid-row: 1 / -1;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 12px 14px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.side__foot {
+  margin-top: auto;
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.nav {
+  display: grid;
+  gap: 1px;
+}
+.nav__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border-left: 2px solid transparent;
+  color: var(--muted);
+}
+.nav__item:hover {
+  color: var(--text);
+  background: var(--panel-2);
+  text-decoration: none;
+}
+.nav__item.is-on {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.prefs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---- status bar ----------------------------------------------------------------------- */
+
+.status {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--gutter);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.status__brand {
+  display: none;
+}
+.status__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.status__user {
+  color: var(--accent);
+}
+.status__path b {
+  color: var(--info);
+  font-weight: 400;
+}
+.status__right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+.status__link {
+  display: inline-flex;
+}
+.status__link.is-ok {
+  color: var(--ok);
+}
+.status__link.is-warn {
+  color: var(--warn);
+}
+.status__palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: var(--sunken);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+.status__palette:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.status__palette:hover kbd {
+  color: inherit;
+}
+.status__clock {
+  color: var(--muted);
+}
+.status__menu {
+  display: none;
+}
+
+/* ---- main area ------------------------------------------------------------------------ */
+
+.main {
+  min-width: 0;
+  padding: 20px var(--gutter) 40px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+.main:focus {
+  outline: none;
+}
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+  max-width: 1400px;
+  width: 100%;
+}
+
+.tabbar {
+  display: none;
+}
+
+/* ---- phones and narrow windows -------------------------------------------------------- */
+
+@media (max-width: 960px) {
+  :root {
+    --gutter: 14px;
+  }
+  html {
+    font-size: 14px;
+  }
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--bar) minmax(0, 1fr);
+  }
+  .side {
+    display: none;
+  }
+  .status {
+    padding-left: max(var(--gutter), env(safe-area-inset-left));
+    padding-right: max(6px, env(safe-area-inset-right));
+  }
+  .status__brand {
+    display: inline-flex;
+    color: var(--accent);
+  }
+  .status__path .status__user,
+  .status__clock,
+  .status__palette kbd {
+    display: none;
+  }
+  .status__menu {
+    display: inline-flex;
+  }
+  .main {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--panel);
+    border-top: 1px solid var(--line-strong);
+  }
+  .tabbar .nav__item {
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 2px 6px;
+    border-left: 0;
+    border-top: 2px solid transparent;
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .tabbar .nav__item span {
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .tabbar .nav__item.is-on {
+    border-top-color: var(--accent);
+  }
+}
+
+/* ---- sign-in and boot ----------------------------------------------------------------- */
+
+.splash {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  padding: 24px 16px;
+}
+.login__box {
+  width: min(440px, calc(100vw - 32px));
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-top: 2px solid var(--accent);
+}
+.login__box h1::before {
+  content: '> ';
+  color: var(--accent);
+}
+.login__box .btn--primary {
+  width: 100%;
+}

@@ -1,3 +1,4 @@
+/* Reset, typography and the handful of layout utilities the pages share. */
 *,
 *::before,
 *::after {
@@ -5,111 +6,135 @@
 }
 
 html {
+  font-size: 13.5px;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
   min-height: 100vh;
   min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 1rem;
+  line-height: 1.55;
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
+  overflow-wrap: anywhere;
 }
-body.no-scroll {
+body.is-locked {
   overflow: hidden;
 }
 
 h1,
 h2,
 h3,
-h4 {
-  margin: 0;
-  font-weight: 650;
-  line-height: 1.25;
-  letter-spacing: -0.005em;
-}
-h1 {
-  font-size: 24px;
-}
-h2 {
-  font-size: 16px;
-}
-h3,
-.h3 {
-  font-size: 15px;
-  margin: 0;
-  font-weight: 650;
-}
-h4 {
-  font-size: 13px;
-}
-p {
+h4,
+p,
+ul,
+ol,
+dl,
+dd,
+pre {
   margin: 0;
 }
 ul,
 ol {
-  margin: 0;
   padding: 0;
   list-style: none;
 }
-hr,
-.rule {
-  border: 0;
-  border-top: 1px solid var(--line);
-  margin: 4px 0;
-  width: 100%;
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
+h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+h3,
+h4 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
 a {
-  color: var(--accent-ink);
-  text-underline-offset: 2px;
+  color: var(--accent);
+  text-decoration: none;
 }
-button {
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+button,
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
-table {
-  border-collapse: collapse;
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--mono);
+}
+code {
+  padding: 1px 5px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+kbd {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+mark {
+  padding: 0 3px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  outline: 1px solid var(--accent-dim);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 3px;
 }
 :focus:not(:focus-visible) {
   outline: none;
 }
 
-::selection {
-  background: var(--accent-soft);
-  color: var(--text);
+/* Thin scrollbars that match the borders. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
-.mono {
-  font-family: var(--mono);
-  font-size: 0.92em;
-  word-break: break-all;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
-.muted {
-  color: var(--muted);
-}
-.small {
-  font-size: 13px;
-}
-.err-text {
-  color: var(--error);
-}
-.warn-text {
-  color: var(--warn);
-}
-.ok-text {
-  color: var(--ok);
-}
+
+/* ---- utilities ------------------------------------------------------------------------ */
 
 .sr-only {
   position: absolute;
@@ -123,27 +148,125 @@ table {
   border: 0;
 }
 
-.skip {
-  position: absolute;
-  left: 12px;
-  top: -60px;
-  z-index: 100;
-  background: var(--surface);
-  color: var(--text);
-  border: 2px solid var(--focus);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
+.dim {
+  color: var(--muted);
 }
-.skip:focus {
-  top: 12px;
+.small {
+  font-size: 0.9rem;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.ok {
+  color: var(--ok);
+}
+.warn {
+  color: var(--warn);
+}
+.err {
+  color: var(--error);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
+/* Vertical rhythm inside panels, dialogs and forms. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+.stack--tight {
+  gap: 6px;
+}
+
+/* Things side by side that wrap when there is no room. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.row--end {
+  justify-content: flex-end;
+}
+.between {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cols-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+.cols-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--gap);
+}
+@media (max-width: 900px) {
+  .cols-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.bullets {
+  display: grid;
+  gap: 4px;
+}
+.bullets > li {
+  position: relative;
+  padding-left: 1.6ch;
+}
+.bullets > li::before {
+  content: '-';
+  position: absolute;
+  left: 0;
+  color: var(--faint);
+}
+
+/* A shell command with its copy button. */
+.cmdline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 8px 6px 10px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+}
+.cmdline code {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.cmdline code::before {
+  content: '$ ';
+  color: var(--accent);
+}
+
+.cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
   }
 }

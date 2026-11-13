@@ -1,0 +1,20 @@
+// Strings introduced by the terminal-style interface (command palette, status bar, themes).
+export const term = {
+  'term.palette': ['命令面板', '命令面板', 'Command palette'],
+  'term.paletteOpen': ['打开命令面板', '開啟命令面板', 'Open the command palette'],
+  'term.palettePlaceholder': ['输入页面或命令…', '輸入頁面或指令…', 'Type a page or command…'],
+  'term.paletteEmpty': ['没有匹配的命令', '沒有符合的指令', 'No matching command'],
+  'term.paletteHint': ['↑↓ 选择 · Enter 执行 · Esc 关闭', '↑↓ 選擇 · Enter 執行 · Esc 關閉', '↑↓ select · Enter run · Esc close'],
+  'term.goto': ['前往', '前往', 'Go to'],
+  'term.run': ['执行', '執行', 'Run'],
+  'term.themeDark': ['深色终端', '深色終端', 'Dark terminal'],
+  'term.themeLight': ['浅色纸张', '淺色紙張', 'Light paper'],
+  'term.useTheme': ['外观：{name}', '外觀：{name}', 'Appearance: {name}'],
+  'term.useLang': ['语言：{name}', '語言：{name}', 'Language: {name}'],
+  'term.exits': ['出口', '出口', 'Exits'],
+  'term.sources': ['第三方订阅源', '第三方訂閱源', 'Third-party sources'],
+  'term.secure': ['连接已加密', '連線已加密', 'Encrypted connection'],
+  'term.insecure': ['连接未加密', '連線未加密', 'Unencrypted connection'],
+  'term.filterHint': ['按 / 聚焦筛选框', '按 / 聚焦篩選框', 'Press / to focus the filter'],
+  'term.updated': ['更新于 {t}', '更新於 {t}', 'updated {t}'],
+} as const
