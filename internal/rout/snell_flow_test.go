@@ -460,7 +460,7 @@ func TestWebSnellCreateLinkAndRules(t *testing.T) {
 	for _, p := range listOf(t, list, "protocols") {
 		offered = append(offered, p["id"].(string))
 	}
-	if !contains(offered, "snell") || !contains(offered, "snell6") || len(offered) != 7 {
+	if !contains(offered, "snell") || !contains(offered, "snell6") || !contains(offered, "anytls-tls") || len(offered) != 8 {
 		t.Errorf("offered protocols %v", offered)
 	}
 	for _, p := range listOf(t, list, "protocols") {
