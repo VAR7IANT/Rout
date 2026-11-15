@@ -54,6 +54,7 @@ var helpLines = [][2]string{
 	{"rout export ID [FILE]", "输出连接链接，或保存 sing-box 客户端配置"},
 	{"rout export all [FILE]", "输出全部连接链接，或保存到文件"},
 	{"rout copy ID", "输出链接并请求终端复制"},
+	{"rout surge ID|all [FILE]", "输出 Surge 的 [Proxy] 配置行（单个或全部节点与中转），或保存到文件"},
 	{"rout restart|on|off|delete|logs ID", "管理单个节点或中转"},
 	{"rout relays", "端口转发（中转）管理"},
 	{"rout subscription [list|status|restart|https|logs|plan|serve]", "订阅管理：菜单、列表、服务状态、重启、流量与到期设置；serve 为订阅服务进程"},
@@ -164,7 +165,7 @@ func Run(args []string) (result error) {
 	if language != "" {
 		a.Language = language
 	}
-	readOnly := cmd == "ai" && len(args) == 2 && args[1] == "status" || cmd == "subscription" && len(args) == 2 && (args[1] == "list" || args[1] == "status") || cmd == "list" || cmd == "status" || cmd == "export" || cmd == "copy" || cmd == "doctor" && !contains(args, "--fix")
+	readOnly := cmd == "ai" && len(args) == 2 && args[1] == "status" || cmd == "subscription" && len(args) == 2 && (args[1] == "list" || args[1] == "status") || cmd == "list" || cmd == "status" || cmd == "export" || cmd == "surge" || cmd == "copy" || cmd == "doctor" && !contains(args, "--fix")
 	if os.Geteuid() != 0 && a.ServiceMode != "none" && !readOnly {
 		return errors.New("请使用 sudo rout 或 root 运行")
 	}
@@ -249,6 +250,18 @@ func Run(args []string) (result error) {
 		return a.Commit(s, s, true)
 	case "cert":
 		return u.certCommand(s, args)
+	case "surge":
+		if len(args) >= 2 && args[1] == "all" {
+			lines := allSurge(s)
+			if lines == "" {
+				return errors.New("没有可以生成 Surge 配置的节点")
+			}
+			if len(args) == 3 {
+				return AtomicWrite(args[2], []byte(lines), 0600)
+			}
+			fmt.Print(lines)
+			return nil
+		}
 	case "export":
 		if len(args) >= 2 && args[1] == "all" {
 			links := u.allLinks(s)
@@ -271,6 +284,16 @@ func Run(args []string) (result error) {
 		return a.Restart(p.ID)
 	case "copy":
 		return u.copy(p)
+	case "surge":
+		line, e := p.SurgeLine(p.PublicHost, p.PublicPort)
+		if e != nil {
+			return e
+		}
+		if len(args) == 3 {
+			return AtomicWrite(args[2], []byte(line+"\n"), 0600)
+		}
+		fmt.Println(line)
+		return nil
 	case "test":
 		return a.Probe(p)
 	case "export":

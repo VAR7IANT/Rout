@@ -299,23 +299,10 @@ func checkSnellConf(path string, p Profile) error {
 
 // ---- Surge ------------------------------------------------------------------------------------
 
-// surgeName makes a node name safe as the left-hand side of a Surge profile line.
-func surgeName(name string) string {
-	r := strings.NewReplacer("=", "-", ",", " ", "\r", " ", "\n", " ", "\x00", "")
-	name = strings.TrimSpace(r.Replace(name))
-	for strings.HasPrefix(name, "#") || strings.HasPrefix(name, ";") || strings.HasPrefix(name, "[") || strings.HasPrefix(name, "//") {
-		name = strings.TrimSpace(name[1:])
-	}
-	if name == "" {
-		name = "Snell"
-	}
-	return name
-}
-
-// SurgeLine is the Surge [Proxy] line of a Snell node at the given address. The host is
+// SnellSurgeLine is the Surge [Proxy] line of a Snell node at the given address. The host is
 // written as is (an IPv6 literal without brackets: the field is comma separated); version is
 // always explicit, the Surge manual advises it because Surge assumes Snell v1 otherwise.
-func (p Profile) SurgeLine(host string, port int) (string, error) {
+func (p Profile) SnellSurgeLine(host string, port int) (string, error) {
 	if !p.snellNode() {
 		return "", errors.New("只有 Snell 节点有 Surge 配置")
 	}
@@ -325,7 +312,7 @@ func (p Profile) SurgeLine(host string, port int) (string, error) {
 	if host == "" || strings.ContainsAny(host, ", =\r\n") || !validPort(port) {
 		return "", errors.New("Surge 配置的地址或端口无效")
 	}
-	return fmt.Sprintf("%s = snell, %s, %d, psk=%s, version=%s", surgeName(p.Name), host, port, p.Password, p.snellVersion()), nil
+	return fmt.Sprintf("%s = snell, %s, %d, psk=%s, version=%s", surgeName(p.Name, snellLabel(p.snellVersion())), host, port, p.Password, p.snellVersion()), nil
 }
 
 // errNoShareLink is what URI returns for a protocol with no standard share link.
@@ -341,7 +328,7 @@ func (p Profile) Share() (string, error) { return p.ShareAt(p.PublicHost, p.Publ
 // ShareAt is Share for another address of the same node (for example its IPv6).
 func (p Profile) ShareAt(host string, port int) (string, error) {
 	if p.snellNode() {
-		return p.SurgeLine(host, port)
+		return p.SnellSurgeLine(host, port)
 	}
 	return p.URIAt(host, port)
 }

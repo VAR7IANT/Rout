@@ -97,7 +97,7 @@ Snell nodes can be members of any subscription. Because Snell has no link, only 
 https://sub.example.com/s/TOKEN?format=surge
 ```
 
-It returns the Surge lines of the subscription's Snell nodes (saved order, one per line, `text/plain`), ready for a Surge external policy group (`policy-path`) or to paste. It always reflects the current node: a new PSK, port, public address or name appears on the next fetch, a disabled node is skipped, a deleted node leaves the subscription. Other nodes in the same subscription are left out of the Surge list with a skipped-node count (`X-Rout-Skipped-Nodes`); a subscription with no Snell node answers `503`.
+It returns the Surge lines of the subscription's Snell nodes (saved order, one per line, `text/plain`), ready for a Surge external policy group (`policy-path`) or to paste. It always reflects the current node: a new PSK, port, public address or name appears on the next fetch, a disabled node is skipped, a deleted node leaves the subscription. Since the next release the Surge format also carries the subscription's other nodes that Surge can run (Shadowsocks, Hysteria2, TUIC, relays, and VLESS with `&vless=1`); see [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md#surge-format).
 
 The default (Base64) and `?format=mihomo|clash` outputs are unchanged and simply skip Snell nodes with a diagnostic; Rout never turns a Snell node into a VLESS, Shadowsocks or other node. (Mihomo documents Snell v1-v5 but not v6; Rout does not export Snell to Mihomo.) Details: [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md).
 

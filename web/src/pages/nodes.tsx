@@ -534,6 +534,9 @@ function NodeDrawer({ node, policies, onChanged, onClose, onRename, onDelete, on
           ) : (
             <p className="dim">{t('nodes.detail.noLink')}</p>
           )}
+          {node.has_surge && !node.protocol.startsWith('snell') ? (
+            <SecretBox label={t('nodes.detail.surgeHidden')} qr={false} load={async () => (await api.get<{ line: string }>(`/api/nodes/${node.id}/surge`)).line} />
+          ) : null}
         </Section>
 
         <Section title={t('egress.title')}>

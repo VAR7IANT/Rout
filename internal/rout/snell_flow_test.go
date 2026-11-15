@@ -54,16 +54,24 @@ func TestSnellSubscriptionSurgeFormat(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(body), "\n")
 	want5, _ := sc.snell5.Share()
 	want6, _ := sc.snell6.Share()
-	if len(lines) != 2 || lines[0] != want5 || lines[1] != want6 {
-		t.Fatalf("Surge list (saved order, Snell only):\n%s\nwant\n%s\n%s", body, want5, want6)
+	wantSS, _ := sc.ss.SurgeLine(sc.ss.PublicHost, sc.ss.PublicPort)
+	if len(lines) != 3 || lines[0] != want5 || lines[1] != wantSS || lines[2] != want6 {
+		t.Fatalf("Surge list (saved order, VLESS held back):\n%s\nwant\n%s\n%s\n%s", body, want5, wantSS, want6)
 	}
-	for _, other := range []Profile{sc.ss, sc.vless} {
-		if strings.Contains(body, other.Name) || strings.Contains(body, other.Password) {
-			t.Fatalf("a %s node leaked into the Surge list", other.Protocol)
-		}
+	if !strings.HasPrefix(wantSS, "Tokyo-SS = ss, ") || !strings.Contains(wantSS, "password="+sc.ss.Password) {
+		t.Fatalf("Shadowsocks line: %s", wantSS)
 	}
-	if got := w.Header().Get("X-Rout-Skipped-Nodes"); got != "2" {
+	if strings.Contains(body, sc.vless.Name) || strings.Contains(body, sc.vless.UUID) {
+		t.Fatal("a VLESS node reached Surge clients that may not support it")
+	}
+	if got := w.Header().Get("X-Rout-Skipped-Nodes"); got != "1" {
 		t.Errorf("skipped nodes header %q", got)
+	}
+	// Surge 6 users opt in to VLESS explicitly.
+	opt := get(h, "GET", "/s/"+token+"?format=surge&vless=1")
+	optLines := strings.Split(strings.TrimSpace(opt.Body.String()), "\n")
+	if opt.Code != 200 || len(optLines) != 4 || !strings.HasPrefix(optLines[3], "Tokyo-VLESS = vless, ") || opt.Header().Get("X-Rout-Skipped-Nodes") != "0" {
+		t.Fatalf("VLESS opt-in: %d %s", opt.Code, opt.Body.String())
 	}
 	if w.Header().Get("Cache-Control") != "no-store" {
 		t.Error("credentials may be cached")
@@ -127,8 +135,8 @@ func TestSnellOnlySubscriptionAndFormatsWithoutSnell(t *testing.T) {
 	if w := get(h, "GET", "/s/"+snellToken+"?format=surge"); w.Code != 200 || !strings.Contains(w.Body.String(), "version=5") {
 		t.Errorf("Surge: %d %s", w.Code, w.Body.String())
 	}
-	// A subscription without Snell has nothing for Surge.
-	if w := get(h, "GET", "/s/"+plainToken+"?format=surge"); w.Code != 503 || !strings.Contains(w.Body.String(), "Snell") {
+	// A subscription without Snell still serves Surge the nodes it can run.
+	if w := get(h, "GET", "/s/"+plainToken+"?format=surge"); w.Code != 200 || !strings.HasPrefix(w.Body.String(), "Tokyo-SS = ss, ") || strings.Contains(w.Body.String(), sc.vless.UUID) {
 		t.Errorf("no Snell nodes: %d %s", w.Code, w.Body.String())
 	}
 	if w := get(h, "GET", "/s/"+plainToken); w.Code != 200 {

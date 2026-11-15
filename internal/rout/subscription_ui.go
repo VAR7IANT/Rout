@@ -222,7 +222,7 @@ func (u *UI) subscriptionURLs(cfg SubscriptionSettings, token, name string) {
 	if base == "" {
 		base = "https://YOUR-DOMAIN/s/" + token
 	}
-	fmt.Fprintf(u.writer(), "      Base64:\n%s\n      Mihomo:\n%s?format=mihomo\n      Clash:\n%s?format=clash\n      Surge (Snell):\n%s?format=surge\n", base, base, base, base)
+	fmt.Fprintf(u.writer(), "      Base64:\n%s\n      Mihomo:\n%s?format=mihomo\n      Clash:\n%s?format=clash\n      Surge:\n%s?format=surge\n", base, base, base, base)
 	if token != "{access_token}" {
 		fmt.Fprintf(u.writer(), "      Shadowrocket:\n%s\n", shadowrocketImportURL(base, name))
 		u.hint("在 iPhone 上打开 Shadowrocket 链接即可导入，标题为订阅名称；直接粘贴 Base64 链接时需自行填写备注")

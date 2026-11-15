@@ -41,6 +41,8 @@ type AggNode struct {
 	Base64Why   string   `json:"base64_why,omitempty"`
 	MihomoOK    bool     `json:"mihomo_ok"`
 	MihomoWhy   string   `json:"mihomo_why,omitempty"`
+	SurgeOK     bool     `json:"surge_ok"`
+	SurgeWhy    string   `json:"surge_why,omitempty"`
 	Notes       []string `json:"notes,omitempty"`
 	DuplicateOf int      `json:"duplicate_of,omitempty"`
 }
@@ -51,6 +53,9 @@ type AggregateExport struct {
 	URIs     []string // Base64 format entries, in order
 	Proxies  []M      // Mihomo format entries, in order
 	Warnings []string // short diagnostics: IDs and fixed reasons, never links or names
+	// Surge format entries, in order, and the diagnostics that concern the Surge list.
+	Surge         []surgeEntry
+	SurgeWarnings []string
 }
 
 type aggCand struct {
@@ -246,7 +251,9 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 		n := &c.node
 		if !active(c) {
 			out.Nodes = append(out.Nodes, *n)
-			out.Warnings = append(out.Warnings, fmt.Sprintf("订阅项 %d（%s）已跳过：%s", n.Index+1, shortID(n), n.Skipped))
+			w := fmt.Sprintf("订阅项 %d（%s）已跳过：%s", n.Index+1, shortID(n), n.Skipped)
+			out.Warnings = append(out.Warnings, w)
+			out.SurgeWarnings = append(out.SurgeWarnings, w)
 			continue
 		}
 		n.Name = c.unique
@@ -258,7 +265,23 @@ func (s State) exportAggregate(sub Subscription, lookup remoteLookup) AggregateE
 		}
 		out.Nodes = append(out.Nodes, *n)
 	}
+	taken := map[string]bool{}
+	for i := range out.Surge {
+		line := out.Surge[i].Line
+		out.Surge[i].Line = renameSurgeLine(line, uniqueSurgeName(taken, line[:strings.Index(line, " = ")]))
+	}
 	return out
+}
+
+// fillSurge adds an item's Surge line, or the reason it has none.
+func fillSurge(out *AggregateExport, n *AggNode, line, kind string, e error) {
+	if e != nil {
+		n.SurgeWhy = e.Error()
+		out.SurgeWarnings = append(out.SurgeWarnings, fmt.Sprintf("订阅项 %d（%s）无法生成 Surge：%s", n.Index+1, shortID(n), e.Error()))
+		return
+	}
+	out.Surge = append(out.Surge, surgeEntry{Line: line, Kind: kind, Label: n.Name})
+	n.SurgeOK = true
 }
 
 func shortID(n *AggNode) string {
@@ -270,6 +293,12 @@ func shortID(n *AggNode) string {
 
 func fillLocal(out *AggregateExport, c *aggCand, sub Subscription) {
 	n, p := &c.node, c.local
+	{
+		q := *p
+		q.Name = n.Name
+		line, kind, e := q.surgeLine(q.PublicHost, q.PublicPort)
+		fillSurge(out, n, line, kind, e)
+	}
 	if c.baseLink != "" {
 		link := c.baseLink
 		if n.Name != p.Name {
@@ -293,6 +322,10 @@ func fillLocal(out *AggregateExport, c *aggCand, sub Subscription) {
 
 func fillRemote(out *AggregateExport, c *aggCand, sub Subscription) {
 	n, rn := &c.node, c.remote
+	{
+		line, kind, e := surgeRemote(*rn, n.Name, sub.AllowInsecure)
+		fillSurge(out, n, line, kind, e)
+	}
 	if rn.Link != "" && linkInsecure(rn.Link) && !sub.AllowInsecure {
 		// The same policy as the Mihomo output: no unverified TLS unless the subscription allows it.
 		n.Base64Why = "节点关闭了证书验证（allowInsecure），默认不导出；可在订阅设置中允许"

@@ -58,6 +58,7 @@ export const relays = {
   'relays.detail.share': ['中转链接', '中轉連結', 'Relay link'],
   'relays.detail.shareHidden': ['中转链接包含目标节点的凭据，默认隐藏', '中轉連結包含目標節點的憑證，預設隱藏', 'The relay link holds the target’s credentials and stays hidden'],
   'relays.detail.noLink': ['此中转没有关联的节点链接（只填写了地址）。', '此中轉沒有關聯的節點連結（只填寫了位址）。', 'No node link is attached to this relay (only an address was entered).'],
+  'relays.detail.surgeHidden': ['Surge 配置行（粘贴到 [Proxy] 段）包含目标节点的凭据，默认隐藏', 'Surge 設定行（貼上到 [Proxy] 段）包含目標節點的憑證，預設隱藏', 'The Surge line (paste into [Proxy]) holds the target’s credentials and stays hidden'],
   'relays.detail.engine': ['转发引擎', '轉發引擎', 'Engine'],
   'relays.deleteTitle': ['删除中转「{name}」', '刪除中轉「{name}」', 'Delete relay “{name}”'],
   'relays.deleteMsg': ['此操作不可撤销，需要再次验证管理密码。', '此操作無法復原，需要再次驗證管理密碼。', 'This cannot be undone and needs the password again.'],

@@ -159,14 +159,14 @@ func (h *subscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		contentType = "application/yaml; charset=utf-8"
 		w.Header().Set("X-Rout-Skipped-Nodes", strconv.Itoa(len(warnings)))
 	} else if format == "surge" {
-		lines, warnings := s.exportSurge(sub)
+		lines, warnings := s.exportSurgeWith(sub, h.remote, surgeQueryOptions(r.URL.RawQuery))
 		for i := range warnings {
 			warnings[i] = Translate("en", warnings[i])
 		}
 		h.report(sub, SubscriptionExport{Warnings: warnings}, "surge")
 		if len(lines) == 0 {
 			w.Header().Set("Retry-After", "300")
-			plain(w, http.StatusServiceUnavailable, "no Surge-compatible nodes; the Surge format lists Snell nodes only: "+strings.Join(warnings, "; "))
+			plain(w, http.StatusServiceUnavailable, "no Surge-compatible nodes: "+strings.Join(warnings, "; "))
 			return
 		}
 		body = renderSurge(lines)
@@ -382,6 +382,13 @@ func (a *App) subscriptionHTTPHandler(load func() (State, error), logf func(stri
 		}
 		normal.ServeHTTP(w, r)
 	})
+}
+
+// surgeQueryOptions reads the Surge list's own switches (vless=1 adds VLESS lines).
+func surgeQueryOptions(raw string) surgeOptions {
+	q, _ := url.ParseQuery(raw)
+	v := strings.ToLower(q.Get("vless"))
+	return surgeOptions{VLESS: v == "1" || v == "true" || v == "yes"}
 }
 
 // Authenticate first: unknown tokens keep the same uniform 404 even with a bad

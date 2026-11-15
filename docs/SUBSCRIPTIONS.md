@@ -11,7 +11,7 @@ https://sub.example.com/s/TOKEN                 # Base64 (unchanged default)
 https://sub.example.com/s/TOKEN?format=base64   # explicit Base64
 https://sub.example.com/s/TOKEN?format=mihomo   # complete native Mihomo YAML
 https://sub.example.com/s/TOKEN?format=clash    # alias for Mihomo
-https://sub.example.com/s/TOKEN?format=surge    # Surge proxy lines (Snell nodes)
+https://sub.example.com/s/TOKEN?format=surge    # Surge [Proxy] lines (every node Surge can run)
 ```
 
 Keep the original saved URL in Shadowrocket and other Base64 clients. In Clash Verge Rev, FlClash or Mihomo Party, create a remote configuration from that same URL with `?format=mihomo` appended. This does not create a Rout subscription or rotate its token. `clash` requires a modern Mihomo core; it does not imply compatibility with the discontinued Clash core. Existing templates and newly shown URLs use the actual configured domain/prefix, never a fixed domain.
@@ -260,14 +260,33 @@ Unit/race tests cover v0.3.4 persistence, token validity, ordering/Base64 output
 
 The pinned Mihomo v1.19.32 core also validates generated configurations and sends real TCP/UDP traffic through VLESS Reality Vision, SS, Hysteria2 and TUIC, including rejection of wrong pins. GUI clients (Clash Verge Rev, FlClash and Mihomo Party) have not been exercised here. These tests do not claim public ACME issuance on your domain, real Shadowrocket interaction or production verification. Check public certificate issuance, external reachability, mobile client refresh and existing proxy/AI behavior on the actual VPS before release.
 
-## Surge format (Snell)
+## Surge format
 
-`?format=surge` returns the subscription's **Snell** nodes as Surge proxy lines, one per line, `text/plain`, in the saved order:
+`?format=surge` returns the subscription's nodes as Surge `[Proxy]` lines, one per line, `text/plain`, in the saved order:
 
 ```text
 Tokyo-Snell = snell, 203.0.113.10, 34567, psk=…, version=5
-Tokyo-Snell6 = snell, 2001:db8::7, 34568, psk=…, version=6
+Tokyo-SS = ss, 203.0.113.10, 34569, encrypt-method=2022-blake3-aes-128-gcm, password=…, udp-relay=true
+Tokyo-HY2 = hysteria2, 203.0.113.10, 34570, password=…, sni=…, server-cert-fingerprint-sha256=…
+Tokyo-TUIC = tuic-v5, 203.0.113.10, 34571, uuid=…, password=…, sni=…, alpn=h3, server-cert-fingerprint-sha256=…
 ```
 
-Use it as the `policy-path` of a Surge external policy group, or copy the lines into `[Proxy]`. The list is computed on every request from the current node, so a changed PSK, port, public address or name, a disabled node and a deleted node are reflected on the next refresh. Other nodes of the same subscription are not converted (Surge needs no list for them here): they are omitted, counted in `X-Rout-Skipped-Nodes`, and described in the sanitized service log; a subscription with no enabled Snell node returns `503` like any other format with nothing to serve. The same token, limits, uniform `404` and `HEAD`/`GET` rules apply. Snell nodes are skipped (with a diagnostic) by the Base64 and Mihomo/Clash outputs; Rout never turns one into another protocol.
+Use it as the `policy-path` of a Surge external policy group, or copy the lines into `[Proxy]`. The list is computed on every request from the current nodes, so a changed credential, port, public address or name, a disabled node and a deleted node are reflected on the next refresh.
+
+What is included:
+
+| Node | Surge line | Notes |
+| --- | --- | --- |
+| Snell v5 / v6 | `snell` | As before. |
+| Shadowsocks 2022 | `ss` | Surge supports the `2022-blake3-aes-128-gcm` and `-aes-256-gcm` ciphers. |
+| Hysteria2 | `hysteria2` | Pinned to the server certificate with `server-cert-fingerprint-sha256` (never `skip-cert-verify`). |
+| TUIC v5 | `tuic-v5` | Same certificate pin; `alpn=h3`. |
+| VLESS Reality / Vision | `vless` | **Only with `&vless=1`.** Surge added VLESS in iOS 6.0 / Mac 6.12; older Surge versions reject the whole list when they meet an unknown type, so VLESS lines are left out unless you ask for them: `?format=surge&vless=1`. |
+| Relays | the target's type | The relay's public address and port with the target's credentials (VLESS, Trojan with WS, SS, Hysteria2, TUIC). |
+| Third-party nodes (aggregate subscriptions) | per protocol | Shadowsocks, Trojan, Hysteria2, TUIC and VLESS (same `&vless=1` rule). |
+| AnyTLS Reality | — | Surge's AnyTLS has no Reality mode; these nodes are skipped with a diagnostic. |
+
+The conversion goes through the same strict converter as the Mihomo output: every parameter is mapped to its documented Surge key or the node is skipped with a reason, never silently changed. Skipped nodes are counted in `X-Rout-Skipped-Nodes` and described in the sanitized service log; a subscription with nothing Surge can run returns `503` like any other format with nothing to serve. Names are made unique (Surge requires it) and kept away from built-in policy names such as `DIRECT`. The same token, limits, uniform `404` and `HEAD`/`GET` rules apply. Snell nodes are still skipped (with a diagnostic) by the Base64 and Mihomo/Clash outputs; Rout never turns one into another protocol.
+
+The same lines are available for one node or relay: `rout surge ID` (or `rout surge all [FILE]`), the node view in *Manage nodes*, and the panel's node and relay pages (`GET /api/nodes/{id}/surge`, `GET /api/relays/{id}/surge`, password re-entry required like every link).
 

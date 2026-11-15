@@ -146,6 +146,7 @@ func (s *WebServer) nodeRoutes() {
 	s.handle("POST /api/nodes/{id}/egress-test", r, s.egressTest)
 	s.handle("DELETE /api/nodes/{id}", rr, s.deleteProfile("node"))
 	s.handle("GET /api/nodes/{id}/link", rr, s.profileLink("node"))
+	s.handle("GET /api/nodes/{id}/surge", rr, s.profileSurge("node"))
 	s.handle("POST /api/nodes/{id}/test", r, s.testProfile("node"))
 	s.handle("POST /api/nodes/{id}/restart", r, s.restartProfile("node"))
 	s.handle("POST /api/nodes/bulk", r, s.bulkProfiles("node"))
@@ -208,6 +209,7 @@ func (s *WebServer) nodeRoutes() {
 	})
 	s.handle("DELETE /api/relays/{id}", rr, s.deleteProfile("relay"))
 	s.handle("GET /api/relays/{id}/link", rr, s.profileLink("relay"))
+	s.handle("GET /api/relays/{id}/surge", rr, s.profileSurge("relay"))
 	s.handle("POST /api/relays/{id}/test", r, s.testProfile("relay"))
 	s.handle("POST /api/relays/{id}/restart", r, s.restartProfile("relay"))
 	s.handle("POST /api/relays/bulk", r, s.bulkProfiles("relay"))
@@ -427,6 +429,31 @@ func (s *WebServer) profileLink(kind string) func(c *reqCtx) (any, error) {
 			return map[string]string{"link": link, "format": "surge"}, nil
 		}
 		return map[string]string{"link": link}, nil
+	}
+}
+
+// profileSurge reveals a node's or relay's Surge [Proxy] line (it holds credentials, so it
+// needs the same re-authentication as the share link).
+func (s *WebServer) profileSurge(kind string) func(c *reqCtx) (any, error) {
+	return func(c *reqCtx) (any, error) {
+		id, e := c.pathID("id")
+		if e != nil {
+			return nil, e
+		}
+		st, e := c.a.Load()
+		if e != nil {
+			return nil, e
+		}
+		p, e := profileOfKind(st, id, kind)
+		if e != nil {
+			return nil, e
+		}
+		line, e := p.SurgeLine(p.PublicHost, p.PublicPort)
+		if e != nil {
+			return nil, e
+		}
+		s.audit.add(s.now(), clientIP(c.r), "reveal surge "+p.ID)
+		return map[string]string{"line": line}, nil
 	}
 }
 
