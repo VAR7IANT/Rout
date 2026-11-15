@@ -27,7 +27,7 @@ type Node struct {
 	// so aggregate subscriptions keep pointing at the node when the provider renames it.
 	ID       string `json:"id"`
 	Name     string `json:"name"`
-	Protocol string `json:"protocol"` // vless, ss, trojan, hysteria2, tuic, anytls
+	Protocol string `json:"protocol"` // vless, ss, trojan, hysteria2, tuic, anytls, snell
 	Server   string `json:"server"`
 	Port     int    `json:"port"`
 	// Informational summary of what the node uses.
@@ -63,7 +63,7 @@ type Issue struct {
 
 // Parsed is the outcome of reading one source body.
 type Parsed struct {
-	Format string  `json:"format"` // "links", "base64", "clash"
+	Format string  `json:"format"` // "links", "base64", "clash", "surge"
 	Nodes  []Node  `json:"nodes"`
 	Issues []Issue `json:"issues,omitempty"`
 	// Entries is the number of entries the source listed (nodes + issues + duplicates).

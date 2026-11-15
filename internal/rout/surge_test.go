@@ -1,8 +1,11 @@
 package rout
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/VAR7IANT/Rout/internal/remote"
 )
 
 // surgeFields splits a Surge [Proxy] line into its name, type, server, port and key=value map.
@@ -261,5 +264,63 @@ func TestWebSurgeLineEndpoint(t *testing.T) {
 	}
 	if !found {
 		t.Error("revealing a Surge line was not audited")
+	}
+}
+
+// TestSurgeSourceImportsSnell: a Surge list (here, what another Rout serves as ?format=surge)
+// is imported as a third-party source; its Snell nodes go out again as Surge lines, as Mihomo
+// proxies where Mihomo can run them (not v6), and never into Base64, which has no Snell link.
+func TestSurgeSourceImportsSnell(t *testing.T) {
+	sc := newAggScene(t)
+	fs := &fakeSource{body: "Far-Snell = snell, 203.0.113.40, 30001, psk=Q0123456789abcdefghijklmnopqrstu, version=4, obfs=http, obfs-host=bing.com\n" +
+		"Far-Snell6 = snell, 2001:db8::40, 30002, psk=Q0123456789abcdefghijklmnopqrstu, version=6\n" +
+		"Far-SS = ss, 203.0.113.40, 30003, encrypt-method=2022-blake3-aes-128-gcm, password=YWJjZGVmZ2hpamtsbW5vcA==\n"}
+	prev := sc.a.remoteFetch
+	sc.a.remoteFetch = func(ctx context.Context, rawURL string, opt remote.FetchOptions) (*remote.Result, error) {
+		if strings.Contains(rawURL, "surge") {
+			return fs.fetch(ctx, rawURL, opt)
+		}
+		return prev(ctx, rawURL, opt)
+	}
+	src, e := sc.a.AddRemoteSource(RemoteSourceSpec{Name: "Surge", URL: "https://surge.provider.test/s?t=3", Enabled: true, IntervalMin: 60})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = sc.a.RefreshRemoteSource(context.Background(), src.ID); e != nil {
+		t.Fatal(e)
+	}
+	snap := snapshotOf(t, sc.a, src.ID)
+	if len(snap.Nodes) != 3 {
+		t.Fatalf("imported: %+v", snap.Nodes)
+	}
+	var items []SubItem
+	for _, n := range snap.Nodes {
+		items = append(items, SubItem{Kind: itemRemote, SourceID: src.ID, RemoteID: n.ID})
+	}
+	_, token, e := sc.a.CreateAggregateSubscription("Far", AggregateSpec{Items: items})
+	if e != nil {
+		t.Fatal(e)
+	}
+	h := sc.server()
+	w := get(h, "GET", "/s/"+token+"?format=surge")
+	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
+	if w.Code != 200 || len(lines) != 3 {
+		t.Fatalf("Surge: %d %s", w.Code, w.Body.String())
+	}
+	_, typ, host, port, kv := surgeFields(t, lines[0])
+	if typ != "snell" || host != "203.0.113.40" || port != "30001" || kv["psk"] != "Q0123456789abcdefghijklmnopqrstu" || kv["version"] != "4" || kv["obfs"] != "http" || kv["obfs-host"] != "bing.com" {
+		t.Fatalf("Snell line: %s", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "Far-Snell6 = snell, 2001:db8::40, 30002, ") || !strings.HasSuffix(lines[1], "version=6") {
+		t.Fatalf("Snell v6 line: %s", lines[1])
+	}
+	m := get(h, "GET", "/s/"+token+"?format=mihomo")
+	if m.Code != 200 || !strings.Contains(m.Body.String(), "Far-Snell") || strings.Contains(m.Body.String(), "Far-Snell6") || !strings.Contains(m.Body.String(), `"type":"snell"`) {
+		t.Fatalf("Mihomo: %d %s", m.Code, m.Body.String())
+	}
+	b := get(h, "GET", "/s/"+token)
+	dec, _ := decode64(strings.TrimSpace(b.Body.String()))
+	if links := strings.Fields(string(dec)); b.Code != 200 || len(links) != 1 || !strings.HasPrefix(links[0], "ss://") {
+		t.Fatalf("Base64: %d %q", b.Code, dec)
 	}
 }

@@ -141,6 +141,11 @@ The official `snell-server` cannot send traffic through an upstream proxy. sing-
 * The PSK, port, listen address, outbound IP family, traffic accounting and quota stay the same. The outbound IP family is enforced like on any sing-box node.
 * **Not verified with a real Surge here.** A CI test runs a real sing-box Snell server (v5 and v6) bound to a SOCKS5 exit and fetches a page through it with sing-box's own Snell client (`version` 4 and 6); Surge itself was not tried. sing-box's documentation says nothing about Snell UDP, so UDP through such a node is untested.
 
+## A Snell node as an exit, and imported Snell nodes
+
+* **Remote server exit.** *Outbound proxies → Remote server* (or the panel, `POST /api/exits` with `"protocol": "remote"`) accepts the Surge line of a Snell node on another server, for example the line another Rout prints. sing-box's Snell client dials it: v6 as v6, v5 as v4 (no QUIC mode, as above), v4 as v4; v1-v3 are refused. `obfs=http|tls` and `obfs-host` are carried for v4/v5. Rout stores it as an internal `snell://` link next to the other remote-node links; it is never offered as a share link. A CI test fetches a page through the official snell-server v5 and v6 this way.
+* **Third-party sources.** A Surge list (a profile's `[Proxy]` section, or bare lines such as another Rout's `?format=surge`) can be imported as a source, Snell nodes included; see [REMOTE_SUBSCRIPTIONS.md](REMOTE_SUBSCRIPTIONS.md).
+
 ## What Snell nodes do not do
 
 Rout does not invent features the engine lacks:

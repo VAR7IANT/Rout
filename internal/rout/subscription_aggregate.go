@@ -359,6 +359,11 @@ func fillRemote(out *AggregateExport, c *aggCand, sub Subscription) {
 // converter Rout uses for its own relays.
 func mihomoRemote(n remote.Node, name string, allowInsecure bool) (M, error) {
 	if m, ok := n.ClashNamed(name); ok {
+		if n.Protocol == "snell" {
+			if v, _ := mint(m["version"]); v > 5 {
+				return nil, errors.New("Mihomo 不支持 Snell v6")
+			}
+		}
 		if clashInsecure(m) && !allowInsecure {
 			return nil, errors.New("节点关闭了证书验证（skip-cert-verify），默认不导出；可在订阅设置中允许")
 		}

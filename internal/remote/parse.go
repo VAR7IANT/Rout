@@ -41,6 +41,15 @@ func parseText(ctx context.Context, text string, depth int) (Parsed, error) {
 		}
 		p, err := ParseClashContext(ctx, []byte(text))
 		return p, err
+	case surgeMarker.MatchString(text):
+		p, err := ParseSurge(text)
+		if err != nil {
+			return Parsed{}, err
+		}
+		if p.Entries == 0 {
+			return Parsed{}, errors.New("没有找到节点")
+		}
+		return p, nil
 	case linkMarker.MatchString(text):
 		p, err := ParseLinks(text)
 		if err != nil {
@@ -61,5 +70,5 @@ func parseText(ctx context.Context, text string, depth int) (Parsed, error) {
 			return p, perr
 		}
 	}
-	return Parsed{}, errors.New("无法识别订阅格式（支持 Base64 节点列表、分享链接和 Clash/Mihomo YAML）")
+	return Parsed{}, errors.New("无法识别订阅格式（支持 Base64 节点列表、分享链接、Clash/Mihomo YAML 和 Surge 节点列表）")
 }

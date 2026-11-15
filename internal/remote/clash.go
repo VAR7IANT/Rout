@@ -456,7 +456,7 @@ func nodeFromClash(m map[string]any) (Node, error) {
 	}
 	kind := strings.ToLower(asString(m["type"]))
 	switch kind {
-	case "ss", "vless", "trojan", "tuic", "anytls":
+	case "ss", "vless", "trojan", "tuic", "anytls", "snell":
 	case "hysteria2", "hy2":
 		kind = "hysteria2"
 	case "":
@@ -536,6 +536,16 @@ func nodeFromClash(m map[string]any) (Node, error) {
 		cred = asString(m["password"])
 		n.Security = "tls"
 		n.SNI = first(asString(m["sni"]), asString(m["servername"]))
+	case "snell":
+		// Snell has no share link; the node lives on as its proxy mapping (Mihomo, Surge).
+		v, ok := asInt(m["version"])
+		if !ok || v < 1 || v > 6 {
+			return Node{}, errors.New("Snell 版本无效")
+		}
+		cred = asString(m["psk"])
+		if u, set := asBool(m["udp"]); set {
+			n.UDP = u
+		}
 	}
 	if cred == "" {
 		return Node{}, errors.New("缺少认证信息")
@@ -544,6 +554,10 @@ func nodeFromClash(m map[string]any) (Node, error) {
 		return Node{}, placeholderError{}
 	}
 	n.seal(cred)
+	if kind == "snell" {
+		n.LinkIssue = "Snell 没有标准分享链接"
+		return n, nil
+	}
 	n.Link, n.LinkIssue = clashToLink(n, cp)
 	if n.Link == "" && n.LinkIssue == "" {
 		n.LinkIssue = "分享链接转换后校验不一致，已放弃转换"
