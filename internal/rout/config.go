@@ -48,7 +48,7 @@ func proxyConfig(p Proxy) M {
 
 // HTTP and unverified third-party SOCKS UDP are TCP-only. No direct fallback exists.
 func serverConfig(p Profile, dir string) (M, error) {
-	if p.snellNode() {
+	if p.snellOfficial() {
 		// snell-server reads its own INI file (snell.go), never a sing-box JSON document.
 		return nil, errors.New("Snell 节点使用 snell-server 配置文件")
 	}
@@ -89,6 +89,15 @@ func serverConfig(p Profile, dir string) (M, error) {
 		in["type"] = "anytls"
 		in["users"] = []any{M{"name": p.ID, "password": p.Password}}
 		in["tls"] = M{"enabled": true, "server_name": p.SNI, "certificate_path": filepath.Join(dir, "tls.crt"), "key_path": filepath.Join(dir, "tls.key")}
+	case protoSnell:
+		// sing-box's Snell server (1.14+): only the documented keys; mode / obfs keep their
+		// defaults, which are what the official server and Surge use.
+		in["type"] = "snell"
+		in["version"] = 5
+		if p.snellVersion() == snellV6 {
+			in["version"] = 6
+		}
+		in["psk"] = p.Password
 	case "ss":
 		in["type"] = "shadowsocks"
 		in["method"] = p.Method

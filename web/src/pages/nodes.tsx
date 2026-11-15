@@ -505,6 +505,7 @@ function NodeDrawer({ node, policies, onChanged, onClose, onRename, onDelete, on
               node.inbound && { k: t('nodes.detail.inbound'), v: t(`family.${node.inbound}` as MessageKey) },
               node.sni && { k: 'SNI', v: node.sni },
               { k: t('nodes.col.exit'), v: node.exit_name ?? t('nodes.direct') },
+              node.snell_engine && { k: t('nodes.detail.engine'), v: t(node.snell_engine === 'sing-box' ? 'nodes.engine.singbox' : 'nodes.engine.official') },
               cert && { k: t('nodes.detail.cert'), v: cert.days < 0 ? t('dash.certExpired', { n: -cert.days }) : `${t('dash.certDays', { n: cert.days })}${cert.self_signed ? ` · ${t('dash.selfSigned')}` : ''}` },
               { k: t('nodes.detail.sub'), v: node.subscriptions.length > 0 ? node.subscriptions.join(', ') : t('common.none') },
               { k: t('nodes.detail.created'), v: dateTime(node.created_at, locale) },
@@ -534,6 +535,7 @@ function NodeDrawer({ node, policies, onChanged, onClose, onRename, onDelete, on
           ) : (
             <p className="dim">{t('nodes.detail.noLink')}</p>
           )}
+          {node.snell_version === '5' ? <p className="dim small">{t('nodes.engine.v5note')}</p> : null}
           {node.has_surge && !node.protocol.startsWith('snell') ? (
             <SecretBox label={t('nodes.detail.surgeHidden')} qr={false} load={async () => (await api.get<{ line: string }>(`/api/nodes/${node.id}/surge`)).line} />
           ) : null}

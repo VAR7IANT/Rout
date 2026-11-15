@@ -115,7 +115,7 @@ func (u *UI) aiToggle(st AIStatus) error {
 		if !u.yes(fmt.Sprintf(u.a.T("停用 AI 智能分流（会重启 %d 个已绑定节点，恢复其原有路由；设置会保留）"), st.BoundCount), true) {
 			return u.err
 		}
-		if e := u.a.SetAIEnabled(false); e != nil {
+		if e := u.withSnellNotes(func() error { return u.a.SetAIEnabled(false) }); e != nil {
 			return e
 		}
 		u.good("AI 智能分流已停用，已绑定节点恢复原有路由")
@@ -130,7 +130,7 @@ func (u *UI) aiToggle(st AIStatus) error {
 	if !u.yes(fmt.Sprintf(u.a.T("启用 AI 智能分流（会重启 %d 个已绑定节点）"), st.BoundCount), true) {
 		return u.err
 	}
-	if e := u.a.SetAIEnabled(true); e != nil {
+	if e := u.withSnellNotes(func() error { return u.a.SetAIEnabled(true) }); e != nil {
 		return e
 	}
 	u.good("AI 智能分流已启用")
@@ -250,7 +250,7 @@ func (u *UI) aiSaveInbounds(s State, nodes []Profile, chosen map[string]bool, cf
 	if !u.yes("保存", true) {
 		return u.err
 	}
-	if e := u.a.SetAIBindings(ids); e != nil {
+	if e := u.withSnellNotes(func() error { return u.a.SetAIBindings(ids) }); e != nil {
 		return e
 	}
 	u.good("入站绑定已保存")

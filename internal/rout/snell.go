@@ -92,6 +92,27 @@ func validSnellPSK(psk string) error {
 // snellNode reports whether p is a Snell node (never a relay).
 func (p Profile) snellNode() bool { return p.Kind == "node" && p.Protocol == protoSnell }
 
+// snellOnSingBox reports a Snell node that runs on sing-box's built-in Snell server instead of
+// the official snell-server. The official server has no upstream proxy and no routing rules,
+// so a node bound to an outbound proxy or to AI Smart Routing uses sing-box; unbinding returns
+// it to the official engine. Nothing is stored: the engine follows the bindings.
+func (p Profile) snellOnSingBox() bool {
+	return p.snellNode() && (p.Outbound != nil || p.ExitID != "" || p.AIRoute != nil)
+}
+
+// snellOfficial reports a Snell node served by the official snell-server.
+func (p Profile) snellOfficial() bool { return p.snellNode() && !p.snellOnSingBox() }
+
+// snellSurgeVersion is the version written in the Surge line. sing-box's Snell v5 server has
+// no QUIC Proxy Mode (its wire protocol is v4's), so its clients are told version=4, which a
+// v5 server accepts and which keeps Surge from trying QUIC.
+func (p Profile) snellSurgeVersion() string {
+	if p.snellOnSingBox() && p.snellVersion() == snellV5 {
+		return "4"
+	}
+	return p.snellVersion()
+}
+
 // snellVersion is the effective Snell version; a profile that does not say is v5.
 func (p Profile) snellVersion() string {
 	if p.SnellVersion == snellV6 {
@@ -147,9 +168,6 @@ func (p Profile) checkSnell() error {
 	}
 	if e := validSnellPSK(p.Password); e != nil {
 		return e
-	}
-	if p.Outbound != nil || p.ExitID != "" {
-		return errors.New("Snell 引擎不支持出站代理")
 	}
 	if p.Network != "" {
 		return errors.New("节点网络限制无效")
@@ -212,8 +230,8 @@ func snellListen(p Profile) string {
 // snellServerConf is the content of snell-server.conf for a node. It contains the PSK and
 // is written with mode 0600.
 func snellServerConf(p Profile) (string, error) {
-	if !p.snellNode() {
-		return "", errors.New("不是 Snell 节点")
+	if !p.snellOfficial() {
+		return "", errors.New("不是使用官方引擎的 Snell 节点")
 	}
 	if e := p.checkSnell(); e != nil {
 		return "", e
@@ -315,7 +333,7 @@ func (p Profile) SnellSurgeLine(host string, port int) (string, error) {
 	if host == "" || strings.ContainsAny(host, ", =\r\n") || !validPort(port) {
 		return "", errors.New("Surge 配置的地址或端口无效")
 	}
-	return fmt.Sprintf("%s = snell, %s, %d, psk=%s, version=%s", surgeName(p.Name, snellLabel(p.snellVersion())), host, port, p.Password, p.snellVersion()), nil
+	return fmt.Sprintf("%s = snell, %s, %d, psk=%s, version=%s", surgeName(p.Name, snellLabel(p.snellVersion())), host, port, p.Password, p.snellSurgeVersion()), nil
 }
 
 // errNoShareLink is what URI returns for a protocol with no standard share link.

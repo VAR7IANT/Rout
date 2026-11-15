@@ -39,7 +39,7 @@ The vendor publishes no checksums of its own; these digests were taken from the 
 3. writes `/etc/rout/profiles/<id>/snell-server.conf` (mode 0600), installs the unit `rout-<id>.service`, enables and starts it, and waits until the engine really listens and stays up;
 4. prints the **Surge configuration** (and, on a dual-stack host, the same node for the other address family).
 
-*Advanced options → Custom credentials* lets you type your own PSK (12-255 characters: letters, digits and `. _ ~ + -`; anything that would change the meaning of an INI or Surge line is refused). If a batch is created with an outbound proxy, the Snell nodes in it connect directly and Rout says so (see [limits](#what-snell-nodes-do-not-do)). The same flow exists in the web panel (*Nodes → New nodes*) and as `POST /api/nodes` with the protocol ids `snell` and `snell6`.
+*Advanced options → Custom credentials* lets you type your own PSK (12-255 characters: letters, digits and `. _ ~ + -`; anything that would change the meaning of an INI or Surge line is refused). If a batch is created with an outbound proxy, its Snell nodes are bound to it like the others and run on sing-box's built-in Snell (see [exits and AI routing](#exits-and-ai-routing-run-on-sing-box)). The same flow exists in the web panel (*Nodes → New nodes*) and as `POST /api/nodes` with the protocol ids `snell` and `snell6`.
 
 ## The Surge configuration
 
@@ -61,7 +61,7 @@ Rout cannot test the Snell handshake itself (there is no Snell client outside Su
 
 ## Manage a node
 
-*Manage nodes → choose a node → Edit* offers the usual entries (the *Choose outbound proxy* entry is hidden for Snell, which has none) and appends two Snell-only entries:
+*Manage nodes → choose a node → Edit* offers the usual entries and appends Snell's own: *Change listen address*, *Set PSK* and, last, *Choose outbound proxy* (it moved to the end in 0.7.0 so the numbers of the other entries did not change):
 
 | Action | What it does |
 | --- | --- |
@@ -127,12 +127,25 @@ Listening address and the address given to clients are separate settings: the pu
 * **Idempotence.** Installing, applying and deleting can be repeated safely.
 * **Unsupported platforms** (32-bit or other CPUs; Snell v6 on Alpine) fail with an explicit message.
 
+## Exits and AI routing (run on sing-box)
+
+The official `snell-server` cannot send traffic through an upstream proxy. sing-box, which Rout already pins (1.14.3) for every other protocol, has a built-in Snell server since 1.14.0. So the engine of a Snell node follows its bindings:
+
+| Node | Engine | Surge line |
+| --- | --- | --- |
+| No exit, no AI routing (the default) | official `snell-server`, exactly as before | `version=5` or `version=6` |
+| Bound to an exit, or to AI Smart Routing | sing-box's built-in Snell, with the exit or the AI routing as its outbound | v5 node: **`version=4`**; v6 node: `version=6` |
+
+* Nothing is stored about the engine: binding an exit or AI routing (menu, panel, batch creation) switches the node to sing-box, and removing both switches it back. Rout writes the other engine's file, removes the old one and restarts the node in one transaction, and prints a note naming the node. The panel's node drawer shows the engine.
+* **Copy the Surge line again after a v5 node switches.** sing-box deliberately does not implement Snell v5's QUIC proxy mode; without it v5 is the v4 wire protocol, so Surge has to be told `version=4`. Rout's own lines and `?format=surge` say so automatically; a line pasted by hand keeps the old version until you copy it again. v6 lines do not change.
+* The PSK, port, listen address, outbound IP family, traffic accounting and quota stay the same. The outbound IP family is enforced like on any sing-box node.
+* **Not verified with a real Surge here.** A CI test runs a real sing-box Snell server (v5 and v6) bound to a SOCKS5 exit and fetches a page through it with sing-box's own Snell client (`version` 4 and 6); Surge itself was not tried. sing-box's documentation says nothing about Snell UDP, so UDP through such a node is untested.
+
 ## What Snell nodes do not do
 
 Rout does not invent features the engine lacks:
 
-* **No outbound proxy / exit.** `snell-server` has no upstream-proxy feature, so a Snell node always connects directly. Binding one to an exit is refused (and skipped with a warning in batch flows).
-* **No AI Smart Routing.** That is a sing-box routing feature; Snell nodes are listed as not eligible. AI routing and exits for other nodes are unchanged.
+* **No outbound proxy or AI routing on the official engine.** `snell-server` has no upstream-proxy feature. Since 0.7.0 a Snell node that needs one moves to sing-box instead, see below.
 * **No sing-box client config** and no standard share link. Relays can forward to a Snell node's port as plain TCP, but the Surge line must then be edited by hand to the relay's address.
 * **No TLS/Reality/certificates.** Snell has its own encryption; the vendor notes it deliberately omits forward secrecy and replay protection for performance and recommends a TLS-based protocol if maximum security is the goal. Use a random PSK (Rout's default).
 * **Logging.** Rout runs `snell-server` at its default log level; the vendor's server can log per-connection lines. Check `journalctl -u rout-ID` on your host and rotate or restrict journal retention if that matters to you.
@@ -154,9 +167,9 @@ Rout does not invent features the engine lacks:
 
 ## Verification status
 
-**Automated (always run, `go test ./...`):** configuration rendering for both versions and every listening / outbound-family variant, with a check that only documented keys are written and that tampered files are detected; PSK generation and validation; version/engine selection and the v5 vs v6 UDP rules; Surge line syntax (IPv4, IPv6, domain, name sanitising); a multi-instance lifecycle (create, change port / PSK / listen, stop/start, delete) proving isolation of files, services and ports, with a Shadowsocks node unchanged beside them; port conflicts against TCP and UDP nodes and against sockets that are really bound; NAT mapping; systemd and OpenRC definitions; per-node nftables rules; refusal of outbound proxies, AI routing and Mihomo export; Surge subscription output and its behaviour across node edits, renames, disable and delete; the create and edit menus (interactive scripts); the web API; state round trip and backup/restore; the pinned engine table, zip install with local TLS server, digest mismatch, corrupt, lying, symlink and missing-member archives, previous-engine preservation, musl/arch refusal; English and Traditional Chinese catalog coverage. The existing suite for every other protocol passes unchanged.
+**Automated (always run, `go test ./...`):** configuration rendering for both versions and every listening / outbound-family variant, with a check that only documented keys are written and that tampered files are detected; PSK generation and validation; version/engine selection and the v5 vs v6 UDP rules; Surge line syntax (IPv4, IPv6, domain, name sanitising); a multi-instance lifecycle (create, change port / PSK / listen, stop/start, delete) proving isolation of files, services and ports, with a Shadowsocks node unchanged beside them; port conflicts against TCP and UDP nodes and against sockets that are really bound; NAT mapping; systemd and OpenRC definitions; per-node nftables rules; the engine switch to sing-box with an exit or AI routing (files, engine, Surge `version`, notes, menu and panel) and refusal of Mihomo export; Surge subscription output and its behaviour across node edits, renames, disable and delete; the create and edit menus (interactive scripts); the web API; state round trip and backup/restore; the pinned engine table, zip install with local TLS server, digest mismatch, corrupt, lying, symlink and missing-member archives, previous-engine preservation, musl/arch refusal; English and Traditional Chinese catalog coverage. The existing suite for every other protocol passes unchanged.
 
-**CI with the real engines (Linux, `ROUT_TEST_ENGINES`):** `TestIntegrationSnellRealEngineAcceptsRoutConfiguration` downloads the pinned official engines through Rout's own installer, runs `--version`, starts `snell-server -c` on the configuration Rout writes (IPv4 wildcard and loopback, dual stack and IPv6 loopback where available, IPv4-only egress, all five v6 preferences) and checks it listens and keeps running.
+**CI with the real engines (Linux, `ROUT_TEST_ENGINES`):** `TestIntegrationSnellRealEngineAcceptsRoutConfiguration` downloads the pinned official engines through Rout's own installer, runs `--version`, starts `snell-server -c` on the configuration Rout writes (IPv4 wildcard and loopback, dual stack and IPv6 loopback where available, IPv4-only egress, all five v6 preferences) and checks it listens and keeps running. `TestIntegrationSnellOnSingBoxThroughAnExit` runs a sing-box Snell node (v5 and v6) bound to a SOCKS5 exit and fetches a page through it with a sing-box Snell client.
 
 **Not verified (no hardware or client available here; do these before relying on it):**
 

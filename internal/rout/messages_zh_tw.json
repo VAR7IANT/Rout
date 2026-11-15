@@ -1903,7 +1903,12 @@
 "证书指纹无效": "憑證指紋無效",
 "输出 Surge 的 [Proxy] 配置行（单个或全部节点与中转），或保存到文件": "輸出 Surge 的 [Proxy] 配置行（單個或全部節點與中轉），或儲存到檔案",
 "HY2/TUIC/AnyTLS-TLS 使用自动生成的自签证书（高级选项中可改用现有 PEM 证书）": "HY2/TUIC/AnyTLS-TLS 使用自動生成的自簽憑證（進階選項中可改用現有 PEM 憑證）",
-"HY2/TUIC/AnyTLS-TLS 证书": "HY2/TUIC/AnyTLS-TLS 憑證"
+"HY2/TUIC/AnyTLS-TLS 证书": "HY2/TUIC/AnyTLS-TLS 憑證",
+"不是使用官方引擎的 Snell 节点": "不是使用官方引擎的 Snell 節點",
+"%s 使用出站代理或 AI 分流后由 sing-box 内置 Snell 运行：Surge 中改用 version=4，请重新复制该节点的 Surge 配置": "%s 使用出站代理或 AI 分流後由 sing-box 內建 Snell 執行：Surge 中改用 version=4，請重新複製該節點的 Surge 配置",
+"%s 使用出站代理或 AI 分流后由 sing-box 内置 Snell 运行，Surge 配置不变": "%s 使用出站代理或 AI 分流後由 sing-box 內建 Snell 執行，Surge 配置不變",
+"%s 不再使用出站代理或 AI 分流，改回官方 snell-server 运行：Surge 中改回 version=5，请重新复制该节点的 Surge 配置": "%s 不再使用出站代理或 AI 分流，改回官方 snell-server 執行：Surge 中改回 version=5，請重新複製該節點的 Surge 配置",
+"%s 不再使用出站代理或 AI 分流，改回官方 snell-server 运行，Surge 配置不变": "%s 不再使用出站代理或 AI 分流，改回官方 snell-server 執行，Surge 配置不變"
 },
 "chars": {
 "与": "與",

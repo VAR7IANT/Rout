@@ -648,24 +648,6 @@ func TestSnellTrafficMeteringIsPerNodeAndCoversQUICMode(t *testing.T) {
 func TestSnellIsRefusedWhereItHasNoMeaning(t *testing.T) {
 	a := testApp(t)
 	p := aiTestNode(t, a, "snell", "snell")
-	ex := aiTestExit(t, a, "exit", "198.51.100.9", 1080)
-	s, _ := a.Load()
-	if _, e := BindExit(s, p.ID, ex.ID); e == nil {
-		t.Error("a Snell node was bound to an outbound proxy")
-	}
-	if e := aiEligible(p); e == nil {
-		t.Error("a Snell node is eligible for AI routing")
-	}
-	withProxy := p
-	withProxy.Outbound = &ex.Proxy
-	if withProxy.Validate() == nil || withProxy.CheckCompatibility() == nil {
-		t.Error("a Snell node with an outbound proxy validates")
-	}
-	withExit := p
-	withExit.ExitID = ex.ID
-	if withExit.Validate() == nil {
-		t.Error("a Snell node with an exit ID validates")
-	}
 	// Mihomo gets nothing it cannot run.
 	if _, e := mihomoNode(p); e == nil {
 		t.Error("a Snell node was exported to Mihomo")
@@ -1033,5 +1015,109 @@ func TestSnellPSKIsRedactedFromShownLogs(t *testing.T) {
 	// Other protocols' logs are redacted of Snell PSKs too (a log is shown per node, state-wide).
 	if strings.Contains(redactProxySecrets("x "+psk, State{Schema: 1, Profiles: []Profile{p, fixture(t, "ss")}}), psk) {
 		t.Fatal("PSK shown")
+	}
+}
+
+// TestSnellMovesToSingBoxWithAnExit covers the engine switch: the official snell-server has no
+// upstream proxy, so an exit or AI routing runs the node on sing-box's built-in Snell, and
+// dropping both brings the official engine back. Files, engine and Surge line follow.
+func TestSnellMovesToSingBoxWithAnExit(t *testing.T) {
+	a := testApp(t)
+	p5 := aiTestNode(t, a, "snell", "five")
+	p6 := aiTestNode(t, a, "snell6", "six")
+	ex := aiTestExit(t, a, "exit", "198.51.100.9", 1080)
+	for _, p := range []Profile{p5, p6} {
+		if a.engineName(p) != snellEngine(p.snellVersion()) || !p.snellOfficial() || p.snellOnSingBox() {
+			t.Fatalf("%s: an unbound Snell node is not on the official engine", p.Name)
+		}
+		if e := aiEligible(p); e != nil {
+			t.Fatalf("%s: Snell refused for AI routing: %v", p.Name, e)
+		}
+	}
+	if _, e := serverConfig(p5, "/etc/rout/x"); e == nil {
+		t.Fatal("a sing-box configuration was built for an official Snell node")
+	}
+
+	old, _ := a.Load()
+	next, e := BindExit(old, p5.ID, ex.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if next, e = BindExit(next, p6.ID, ex.ID); e != nil {
+		t.Fatal(e)
+	}
+	if e = a.Commit(old, next, false); e != nil {
+		t.Fatal(e)
+	}
+	s, _ := a.Load()
+	for _, id := range []string{p5.ID, p6.ID} {
+		p, _ := Find(s, id)
+		if !p.snellOnSingBox() || p.snellOfficial() || a.engineName(p) != "sing-box" {
+			t.Fatalf("%s: a Snell node with an exit is not on sing-box", p.Name)
+		}
+		if p.Validate() != nil || p.CheckCompatibility() != nil {
+			t.Fatalf("%s: a Snell node with an exit does not validate", p.Name)
+		}
+		dir := a.profileDir(p.ID)
+		if _, e := os.Stat(filepath.Join(dir, snellConf)); !os.IsNotExist(e) {
+			t.Fatalf("%s: the official engine's file was left behind: %v", p.Name, e)
+		}
+		_, cfg := readConfigFile(t, a, p)
+		in := cfg["inbounds"].([]any)[0].(map[string]any)
+		want := 5.0
+		if p.snellVersion() == snellV6 {
+			want = 6
+		}
+		if in["type"] != "snell" || in["version"] != want || in["psk"] != p.Password {
+			t.Fatalf("%s: sing-box Snell inbound: %v", p.Name, in)
+		}
+		if !p.egressInfo().Enforced && p.outboundPolicy() != outAuto && p.Outbound == nil {
+			t.Fatalf("%s: egress", p.Name)
+		}
+		line, e := p.SnellSurgeLine(p.PublicHost, p.PublicPort)
+		if e != nil {
+			t.Fatal(e)
+		}
+		wantVersion := "version=4" // sing-box speaks v5 as v4: Surge has to be told so.
+		if p.snellVersion() == snellV6 {
+			wantVersion = "version=6"
+		}
+		if !strings.HasSuffix(line, wantVersion) {
+			t.Fatalf("%s: Surge line on sing-box: %s", p.Name, line)
+		}
+	}
+	// The notes name the switch and, for v5 only, ask for the line to be copied again.
+	u, out := testUI(a, "")
+	u.snellEngineNotes(old, s)
+	if got := out.String(); !strings.Contains(got, "version=4") || !strings.Contains(got, "five") || !strings.Contains(got, "six") {
+		t.Fatalf("engine notes: %q", got)
+	}
+
+	// Unbinding returns to the official engine and its file.
+	next, e = BindExit(s, p5.ID, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = a.Commit(s, next, false); e != nil {
+		t.Fatal(e)
+	}
+	s2, _ := a.Load()
+	back, _ := Find(s2, p5.ID)
+	if !back.snellOfficial() || a.engineName(back) != snellEngine(snellV5) {
+		t.Fatal("an unbound Snell node did not return to the official engine")
+	}
+	if _, e := os.Stat(filepath.Join(a.profileDir(back.ID), snellConf)); e != nil {
+		t.Fatalf("the official engine's file is missing: %v", e)
+	}
+	if _, e := os.Stat(filepath.Join(a.profileDir(back.ID), "config.json")); !os.IsNotExist(e) {
+		t.Fatalf("the sing-box file was left behind: %v", e)
+	}
+	if line, _ := back.SnellSurgeLine(back.PublicHost, back.PublicPort); !strings.HasSuffix(line, "version=5") {
+		t.Fatalf("Surge line back on the official engine: %s", line)
+	}
+	u, out = testUI(a, "")
+	u.snellEngineNotes(s, s2)
+	if got := out.String(); !strings.Contains(got, "version=5") || strings.Contains(got, "six") {
+		t.Fatalf("engine notes after unbinding: %q", got)
 	}
 }

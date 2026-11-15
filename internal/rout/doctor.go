@@ -195,7 +195,7 @@ func (d *doctorRun) profile(s State, p Profile, manager string, now time.Time) {
 	if e := p.CheckCompatibility(); e != nil {
 		d.bad("%s：%s", label, a.Error(e))
 	}
-	if p.snellNode() {
+	if p.snellOfficial() {
 		expected, e := snellServerConf(p)
 		actual, er := os.ReadFile(filepath.Join(a.profileDir(p.ID), snellConf))
 		if e == nil && (er != nil || string(actual) != expected) {
