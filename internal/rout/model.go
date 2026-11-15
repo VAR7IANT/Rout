@@ -305,6 +305,13 @@ func proxySecurityWarning(p Proxy) string {
 	}
 	return "SOCKS5/HTTP 出站链路未加密，账号密码可能被窃听；旧配置保持原样。请显式改用验证证书的 HTTPS CONNECT，或将 SOCKS5 放入 SSH 隧道（见 docs/AI_ROUTING.md）"
 }
+
+// certNode reports a node that serves a TLS certificate file (self-signed or PEM) rather
+// than Reality: Hysteria2, TUIC and AnyTLS with standard TLS.
+func (p Profile) certNode() bool {
+	return p.Kind == "node" && (p.Protocol == "hy2" || p.Protocol == "tuic" || p.Protocol == protoAnyTLSTLS)
+}
+
 func (p Profile) Networks() []string {
 	if p.Kind == "relay" {
 		if p.Protocol == "both" {
@@ -422,7 +429,7 @@ func (p Profile) Validate() error {
 		if e := p.checkSnell(); e != nil {
 			return e
 		}
-	case "hy2", "tuic":
+	case "hy2", "tuic", protoAnyTLSTLS:
 		if !validHost(p.SNI) {
 			return errors.New("TLS SNI 无效")
 		}
@@ -459,7 +466,7 @@ func (p Profile) CheckCompatibility() error {
 }
 
 func (p Profile) Ready() error {
-	if p.Kind != "node" || (p.Protocol != "hy2" && p.Protocol != "tuic") || !p.Enabled {
+	if !p.certNode() || !p.Enabled {
 		return nil
 	}
 	pair, e := tls.X509KeyPair([]byte(p.CertPEM), []byte(p.KeyPEM))
@@ -636,6 +643,19 @@ func (p Profile) URIAt(host string, port int) (string, error) {
 		// are percent-encoded instead ("+", "/" and "=" of the key included).
 		fragment := (&url.URL{Fragment: p.Name}).String()
 		return "ss://" + url.QueryEscape(p.Method) + ":" + url.QueryEscape(p.Password) + "@" + u.Host + fragment, nil
+	case protoAnyTLSTLS:
+		u.Scheme = "anytls"
+		u.User = url.User(p.Password)
+		q.Set("security", "tls")
+		q.Set("sni", p.SNI)
+		if p.TLSGenerated {
+			pin, e := CertificatePin(p.CertPEM)
+			if e != nil {
+				return "", e
+			}
+			q.Set("insecure", "1")
+			q.Set("pinSHA256", pin)
+		}
 	case "hy2":
 		u.Scheme = "hysteria2"
 		u.User = url.User(p.Password)

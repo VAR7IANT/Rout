@@ -102,6 +102,23 @@ func TestSurgeLineRefusesWhatSurgeCannotRun(t *testing.T) {
 	if _, _, e := surgeFromMihomo("x", M{"type": "ss", "server": "198.51.100.1", "port": 443, "cipher": "aes-128-gcm", "password": "a,b"}); e == nil {
 		t.Fatal("comma in a value accepted")
 	}
+	// ALPN cannot smuggle a second line or extra keys, whether it has one value or several.
+	for _, alpn := range [][]any{
+		{"h3\nInjected = ss, 198.51.100.9, 443, encrypt-method=aes-128-gcm, password=x"},
+		{"h3, password=x"},
+		{"h2", "h3\nInjected = ss"},
+	} {
+		m := M{"type": "trojan", "server": "198.51.100.1", "port": 443, "password": "p", "sni": "tls.example", "alpn": alpn}
+		if line, _, e := surgeFromMihomo("x", m); e == nil {
+			t.Errorf("ALPN %q accepted: %q", alpn, line)
+		}
+	}
+	for alpn, want := range map[string][]any{"alpn=h3": {"h3"}, `alpn="h2,h3"`: {"h2", "h3"}} {
+		m := M{"type": "trojan", "server": "198.51.100.1", "port": 443, "password": "p", "sni": "tls.example", "alpn": want}
+		if line, _, e := surgeFromMihomo("x", m); e != nil || !strings.Contains(line, alpn) {
+			t.Errorf("ALPN %v: %q %v", want, line, e)
+		}
+	}
 }
 
 func TestSurgeRelayLines(t *testing.T) {

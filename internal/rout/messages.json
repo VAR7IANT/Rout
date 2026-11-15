@@ -1905,5 +1905,7 @@
  "节点认证信息无效":"Invalid node credentials",
  "订阅项 %d（%s）无法生成 Surge：%s":"Subscription item %d (%s) cannot be exported to Surge: %s",
  "证书指纹无效":"Invalid certificate fingerprint",
- "输出 Surge 的 [Proxy] 配置行（单个或全部节点与中转），或保存到文件":"Print the Surge [Proxy] lines (one or all nodes and relays), or save them to a file"
+ "输出 Surge 的 [Proxy] 配置行（单个或全部节点与中转），或保存到文件":"Print the Surge [Proxy] lines (one or all nodes and relays), or save them to a file",
+ "HY2/TUIC/AnyTLS-TLS 使用自动生成的自签证书（高级选项中可改用现有 PEM 证书）":"HY2/TUIC/AnyTLS-TLS use an automatically generated self-signed certificate (Advanced options can switch to an existing PEM certificate)",
+ "HY2/TUIC/AnyTLS-TLS 证书":"HY2/TUIC/AnyTLS-TLS certificate"
 }

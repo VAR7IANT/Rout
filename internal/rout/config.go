@@ -85,6 +85,10 @@ func serverConfig(p Profile, dir string) (M, error) {
 		} else {
 			in["users"] = []any{M{"name": p.ID, "password": p.Password}}
 		}
+	case protoAnyTLSTLS:
+		in["type"] = "anytls"
+		in["users"] = []any{M{"name": p.ID, "password": p.Password}}
+		in["tls"] = M{"enabled": true, "server_name": p.SNI, "certificate_path": filepath.Join(dir, "tls.crt"), "key_path": filepath.Join(dir, "tls.key")}
 	case "ss":
 		in["type"] = "shadowsocks"
 		in["method"] = p.Method
@@ -171,6 +175,10 @@ func ClientConfig(p Profile, host string, port, localPort int) (M, error) {
 		} else {
 			out["password"] = p.Password
 		}
+	case protoAnyTLSTLS:
+		out["type"] = "anytls"
+		out["password"] = p.Password
+		out["tls"] = M{"enabled": true, "server_name": p.SNI, "certificate": []string{p.CertPEM}}
 	case "ss":
 		out["type"] = "shadowsocks"
 		out["method"] = p.Method

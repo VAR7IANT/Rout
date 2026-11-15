@@ -48,7 +48,7 @@ func TestIntegrationSubscriptionMihomoValidation(t *testing.T) {
 	}
 	var profiles []Profile
 	var ids []string
-	for i, protocol := range []string{"vless", "ss", "hy2", "tuic", "anytls"} {
+	for i, protocol := range []string{"vless", "ss", "hy2", "tuic", "anytls", protoAnyTLSTLS} {
 		p := linkFixture(t, protocol, "2001:db8::7")
 		p.Port = 25000 + i
 		p.Name = "🇯🇵 Tokyo: [A] # one \"quoted\""
@@ -106,7 +106,7 @@ func TestIntegrationSubscriptionMihomoTraffic(t *testing.T) {
 	hits := &atomic.Int32{}
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); fmt.Fprint(w, "198.51.100.19") }))
 	defer origin.Close()
-	for _, protocol := range []string{"vless", "ss", "hy2", "tuic"} {
+	for _, protocol := range []string{"vless", "ss", "hy2", "tuic", protoAnyTLSTLS} {
 		t.Run(protocol, func(t *testing.T) {
 			isolated := *a
 			isolated.Home = t.TempDir()
@@ -155,7 +155,7 @@ func TestIntegrationSubscriptionMihomoTraffic(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 			}
 			testMihomoUDP(t, a, port)
-			if protocol == "hy2" || protocol == "tuic" {
+			if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
 				before := hits.Load()
 				proxy["fingerprint"] = strings.Repeat("0", 64)
 				badPort, _ := freePort()

@@ -59,7 +59,7 @@ func mihomoFromLink(raw string, networks []string, relayProtocol string, importe
 			allow("headerType mode spx")
 		}
 	case "anytls":
-		allow("security sni peer fp alpn allowInsecure insecure")
+		allow("security sni peer fp alpn allowInsecure insecure pinSHA256")
 	case "ss":
 	case "hysteria2", "hy2":
 		allow("sni peer alpn insecure allowInsecure pinSHA256 obfs obfs-password")

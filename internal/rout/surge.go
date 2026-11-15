@@ -321,14 +321,16 @@ func surgeFromMihomo(name string, m M) (string, string, error) {
 		if sni != "" {
 			sp.set("sni", sni)
 		}
-		if alpn := mstrings(m["alpn"]); len(alpn) == 1 {
+		alpn := mstrings(m["alpn"])
+		for _, a := range alpn {
+			if !surgeSafe(a) {
+				return "", "", errors.New("ALPN 无法转换为 Surge")
+			}
+		}
+		if len(alpn) == 1 {
 			sp.set("alpn", alpn[0])
 		} else if len(alpn) > 1 {
-			for _, a := range alpn {
-				if !surgeSafe(a) {
-					return "", "", errors.New("ALPN 无法转换为 Surge")
-				}
-			}
+			// The only value written in quotes, built from checked parts.
 			sp.set("alpn", "\""+strings.Join(alpn, ",")+"\"")
 		} else if surgeType == "tuic-v5" || surgeType == "tuic" {
 			sp.set("alpn", "h3")
@@ -353,7 +355,7 @@ func surgeFromMihomo(name string, m M) (string, string, error) {
 	parts := []string{name + " = " + surgeType, host, strconv.Itoa(port)}
 	for _, k := range sp.keys {
 		v := sp.vals[k]
-		if k != "alpn" && !surgeSafe(v) {
+		if !surgeSafe(v) && !(k == "alpn" && strings.HasPrefix(v, "\"")) {
 			return "", "", fmt.Errorf("节点参数 %s 含有 Surge 配置无法表示的字符", k)
 		}
 		parts = append(parts, k+"="+v)

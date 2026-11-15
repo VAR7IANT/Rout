@@ -392,7 +392,7 @@ func TestIntegrationProtocolsAndProxyExit(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "198.51.100.19") }))
 	defer origin.Close()
 	_, originPort, _ := ParseEndpoint(strings.TrimPrefix(origin.URL, "http://"))
-	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
+	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic", protoAnyTLSTLS} {
 		for _, mode := range []string{"direct", "socks5", "http"} {
 			t.Run(protocol+"/"+mode, func(t *testing.T) {
 				isolated := *a
