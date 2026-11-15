@@ -244,3 +244,75 @@ func TestIntegrationSnellOnSingBoxThroughAnExit(t *testing.T) {
 		})
 	}
 }
+
+// TestIntegrationSnellRemoteExitReachesOfficialServer checks the remote Snell exit against the
+// real official servers: the Surge line Rout prints for a Snell node is pasted as an exit, and
+// the sing-box outbound Rout builds from it fetches a page through snell-server v5 (spoken to
+// as v4) and v6.
+func TestIntegrationSnellRemoteExitReachesOfficialServer(t *testing.T) {
+	if os.Getenv("ROUT_SKIP_SINGBOX_RUNTIME") == "1" {
+		t.Skip("sing-box runtime disabled explicitly")
+	}
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
+		t.Skip("official Snell servers are published for Linux amd64/arm64 only")
+	}
+	a := integrationApp(t)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "198.51.100.29") }))
+	defer origin.Close()
+	for _, protocol := range []string{"snell", "snell6"} {
+		t.Run(protocol, func(t *testing.T) {
+			if protocol == "snell6" && hostLibc() != "glibc" {
+				t.Skip("the official Snell v6 build needs glibc")
+			}
+			p, e := NewProfile(protocol)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if e = a.EnsureEngine(snellEngine(p.snellVersion())); e != nil {
+				t.Fatal(e)
+			}
+			p.Name, p.Listen, p.InboundMode = "far", "127.0.0.1", inIPv4
+			p.Port, _ = freePort()
+			p.PublicHost, p.PublicPort = "127.0.0.1", p.Port
+			if e = p.Validate(); e != nil {
+				t.Fatal(e)
+			}
+			dir := filepath.Join(t.TempDir(), "p")
+			if e = writeProfileIn(p, dir); e != nil {
+				t.Fatal(e)
+			}
+			startEngine(t, profileSockets(p), a.enginePath(snellEngine(p.snellVersion())), "-c", filepath.Join(dir, snellConf))
+
+			line, e := p.SnellSurgeLine(p.PublicHost, p.PublicPort)
+			if e != nil {
+				t.Fatal(e)
+			}
+			exit, e := ParseRemoteNode(line)
+			if e != nil {
+				t.Fatal(e)
+			}
+			out := proxyConfig(*exit)
+			out["tag"] = "node"
+			local, _ := freePort()
+			client := M{
+				"log":       M{"level": "warn"},
+				"inbounds":  []any{M{"type": "mixed", "listen": "127.0.0.1", "listen_port": local}},
+				"outbounds": []any{out},
+				"route":     M{"final": "node"},
+			}
+			e = a.withClient(client, local, func(proxy string) error {
+				ip, e := fetchIP(proxy, origin.URL)
+				if e != nil {
+					return e
+				}
+				if ip != "198.51.100.29" {
+					return fmt.Errorf("unexpected response")
+				}
+				return nil
+			})
+			if e != nil {
+				t.Fatal(e)
+			}
+		})
+	}
+}

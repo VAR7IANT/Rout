@@ -43,7 +43,7 @@ export const sources = {
   'src.add.urlHint': ['只接受 http(s)。指向本机、内网、链路本地或云元数据地址的链接会被拒绝，重定向和 DNS 解析结果也会逐跳检查。', '只接受 http(s)。指向本機、內網、鏈路本地或雲端中繼資料位址的連結會被拒絕，重新導向與 DNS 解析結果也會逐跳檢查。', 'http(s) only. Links to loopback, private, link-local or cloud-metadata addresses are refused, and every redirect and DNS result is checked too.'],
   'src.add.urlKeep': ['留空保持不变；链接里可能含有令牌，保存后不会再原样显示。', '留空保持不變；連結裡可能含有權杖，儲存後不會再原樣顯示。', 'Leave empty to keep it. The link may hold a token, so it is not shown again as-is.'],
   'src.add.contentLabel': ['订阅内容', '訂閱內容', 'Subscription content'],
-  'src.add.contentHint': ['可粘贴：多行分享链接（vless:// ss:// trojan:// hysteria2:// tuic:// anytls://）、Base64 订阅，或 Mihomo/Clash YAML。', '可貼上：多行分享連結（vless:// ss:// trojan:// hysteria2:// tuic:// anytls://）、Base64 訂閱，或 Mihomo/Clash YAML。', 'Paste share links (vless:// ss:// trojan:// hysteria2:// tuic:// anytls://), a Base64 subscription or Mihomo/Clash YAML.'],
+  'src.add.contentHint': ['可粘贴：多行分享链接（vless:// ss:// trojan:// hysteria2:// tuic:// anytls://）、Base64 订阅、Mihomo/Clash YAML，或 Surge 节点列表（含 Snell）。', '可貼上：多行分享連結（vless:// ss:// trojan:// hysteria2:// tuic:// anytls://）、Base64 訂閱、Mihomo/Clash YAML，或 Surge 節點列表（含 Snell）。', 'Paste share links (vless:// ss:// trojan:// hysteria2:// tuic:// anytls://), a Base64 subscription, Mihomo/Clash YAML or a Surge proxy list (Snell included).'],
   'src.add.name': ['名称', '名稱', 'Name'],
   'src.add.note': ['备注', '備註', 'Note'],
   'src.add.tags': ['标签', '標籤', 'Tags'],

@@ -68,6 +68,15 @@ func surgeRemote(n remote.Node, name string, allowInsecure bool) (string, string
 	if n.Protocol == "anytls" && strings.EqualFold(n.Security, "reality") {
 		return "", "", errSurgeAnyTLSReality
 	}
+	if n.Protocol == "snell" {
+		// Snell is Surge's own protocol: the imported mapping goes straight to a Surge line,
+		// without the Mihomo-only limits (Mihomo has no Snell v6).
+		m, ok := n.ClashNamed(name)
+		if !ok {
+			return "", "", errors.New("Snell 节点缺少参数")
+		}
+		return surgeFromMihomo(surgeName(name, n.Protocol), M(m))
+	}
 	m, e := mihomoRemote(n, name, allowInsecure)
 	if e != nil {
 		return "", "", surgeReason(e)
@@ -216,6 +225,34 @@ func surgeFromMihomo(name string, m M) (string, string, error) {
 		} else {
 			return "", "", errors.New("TUIC 认证设置无效")
 		}
+	case "snell":
+		// Only imported nodes reach here: Rout's own Snell nodes have their own line.
+		allow("psk version obfs-opts")
+		v, ok := mint(m["version"])
+		if !ok || v < 1 || v > 6 {
+			return "", "", errors.New("Snell 版本无效")
+		}
+		sp.set("psk", mstr(m["psk"]))
+		if sp.vals["psk"] == "" {
+			return "", "", errors.New("节点认证信息无效")
+		}
+		sp.set("version", strconv.Itoa(v))
+		if opts, ok := asMap(m["obfs-opts"]); ok {
+			for k := range opts {
+				if k != "mode" && k != "host" {
+					return "", "", errors.New("Snell 混淆参数无法转换为 Surge")
+				}
+			}
+			switch mode := mstr(opts["mode"]); mode {
+			case "http", "tls":
+				sp.set("obfs", mode)
+			default:
+				return "", "", errors.New("Snell 混淆参数无法转换为 Surge")
+			}
+			if h := mstr(opts["host"]); h != "" {
+				sp.set("obfs-host", h)
+			}
+		}
 	case "vless":
 		allow("uuid flow tls network ws-opts grpc-opts reality-opts " + tlsKeys)
 		sp.set("username", mstr(m["uuid"]))
@@ -312,7 +349,7 @@ func surgeFromMihomo(name string, m M) (string, string, error) {
 		}
 		surgeType = surgeKindVLESS
 	}
-	tls := kind != "ss" && (kind != "vless" || mbool(m["tls"]) || sp.vals["reality-public-key"] != "")
+	tls := kind != "ss" && kind != "snell" && (kind != "vless" || mbool(m["tls"]) || sp.vals["reality-public-key"] != "")
 	if tls {
 		sni := mstr(m["sni"])
 		if sni == "" {

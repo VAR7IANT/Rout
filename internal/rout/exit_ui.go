@@ -69,7 +69,7 @@ func (u *UI) remoteExitInput() (Exit, error) {
 	u.heading("远程服务器出口")
 	u.say("流量将从另一台服务器的公网 IP 出站。对方服务器上必须有真正在运行的代理服务；只有端口映射的 NAT 只能做端口转发（中转），不能当出口。")
 	mode := u.option("远程服务器上有什么？", []menuItem{
-		itemNote("node", "远程节点的分享链接", "例如另一台 VPS 上用 Rout 创建的 VLESS Reality / AnyTLS / Trojan / SS 节点（推荐）"),
+		itemNote("node", "远程节点的分享链接", "例如另一台 VPS 上用 Rout 创建的 VLESS Reality / AnyTLS / Trojan / SS / Snell 节点（推荐）"),
 		itemNote("proxy", "SOCKS5 / HTTP(S) 代理", "必须有账号密码；不接受无认证的开放代理"),
 		itemNote("forward", "只有 TCP/UDP 端口映射", "这是端口转发，不是出口"),
 	}, "node")
@@ -88,7 +88,7 @@ func (u *UI) remoteExitInput() (Exit, error) {
 		return Exit{Kind: exitRemote, Proxy: p}, e
 	}
 	for u.err == nil {
-		raw := u.secret("粘贴远程节点的分享链接（vless:// anytls:// trojan:// ss:// hysteria2:// tuic://）")
+		raw := u.secret("粘贴远程节点的分享链接（vless:// anytls:// trojan:// ss:// hysteria2:// tuic://；Snell 节点粘贴其 Surge 配置行）")
 		if u.err != nil {
 			return Exit{}, u.err
 		}

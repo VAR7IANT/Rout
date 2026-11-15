@@ -25,7 +25,7 @@ func (u *UI) aiSelectExit() error {
 		v := u.menu("选择 AI 出口", []menuItem{
 			itemNote("existing", "现有出站代理", "SOCKS5 / HTTP(S) / 远程节点 / 已建立的转发链路"),
 			itemNote("relay", "经由现有端口转发", "AI 流量 → 本机 Rout 中转 → 远端代理或节点 → 互联网"),
-			itemNote("link", "远程节点分享链接", "VLESS Reality / AnyTLS / Trojan / SS / Hysteria2 / TUIC"),
+			itemNote("link", "远程节点分享链接", "VLESS Reality / AnyTLS / Trojan / SS / Hysteria2 / TUIC / Snell"),
 			itemNote("new", "建立新的出口链路", "在一个流程中完成中转与远端代理设置"),
 		}, "返回")
 		if u.err != nil || v == "" {
@@ -190,7 +190,7 @@ func (u *UI) chainProxyInput(endpoint, relayLink string, udpOnly bool) (ChainSpe
 		itemNote("socks5", "SOCKS5 代理", "需要账号密码；SOCKS5 本身不加密"),
 		itemNote("http", "HTTP CONNECT 代理", "需要账号密码；明文传输认证信息"),
 		itemNote("https", "HTTPS CONNECT 代理", "验证证书，认证信息经 TLS 加密"),
-		itemNote("node", "远程节点（分享链接）", "VLESS Reality / AnyTLS / Trojan / SS / Hysteria2 / TUIC"),
+		itemNote("node", "远程节点（分享链接）", "VLESS Reality / AnyTLS / Trojan / SS / Hysteria2 / TUIC / Snell"),
 		itemNote("forward", "只是另一个端口转发", "不是出口：末端必须是真正的代理"),
 	}
 	if udpOnly {
@@ -213,7 +213,7 @@ func (u *UI) chainProxyInput(endpoint, relayLink string, udpOnly bool) (ChainSpe
 		if u.err != nil {
 			return spec, u.err
 		}
-		spec.Link = u.secret("粘贴远程节点的分享链接（vless:// anytls:// trojan:// ss:// hysteria2:// tuic://）")
+		spec.Link = u.secret("粘贴远程节点的分享链接（vless:// anytls:// trojan:// ss:// hysteria2:// tuic://；Snell 节点粘贴其 Surge 配置行）")
 		return spec, u.err
 	}
 	if w := proxySecurityWarning(Proxy{Protocol: spec.Protocol}); w != "" {
@@ -304,7 +304,7 @@ func (u *UI) aiChainThroughRelay() error {
 }
 
 func (u *UI) aiExitFromLink() error {
-	raw := u.secret("粘贴远程节点的分享链接（vless:// anytls:// trojan:// ss:// hysteria2:// tuic://）")
+	raw := u.secret("粘贴远程节点的分享链接（vless:// anytls:// trojan:// ss:// hysteria2:// tuic://；Snell 节点粘贴其 Surge 配置行）")
 	if u.err != nil {
 		return u.err
 	}

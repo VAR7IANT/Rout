@@ -555,6 +555,14 @@ func ParseTarget(input string) (string, string, error) {
 }
 
 func RewriteURI(raw, host string, port int, name string) (string, error) {
+	if linkScheme(raw) == "snell" {
+		l, e := parseSnellLink(raw)
+		if e != nil {
+			return "", e
+		}
+		l.host, l.port, l.name = host, port, name
+		return l.String(), nil
+	}
 	if _, _, e := ParseTarget(raw); e != nil {
 		return "", e
 	}

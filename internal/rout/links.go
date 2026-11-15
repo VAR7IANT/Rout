@@ -19,6 +19,13 @@ func decode64(s string) ([]byte, error) {
 
 // URIOutbound is used for diagnostics; forwarding itself preserves the original stream.
 func URIOutbound(raw string) (M, error) {
+	if linkScheme(raw) == "snell" {
+		l, e := parseSnellLink(raw)
+		if e != nil {
+			return nil, e
+		}
+		return l.outbound(), nil
+	}
 	if _, _, e := ParseTarget(raw); e != nil {
 		return nil, e
 	}

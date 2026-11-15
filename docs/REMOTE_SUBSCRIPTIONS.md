@@ -7,9 +7,12 @@ Rout can import subscriptions from other providers (or other Rout instances), ke
 - Base64 share-link lists (plain or Base64-encoded)
 - Mihomo / Clash YAML (`proxies:`)
 - A single share link
-- Another Rout instance's subscription URL (Base64 or `?format=mihomo`)
+- Another Rout instance's subscription URL (Base64, `?format=mihomo` or `?format=surge`)
+- A Surge profile (only its `[Proxy]` section is read) or bare Surge `[Proxy]` lines, as a Surge `policy-path` serves them (since 0.7.0)
 
-Supported protocols: VLESS (TCP/WS/gRPC, TLS, Reality, Vision flow), Shadowsocks (including 2022), Trojan, Hysteria2, TUIC v5, AnyTLS.
+Supported protocols: VLESS (TCP/WS/gRPC, TLS, Reality, Vision flow), Shadowsocks (including 2022), Trojan, Hysteria2, TUIC v5, AnyTLS, and **Snell** (from Surge lists or Mihomo YAML).
+
+**Surge lists.** Each line is turned into the matching Mihomo proxy and checked like a YAML entry. Every Surge key is either mapped, known to be client-side tuning (`tfo`, `reuse`, `test-url`, `ip-version`… are left out), or the line is refused with a reason: `underlying-proxy`, `interface`, ShadowTLS, port hopping, TUIC v4 (token), VMess and unknown keys are refused, `direct`/`reject` entries are skipped. **Snell nodes** have no share link, so they appear in an aggregate's Surge output (any version) and Mihomo output (v1-v5; Mihomo has no v6), and are left out of Base64 with a diagnostic.
 
 **Not supported** (reported as parse issues, never guessed): VMess, ShadowsocksR, Hysteria v1, WireGuard, SOCKS/HTTP proxies, sing-box JSON, and transports/options that Rout cannot express. A node is imported only when every field that matters for connecting (TLS/Reality/auth/transport) is preserved; otherwise it is listed under the source's issues with the reason.
 

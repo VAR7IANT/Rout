@@ -202,6 +202,7 @@ Outbound proxies → **Create**: choose SOCKS5, HTTP CONNECT, HTTPS CONNECT (cer
 | What the remote server runs | How it is used |
 | --- | --- |
 | A node (a Rout node on another VPS: VLESS Reality, AnyTLS, Trojan, Shadowsocks, Hysteria2, TUIC) | Paste its share link; sing-box dials it as the outbound |
+| A Snell node (v4, v5 or v6, for example a Rout Snell node) | Paste its Surge line (`Name = snell, host, port, psk=…, version=…`); sing-box's Snell client dials it (v5 as v4) |
 | An authenticated SOCKS5 / HTTP / HTTPS proxy | `IP:port:user:password`; accounts are mandatory, open proxies are not accepted |
 
 A bare TCP/UDP **port mapping is not an exit**: the connection would be forwarded but the destination would still see this server's IP, so Rout explains this and points to Relays. Nothing here opens a listener or a proxy on this server. A Remote server is **verified with a real request before it is saved**; if the check fails you are told which layer failed and nothing is stored unless you explicitly answer *Save anyway*. Hysteria2/TUIC links need UDP to the remote server: asked once, and a TCP-only NAT is refused with the message above. Certificate-pinned Hysteria2 links are refused (the pinned engine cannot verify them). Node-link credentials live only in `state.json` (mode 0600) and backups; they are never printed, logged or shown by *View*.

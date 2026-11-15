@@ -28,15 +28,30 @@ import (
 // (UDP is rejected on nodes that use an outbound, unchanged from SOCKS5/HTTP exits).
 var remoteNodeSchemes = map[string]bool{"vless": true, "anytls": true, "trojan": true, "ss": true, "hy2": true, "hysteria2": true, "tuic": true}
 
-// ParseRemoteNode turns a remote node's share link into an outbound endpoint.
+// ParseRemoteNode turns a remote node's share link into an outbound endpoint. A Snell node,
+// which has no share link, is given by its Surge line (see snell_remote.go).
 func ParseRemoteNode(link string) (*Proxy, error) {
 	link = strings.TrimSpace(link)
+	if !strings.Contains(link, "://") && strings.Contains(link, "=") && !strings.ContainsAny(link, "\r\n\x00") {
+		converted, e := snellLinkFromSurge(link)
+		if e != nil {
+			return nil, e
+		}
+		link = converted
+	}
 	if link == "" || strings.ContainsAny(link, "\r\n\x00 ") {
 		return nil, errors.New("请粘贴远程节点的分享链接")
 	}
 	scheme := linkScheme(link)
+	if scheme == "snell" {
+		l, e := parseSnellLink(link)
+		if e != nil {
+			return nil, e
+		}
+		return &Proxy{Protocol: proxyNode, Host: l.host, Port: l.port, Link: l.String()}, nil
+	}
 	if !remoteNodeSchemes[scheme] {
-		return nil, errors.New("远程节点链接应为 vless://、anytls://、trojan://、ss://、hysteria2:// 或 tuic://")
+		return nil, errors.New("远程节点链接应为 vless://、anytls://、trojan://、ss://、hysteria2:// 或 tuic://，Snell 节点请粘贴其 Surge 配置行")
 	}
 	target, _, e := ParseTarget(link)
 	if e != nil {
