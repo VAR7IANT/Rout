@@ -108,6 +108,36 @@ func TestAnyTLSTLSInMihomoAndSurge(t *testing.T) {
 	}
 }
 
+// A relay to a self-signed AnyTLS (TLS) node keeps the certificate pin in Mihomo and Surge.
+func TestAnyTLSTLSRelayKeepsThePin(t *testing.T) {
+	p := anytlsTLSFixture(t, "2001:db8::7")
+	pin, _ := CertificatePin(p.CertPEM)
+	raw, e := p.URI()
+	if e != nil {
+		t.Fatal(e)
+	}
+	target, _, e := ParseTarget(raw)
+	if e != nil {
+		t.Fatal(e)
+	}
+	relay := Profile{ID: RandomHex(6), Name: "Relay", Kind: "relay", Protocol: "tcp", Enabled: true, Listen: "127.0.0.1", Port: 24000, PublicHost: "198.51.100.9", PublicPort: 34000, Target: target, TargetURI: raw, RelayMode: relayRemote}
+	m, e := mihomoRelay(relay)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if m["type"] != "anytls" || m["server"] != "198.51.100.9" || m["fingerprint"] != pin || m["skip-cert-verify"] == true {
+		t.Fatalf("Mihomo relay: %v", m)
+	}
+	line, e := relay.SurgeLine(relay.PublicHost, relay.PublicPort)
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, typ, host, _, kv := surgeFields(t, line)
+	if typ != "anytls" || host != "198.51.100.9" || kv["server-cert-fingerprint-sha256"] != pin || kv["skip-cert-verify"] == "true" {
+		t.Fatalf("Surge relay: %s", line)
+	}
+}
+
 func TestWebCreatesAnyTLSTLSNode(t *testing.T) {
 	s := newAPIScene(t)
 	list := jsonOf(t, s.c.get("/api/nodes"))
