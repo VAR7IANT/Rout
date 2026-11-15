@@ -230,9 +230,6 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 			return nil, e
 		}
 	}
-	if spec.ExitID != "" && hasSnell(spec.Protocols) {
-		return nil, errors.New("Snell 引擎不支持出站代理，请不要为 Snell 节点选择出站")
-	}
 	sni := strings.TrimSpace(spec.RealitySNI)
 	if sni == "" {
 		sni = "addons.mozilla.org"

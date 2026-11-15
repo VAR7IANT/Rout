@@ -327,7 +327,7 @@ func TestSnellCreateFlowManualPortAndName(t *testing.T) {
 	}
 }
 
-func TestSnellCreateFlowDoesNotBindAnOutboundProxy(t *testing.T) {
+func TestSnellCreateFlowBindsAnOutboundProxyOnSingBox(t *testing.T) {
 	a := relayTestApp(t, snellSetup())
 	ex := aiTestExit(t, a, "corp", "198.51.100.9", 1080)
 	// With an exit available the menu asks which outbound the batch uses (1 = the first choice).
@@ -337,14 +337,20 @@ func TestSnellCreateFlowDoesNotBindAnOutboundProxy(t *testing.T) {
 		t.Fatal(e, out.String())
 	}
 	s, _ := a.Load()
+	var snell Profile
 	for _, p := range s.Profiles {
-		switch {
-		case p.snellNode() && (p.ExitID != "" || p.Outbound != nil):
-			t.Fatalf("Snell node bound to %s", ex.Name)
+		if p.Kind == "node" && p.ExitID != ex.ID {
+			t.Fatalf("%s not bound to %s", p.Name, ex.Name)
+		}
+		if p.snellNode() {
+			snell = p
 		}
 	}
-	if !strings.Contains(out.String(), "direct") {
-		t.Errorf("no note that the Snell node connects directly:\n%s", out.String())
+	if !snell.snellOnSingBox() || a.engineName(snell) != "sing-box" {
+		t.Fatal("a Snell node created with an exit is not on sing-box")
+	}
+	if !strings.Contains(out.String(), "version=4") {
+		t.Errorf("no note that Surge needs version=4:\n%s", out.String())
 	}
 }
 
@@ -360,7 +366,8 @@ func TestSnellNodeMenuOffersOnlyWhatApplies(t *testing.T) {
 		return out.String()
 	}
 	got, other := menu(snell), menu(ss)
-	if !strings.Contains(got, "Change listen address") || !strings.Contains(got, "Set PSK") || strings.Contains(got, "outbound proxy") && strings.Contains(got, "Choose outbound") {
+	// The exit entry comes last for Snell so the numbers people already know stay put.
+	if !strings.Contains(got, "Change listen address") || !strings.Contains(got, "Set PSK") || !strings.Contains(got, "10  Choose outbound proxy") {
 		t.Errorf("Snell menu:\n%s", got)
 	}
 	if strings.Contains(other, "Set PSK") || strings.Contains(other, "listen address") {
@@ -493,12 +500,6 @@ func TestWebSnellCreateLinkAndRules(t *testing.T) {
 	if w = c.do("POST", "/api/nodes", map[string]any{"base_name": "V6", "protocols": []string{"snell"}, "inbound": "ipv6"}); w.Code != 400 {
 		t.Errorf("IPv6-only Snell on a dual-stack host: %d %s", w.Code, w.Body.String())
 	}
-	ex := c.do("POST", "/api/exits", map[string]any{"name": "corp", "protocol": "socks5", "host": "198.51.100.9", "port": 1080, "username": "u", "password": "p"})
-	mustOK(t, ex.Code, ex.Body.String())
-	exitID := jsonOf(t, ex)["exit"].(map[string]any)["id"].(string)
-	if w = c.do("POST", "/api/nodes", map[string]any{"base_name": "X", "protocols": []string{"snell6"}, "exit_id": exitID}); w.Code != 400 {
-		t.Errorf("Snell with an exit: %d %s", w.Code, w.Body.String())
-	}
 	if w = c.do("POST", "/api/nodes", map[string]any{"base_name": "P", "protocols": []string{"snell"}, "inbound": "ipv4", "outbound_policy": "ipv6_first"}); w.Code != 400 {
 		t.Errorf("v5 with a policy its engine cannot express: %d %s", w.Code, w.Body.String())
 	}
@@ -611,5 +612,33 @@ func TestSnellInAnAggregateSubscription(t *testing.T) {
 	}
 	if code, body = sc.fetchFormat(t, h, token, "surge"); code != 200 || strings.TrimSpace(body) != want5 {
 		t.Fatalf("after the update: %d\n%s", code, body)
+	}
+}
+
+// TestWebSnellWithAnExitRunsOnSingBox: the panel binds an exit to a new Snell node instead of
+// refusing it, and the node view says which engine runs it.
+func TestWebSnellWithAnExitRunsOnSingBox(t *testing.T) {
+	s := newAPIScene(t)
+	ex := s.c.do("POST", "/api/exits", map[string]any{"name": "corp", "protocol": "socks5", "host": "198.51.100.9", "port": 1080, "username": "u", "password": "p"})
+	mustOK(t, ex.Code, ex.Body.String())
+	exitID := jsonOf(t, ex)["exit"].(map[string]any)["id"].(string)
+	w := s.c.do("POST", "/api/nodes", map[string]any{"base_name": "X", "protocols": []string{"snell", "snell6"}, "inbound": "ipv4", "exit_id": exitID})
+	mustOK(t, w.Code, w.Body.String())
+	nodes := listOf(t, jsonOf(t, w), "nodes")
+	if len(nodes) != 2 {
+		t.Fatalf("created: %v", nodes)
+	}
+	for _, n := range nodes {
+		if n["snell_engine"] != "sing-box" || n["exit_name"] != "corp" {
+			t.Fatalf("node view: %v", n)
+		}
+	}
+	plain := listOf(t, jsonOf(t, s.c.get("/api/nodes")), "nodes")
+	for _, n := range plain {
+		if n["protocol"] != "snell" {
+			if _, ok := n["snell_engine"]; ok {
+				t.Fatalf("engine shown for a non-Snell node: %v", n)
+			}
+		}
 	}
 }

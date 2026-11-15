@@ -142,7 +142,7 @@ func (u *UI) aiAdopt(ex Exit, cleanup func() error) error {
 		}
 		return errCancelled
 	}
-	if e := u.a.SetAIExit(ex.ID); e != nil {
+	if e := u.withSnellNotes(func() error { return u.a.SetAIExit(ex.ID) }); e != nil {
 		if cleanup != nil {
 			e = errors.Join(e, cleanup())
 		}

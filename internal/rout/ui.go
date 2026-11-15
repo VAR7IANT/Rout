@@ -601,6 +601,7 @@ func (u *UI) assignOutbound(old State, nodes []Profile, id string) error {
 		return e
 	}
 	u.good("出站已更新")
+	u.snellEngineNotes(old, next)
 	return nil
 }
 func (u *UI) testExit(p Proxy) (string, error) {
@@ -1020,7 +1021,8 @@ func (u *UI) nodeMenu(id string) error {
 		u.nodeCard(s, 0, p, u.trafficDB())
 		items := []menuItem{item("name", "重命名"), item("address", "修改端口或公网地址"), item("exit", "选择出站代理"), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据")}
 		if p.snellNode() {
-			// snell-server has no upstream proxy, so there is nothing to choose there.
+			// Snell nodes got this menu without an exit entry; it comes back at the end so the
+			// numbers people already know do not move.
 			items = append(items[:2], items[3:]...)
 		}
 		if _, ok := p.CertificateExpiry(); ok {
@@ -1029,7 +1031,7 @@ func (u *UI) nodeMenu(id string) error {
 		// Appended last so the numbers of the existing entries never change.
 		items = append(items, item("egress", "出站网络策略"))
 		if p.snellNode() {
-			items = append(items, item("listen", "修改监听地址"), item("psk", "设置 PSK"))
+			items = append(items, item("listen", "修改监听地址"), item("psk", "设置 PSK"), item("exit", "选择出站代理"))
 		}
 		v := u.menu("", items, "返回")
 		if u.err != nil || v == "" {

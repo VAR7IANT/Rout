@@ -1907,5 +1907,10 @@
  "证书指纹无效":"Invalid certificate fingerprint",
  "输出 Surge 的 [Proxy] 配置行（单个或全部节点与中转），或保存到文件":"Print the Surge [Proxy] lines (one or all nodes and relays), or save them to a file",
  "HY2/TUIC/AnyTLS-TLS 使用自动生成的自签证书（高级选项中可改用现有 PEM 证书）":"HY2/TUIC/AnyTLS-TLS use an automatically generated self-signed certificate (Advanced options can switch to an existing PEM certificate)",
- "HY2/TUIC/AnyTLS-TLS 证书":"HY2/TUIC/AnyTLS-TLS certificate"
+ "HY2/TUIC/AnyTLS-TLS 证书":"HY2/TUIC/AnyTLS-TLS certificate",
+ "不是使用官方引擎的 Snell 节点":"Not a Snell node on the official engine",
+ "%s 使用出站代理或 AI 分流后由 sing-box 内置 Snell 运行：Surge 中改用 version=4，请重新复制该节点的 Surge 配置":"%s now runs on sing-box's built-in Snell because it uses an exit or AI routing: Surge needs version=4, so copy the node's Surge line again",
+ "%s 使用出站代理或 AI 分流后由 sing-box 内置 Snell 运行，Surge 配置不变":"%s now runs on sing-box's built-in Snell because it uses an exit or AI routing; its Surge line stays the same",
+ "%s 不再使用出站代理或 AI 分流，改回官方 snell-server 运行：Surge 中改回 version=5，请重新复制该节点的 Surge 配置":"%s no longer uses an exit or AI routing and is back on the official snell-server: Surge needs version=5 again, so copy the node's Surge line again",
+ "%s 不再使用出站代理或 AI 分流，改回官方 snell-server 运行，Surge 配置不变":"%s no longer uses an exit or AI routing and is back on the official snell-server; its Surge line stays the same"
 }

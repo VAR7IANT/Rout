@@ -456,9 +456,6 @@ func (p Profile) Validate() error {
 // Combinations that are structurally valid but cannot carry traffic. Checked for new or
 // edited entries only, so an existing state file always stays loadable and repairable.
 func (p Profile) CheckCompatibility() error {
-	if p.snellNode() && p.Outbound != nil {
-		return errors.New("Snell 引擎不支持出站代理")
-	}
 	if p.Kind == "node" && p.Protocol == "ss" && p.Network == "udp" && p.Outbound != nil {
 		return errors.New("仅 UDP 的 Shadowsocks 不能使用出站代理（出站代理只转发 TCP），请使用 TCP＋UDP 映射或改为直连")
 	}

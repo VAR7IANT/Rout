@@ -3,12 +3,16 @@ package rout
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -159,4 +163,84 @@ func redactPSK(s string) string {
 		out = append(out, l)
 	}
 	return strings.Join(out, "\n")
+}
+
+// TestIntegrationSnellOnSingBoxThroughAnExit runs a Snell node bound to an exit the way Rout
+// runs it then: on sing-box's built-in Snell, with the exit as its outbound. A sing-box Snell
+// client fetches a page through it, so the request must cross the node and leave by the exit.
+// For v5 the client speaks version 4, which is what Rout tells Surge to use for such a node.
+func TestIntegrationSnellOnSingBoxThroughAnExit(t *testing.T) {
+	if os.Getenv("ROUT_SKIP_SINGBOX_RUNTIME") == "1" {
+		t.Skip("sing-box runtime disabled explicitly; Snell on sing-box has NOT been verified")
+	}
+	a := integrationApp(t)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "198.51.100.23") }))
+	defer origin.Close()
+	_, originPort, _ := ParseEndpoint(strings.TrimPrefix(origin.URL, "http://"))
+	for _, protocol := range []string{"snell", "snell6"} {
+		t.Run(protocol, func(t *testing.T) {
+			isolated := *a
+			isolated.Home = t.TempDir()
+			a := &isolated
+			p, e := NewProfile(protocol)
+			if e != nil {
+				t.Fatal(e)
+			}
+			p.Name, p.Listen, p.InboundMode = "it", "127.0.0.1", inIPv4
+			p.Port, _ = freePort()
+			p.PublicHost, p.PublicPort = "127.0.0.1", p.Port
+			var count *atomic.Int32
+			p.Outbound, count = socksFixture(t)
+			if e = p.Validate(); e != nil {
+				t.Fatal(e)
+			}
+			if !p.snellOnSingBox() || a.engineName(p) != "sing-box" {
+				t.Fatal("a Snell node with an exit is not run by sing-box")
+			}
+			if e = a.writeProfile(p); e != nil {
+				t.Fatal(e)
+			}
+			conf, e := serverConfig(p, a.profileDir(p.ID))
+			if e != nil {
+				t.Fatal(e)
+			}
+			path := configFile(t, conf)
+			if e = a.checkConfig(path); e != nil {
+				out, _ := runOutput(time.Second, a.enginePath("sing-box"), "check", "-c", path)
+				t.Fatalf("%v: %s", e, redactPSK(string(out)))
+			}
+			startEngine(t, profileSockets(p), a.enginePath("sing-box"), "run", "-c", path)
+
+			version := 4
+			if p.snellSurgeVersion() == snellV6 {
+				version = 6
+			}
+			if line, _ := p.SnellSurgeLine(p.PublicHost, p.PublicPort); !strings.HasSuffix(line, "version="+itoa(version)) {
+				t.Fatalf("the Surge line does not match the version the engine speaks: %s", line)
+			}
+			local, _ := freePort()
+			client := M{
+				"log":       M{"level": "warn"},
+				"inbounds":  []any{M{"type": "mixed", "listen": "127.0.0.1", "listen_port": local}},
+				"outbounds": []any{M{"type": "snell", "tag": "node", "server": "127.0.0.1", "server_port": p.Port, "version": version, "psk": p.Password}},
+				"route":     M{"final": "node"},
+			}
+			e = a.withClient(client, local, func(proxy string) error {
+				ip, e := fetchIP(proxy, "http://origin.rout.invalid:"+itoa(originPort))
+				if e != nil {
+					return e
+				}
+				if ip != "198.51.100.23" {
+					return fmt.Errorf("unexpected response")
+				}
+				return nil
+			})
+			if e != nil {
+				t.Fatal(e)
+			}
+			if count.Load() == 0 {
+				t.Fatal("the request did not leave by the exit")
+			}
+		})
+	}
 }

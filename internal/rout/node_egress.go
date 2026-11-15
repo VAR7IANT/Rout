@@ -267,7 +267,7 @@ func (p Profile) egressInfo() EgressInfo {
 	pol := p.outboundPolicy()
 	// Snell's engine resolves names with the preference Rout writes; nothing is known to
 	// refuse a destination that is an IP literal, so nothing is claimed as enforced.
-	return EgressInfo{Policy: pol, Scope: p.egressScope(), Enforced: !p.snellNode() && p.egressScope() == egressScopeDirect && isOnlyPolicy(pol)}
+	return EgressInfo{Policy: pol, Scope: p.egressScope(), Enforced: !p.snellOfficial() && p.egressScope() == egressScopeDirect && isOnlyPolicy(pol)}
 }
 
 // egressScopeNote explains, in the catalog's source language, what the policy covers for this
@@ -277,7 +277,7 @@ func (p Profile) egressScopeNote() string {
 	if pol == outAuto {
 		return ""
 	}
-	if p.snellNode() {
+	if p.snellOfficial() {
 		return "Snell：此策略只决定引擎解析域名后优先使用的 IP 类型；目标本身是 IP 地址时 Rout 无法强制，也不会声称已强制"
 	}
 	if p.Outbound != nil {

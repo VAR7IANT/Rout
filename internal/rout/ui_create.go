@@ -203,12 +203,12 @@ func (u *UI) create() error {
 			return fmt.Errorf("%s: %w", p.Name, e)
 		}
 		next = replace(next, p)
-		if exitID != "" && p.snellNode() {
-			// snell-server has no upstream proxy: the node connects directly.
-			u.warnf("%s 使用直连：Snell 引擎不支持出站代理", p.Name)
-		} else if exitID != "" {
+		if exitID != "" {
 			if next, e = BindExit(next, p.ID, exitID); e != nil {
 				return e
+			}
+			if q, e := Find(next, p.ID); e == nil && q.snellNode() {
+				u.warnf(snellEngineNote(q), q.Name)
 			}
 		}
 		created = append(created, p.ID)

@@ -163,6 +163,10 @@ type NodeView struct {
 	Warnings      []string     `json:"warnings"`
 	HasLink       bool         `json:"has_link"`
 	HasSurge      bool         `json:"has_surge"`
+	// SnellEngine names what runs a Snell node: "snell-server" (official) or "sing-box" (while an
+	// exit or AI routing is bound). Empty for every other protocol.
+	SnellEngine  string `json:"snell_engine,omitempty"`
+	SnellVersion string `json:"snell_version,omitempty"`
 	// OutboundPolicy is the effective outbound IP family (auto, ipv4_first, ipv6_first,
 	// ipv4_only, ipv6_only). Scope says what it governs: "direct" (the node's own connections to
 	// the destination) or "proxy" (only the connection to its outbound proxy server).
@@ -207,6 +211,12 @@ func (a *App) nodeView(s State, p Profile, now time.Time, tv *TrafficView) NodeV
 	}
 	if _, e := p.SurgeLine(p.PublicHost, p.PublicPort); e == nil {
 		v.HasSurge = true
+	}
+	if p.snellNode() {
+		v.SnellEngine, v.SnellVersion = "snell-server", p.snellVersion()
+		if p.snellOnSingBox() {
+			v.SnellEngine = "sing-box"
+		}
 	}
 	for _, sub := range s.Subscriptions {
 		for _, id := range sub.localIDs() {

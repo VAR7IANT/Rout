@@ -72,7 +72,7 @@ func (a *App) relayHelper() string { return filepath.Join(a.BinDir, "rout-relay-
 func (a *App) serviceCommand(p Profile) (string, []string) {
 	conf := filepath.Join(a.profileDir(p.ID), "config.json")
 	switch {
-	case p.snellNode():
+	case p.snellOfficial():
 		return a.enginePath(a.engineName(p)), []string{"-c", filepath.Join(a.profileDir(p.ID), snellConf)}
 	case p.nativeRelay():
 		return a.relayHelper(), []string{"relay-serve", conf}

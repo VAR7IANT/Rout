@@ -47,7 +47,7 @@ func (a *App) engineName(p Profile) string {
 	if p.Kind == "relay" {
 		return "gost"
 	}
-	if p.snellNode() {
+	if p.snellOfficial() {
 		return snellEngine(p.snellVersion())
 	}
 	return "sing-box"
@@ -57,7 +57,7 @@ func (a *App) engineName(p Profile) string {
 // has no dry-run mode, so its file is checked by Rout itself; every other node is checked
 // by sing-box.
 func (a *App) checkProfileConfig(p Profile, dir string) error {
-	if p.snellNode() {
+	if p.snellOfficial() {
 		return checkSnellConf(filepath.Join(dir, snellConf), p)
 	}
 	return a.checkConfig(filepath.Join(dir, "config.json"))
@@ -287,12 +287,21 @@ func writeProfileIn(p Profile, dir string) error {
 			return e
 		}
 	}
-	if p.snellNode() {
+	if p.snellOfficial() {
 		conf, e := snellServerConf(p)
 		if e != nil {
 			return e
 		}
+		// A node that was on sing-box leaves no stale engine file behind.
+		if e := os.Remove(filepath.Join(dir, "config.json")); e != nil && !os.IsNotExist(e) {
+			return e
+		}
 		return AtomicWrite(filepath.Join(dir, snellConf), []byte(conf), 0600)
+	}
+	if p.snellNode() {
+		if e := os.Remove(filepath.Join(dir, snellConf)); e != nil && !os.IsNotExist(e) {
+			return e
+		}
 	}
 	c, e := serverConfig(p, dir)
 	if e != nil {

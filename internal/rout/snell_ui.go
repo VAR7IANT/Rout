@@ -100,3 +100,50 @@ func (u *UI) snellNotes(p Profile, setup ServerSetup) {
 		u.warn("此 NAT 只映射 TCP：Snell v5 的 QUIC 代理模式需要 UDP。请在 Surge 中把该节点的 version 改为 4（v5 服务端兼容 v4 客户端）")
 	}
 }
+
+// snellEngineNote is the note for a Snell node whose engine follows its bindings: an exit or
+// AI routing moves it to sing-box's built-in Snell, and dropping both moves it back to the
+// official snell-server. Only v5 changes what Surge needs (version=4 against sing-box), so
+// only v5 asks for the line to be copied again. The result is a catalog template with one %s
+// for the node's name.
+func snellEngineNote(p Profile) string {
+	switch {
+	case p.snellOnSingBox() && p.snellVersion() == snellV5:
+		return "%s 使用出站代理或 AI 分流后由 sing-box 内置 Snell 运行：Surge 中改用 version=4，请重新复制该节点的 Surge 配置"
+	case p.snellOnSingBox():
+		return "%s 使用出站代理或 AI 分流后由 sing-box 内置 Snell 运行，Surge 配置不变"
+	case p.snellVersion() == snellV5:
+		return "%s 不再使用出站代理或 AI 分流，改回官方 snell-server 运行：Surge 中改回 version=5，请重新复制该节点的 Surge 配置"
+	}
+	return "%s 不再使用出站代理或 AI 分流，改回官方 snell-server 运行，Surge 配置不变"
+}
+
+// snellEngineNotes prints a note for every Snell node whose engine differs between old and
+// next. A node that is new in next counts as having been on the official engine.
+func (u *UI) snellEngineNotes(old, next State) {
+	for _, p := range next.Profiles {
+		if !p.snellNode() {
+			continue
+		}
+		was := false
+		if q, e := Find(old, p.ID); e == nil {
+			was = q.snellOnSingBox()
+		}
+		if was != p.snellOnSingBox() {
+			u.warnf(snellEngineNote(p), p.Name)
+		}
+	}
+}
+
+// withSnellNotes runs change, which commits a new state, and then notes every Snell node
+// whose engine it switched. The notes are best effort: an unreadable state prints none.
+func (u *UI) withSnellNotes(change func() error) error {
+	old, oe := u.a.Load()
+	if e := change(); e != nil {
+		return e
+	}
+	if next, ne := u.a.Load(); oe == nil && ne == nil {
+		u.snellEngineNotes(old, next)
+	}
+	return nil
+}

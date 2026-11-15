@@ -55,6 +55,9 @@ export interface NodeView {
   has_link: boolean
   /** True when the node or relay has a Surge [Proxy] line (Snell's share link already is one). */
   has_surge?: boolean
+  /** What runs a Snell node: the official snell-server, or sing-box while an exit or AI routing is bound. */
+  snell_engine?: 'snell-server' | 'sing-box'
+  snell_version?: '5' | '6'
   /** Effective outbound IP family of a node: auto, ipv4_first, ipv6_first, ipv4_only or ipv6_only. */
   outbound_policy?: string
   /** What the policy governs: the node's own connections ("direct") or only its connection to an outbound proxy server ("proxy"). */
