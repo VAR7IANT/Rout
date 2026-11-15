@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias}
-var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)"}
+var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias, protoAnyTLSTLS}
+var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)", "AnyTLS TLS (Surge)"}
 
 func (u *UI) selectProtocols() []string {
 	u.say("可创建的协议：")
@@ -157,12 +157,12 @@ func (u *UI) create() error {
 		}
 	}
 	cert, key, tlsSNI := "", "", setup.PublicHost
-	if contains(selected, "hy2") || contains(selected, "tuic") {
+	if contains(selected, "hy2") || contains(selected, "tuic") || contains(selected, protoAnyTLSTLS) {
 		// Self-signed by default: no domain needed. Advanced options switch to a PEM pair.
 		if cert, key, e = GenerateCertificate(tlsSNI); e != nil {
 			return e
 		}
-		u.say("HY2/TUIC 使用自动生成的自签证书（高级选项中可改用现有 PEM 证书）")
+		u.say("HY2/TUIC/AnyTLS-TLS 使用自动生成的自签证书（高级选项中可改用现有 PEM 证书）")
 	}
 	exitID := ""
 	if len(old.Exits) > 0 {
@@ -193,7 +193,7 @@ func (u *UI) create() error {
 		if p.snellNode() {
 			p.SNI = ""
 		}
-		if protocol == "hy2" || protocol == "tuic" {
+		if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
 			p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = tlsSNI, cert, key, true
 		}
 		if p, e = PlanPort(p, setup, next); e != nil {
@@ -281,8 +281,8 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 	if has("vless", "anytls") {
 		items = append(items, item("reality", "Reality SNI"))
 	}
-	if has("hy2", "tuic") {
-		items = append(items, item("tls", "HY2/TUIC 证书"))
+	if has("hy2", "tuic", protoAnyTLSTLS) {
+		items = append(items, item("tls", "HY2/TUIC/AnyTLS-TLS 证书"))
 	}
 	items = append(items, item("credentials", "自定义认证凭据"), item("egress", "出站网络策略"))
 	v := u.menu("高级选项", items, "返回")
@@ -309,8 +309,8 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 		each([]string{"vless", "anytls"}, func(p *Profile) { p.SNI = sni })
 	case "tls":
 		var cur string
-		each([]string{"hy2", "tuic"}, func(p *Profile) { cur = p.SNI })
-		choice := u.option("HY2/TUIC 证书", []menuItem{item("self", "自动生成自签证书（推荐，无需域名）"), item("pem", "使用现有 PEM 证书文件")}, "self")
+		each([]string{"hy2", "tuic", protoAnyTLSTLS}, func(p *Profile) { cur = p.SNI })
+		choice := u.option("HY2/TUIC/AnyTLS-TLS 证书", []menuItem{item("self", "自动生成自签证书（推荐，无需域名）"), item("pem", "使用现有 PEM 证书文件")}, "self")
 		sni := u.ask("TLS 证书域名或 IP", cur)
 		if u.err != nil {
 			return next, u.err
@@ -327,7 +327,7 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 		if e != nil {
 			return next, e
 		}
-		each([]string{"hy2", "tuic"}, func(p *Profile) {
+		each([]string{"hy2", "tuic", protoAnyTLSTLS}, func(p *Profile) {
 			p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = sni, cert, key, choice == "self"
 		})
 	case "egress":

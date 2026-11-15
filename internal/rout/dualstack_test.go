@@ -383,7 +383,7 @@ func linkFixture(t *testing.T, protocol, host string) Profile {
 	p := fixture(t, protocol)
 	p.PublicHost = host
 	p.Listen = "::"
-	if protocol == "hy2" || protocol == "tuic" {
+	if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
 		cert, key, e := GenerateCertificate(host)
 		if e != nil {
 			t.Fatal(e)
@@ -398,7 +398,7 @@ func linkFixture(t *testing.T, protocol, host string) Profile {
 
 func TestLinksForEveryProtocolAndFamily(t *testing.T) {
 	for _, host := range []string{v4Addr, v6Addr, "vpn.example.com"} {
-		for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
+		for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic", protoAnyTLSTLS} {
 			t.Run(protocol+"@"+host, func(t *testing.T) {
 				p := linkFixture(t, protocol, host)
 				uri, e := p.URI()
@@ -418,7 +418,7 @@ func TestLinksForEveryProtocolAndFamily(t *testing.T) {
 				if e != nil || target != wantHost {
 					t.Fatalf("ParseTarget(%s) = %q %v", uri, target, e)
 				}
-				if _, e = URIOutbound(uri); e != nil && protocol != "hy2" {
+				if _, e = URIOutbound(uri); e != nil && protocol != "hy2" && protocol != protoAnyTLSTLS {
 					t.Fatal(e)
 				}
 				c, e := ClientConfig(p, host, p.PublicPort, 2080)

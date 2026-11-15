@@ -34,6 +34,9 @@ const (
 	// snell6Alias is the create-menu / panel id of a Snell v6 node. It exists only as input
 	// of NewProfile: a stored profile is always Protocol "snell" with SnellVersion "6".
 	snell6Alias = "snell6"
+	// protoAnyTLSTLS is AnyTLS with a standard TLS certificate instead of Reality: the
+	// variant Surge (and Mihomo) can use. Links, client files and engines call it "anytls".
+	protoAnyTLSTLS = "anytls-tls"
 
 	snellV5 = "5"
 	snellV6 = "6"

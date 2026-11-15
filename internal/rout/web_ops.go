@@ -251,7 +251,7 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 	}
 	cert, key := "", ""
 	for _, p := range spec.Protocols {
-		if p == "hy2" || p == "tuic" {
+		if p == "hy2" || p == "tuic" || p == protoAnyTLSTLS {
 			if cert, key, e = GenerateCertificate(setup.PublicHost); e != nil {
 				return nil, e
 			}
@@ -278,7 +278,7 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 			if p.snellNode() {
 				p.SNI = ""
 			}
-			if protocol == "hy2" || protocol == "tuic" {
+			if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
 				p.SNI, p.CertPEM, p.KeyPEM, p.TLSGenerated = setup.PublicHost, cert, key, true
 			}
 			if p, e = PlanPort(p, setup, next); e != nil {

@@ -166,7 +166,7 @@ func (u *UI) initLanguage(force bool) error {
 }
 
 func ProtocolLabel(p string) string {
-	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", protoSnell: "Snell", snell6Alias: "Snell6", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
+	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", protoAnyTLSTLS: "AnyTLS-TLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", protoSnell: "Snell", snell6Alias: "Snell6", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
 }
 
 // outboundLabel names the outbound proxy a node uses ("Direct connection" if none).

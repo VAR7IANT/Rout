@@ -210,7 +210,7 @@ func TestNodeCreationPreservesExistingNodesAndServerDefaults(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	u, out := testUI(a, "New\n1 2 3 4 5 6 7\n\n\n")
+	u, out := testUI(a, "New\n1 2 3 4 5 6 7 8\n\n\n")
 	u.caps = func() listenCaps { return listenCaps{V4: true, V6: true, DualStack: true} }
 	if e := u.create(); e != nil {
 		t.Fatal(e, out.String())

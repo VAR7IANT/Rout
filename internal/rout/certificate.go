@@ -66,7 +66,7 @@ func CertificatePin(cert string) (string, error) {
 
 // CertificateExpiry reports when a node's TLS certificate stops being valid.
 func (p Profile) CertificateExpiry() (time.Time, bool) {
-	if p.Kind != "node" || (p.Protocol != "hy2" && p.Protocol != "tuic") {
+	if !p.certNode() {
 		return time.Time{}, false
 	}
 	b, _ := pem.Decode([]byte(p.CertPEM))
@@ -92,7 +92,7 @@ func (p Profile) CertificateDays(now time.Time) (int, bool) {
 // RegenerateCertificate issues a new self-signed certificate for the node's SNI. The
 // pin changes, so every client must re-import the link or exported configuration.
 func RegenerateCertificate(p Profile) (Profile, error) {
-	if p.Kind != "node" || (p.Protocol != "hy2" && p.Protocol != "tuic") {
+	if !p.certNode() {
 		return p, errors.New("该节点未使用文件证书")
 	}
 	cert, key, e := GenerateCertificate(p.SNI)

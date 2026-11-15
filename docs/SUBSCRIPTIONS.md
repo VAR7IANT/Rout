@@ -284,7 +284,8 @@ What is included:
 | VLESS Reality / Vision | `vless` | **Only with `&vless=1`.** Surge added VLESS in iOS 6.0 / Mac 6.12; older Surge versions reject the whole list when they meet an unknown type, so VLESS lines are left out unless you ask for them: `?format=surge&vless=1`. |
 | Relays | the target's type | The relay's public address and port with the target's credentials (VLESS, Trojan with WS, SS, Hysteria2, TUIC). |
 | Third-party nodes (aggregate subscriptions) | per protocol | Shadowsocks, Trojan, Hysteria2, TUIC and VLESS (same `&vless=1` rule). |
-| AnyTLS Reality | — | Surge's AnyTLS has no Reality mode; these nodes are skipped with a diagnostic. |
+| AnyTLS TLS | `anytls` | Pinned with `server-cert-fingerprint-sha256` (Surge iOS 5.17 / Mac 6.4.3+). |
+| AnyTLS Reality | — | Surge's AnyTLS has no Reality mode; these nodes are skipped with a diagnostic. Create an AnyTLS TLS node for Surge. |
 
 The conversion goes through the same strict converter as the Mihomo output: every parameter is mapped to its documented Surge key or the node is skipped with a reason, never silently changed. Skipped nodes are counted in `X-Rout-Skipped-Nodes` and described in the sanitized service log; a subscription with nothing Surge can run returns `503` like any other format with nothing to serve. Names are made unique (Surge requires it) and kept away from built-in policy names such as `DIRECT`. The same token, limits, uniform `404` and `HEAD`/`GET` rules apply. Snell nodes are still skipped (with a diagnostic) by the Base64 and Mihomo/Clash outputs; Rout never turns one into another protocol.
 
