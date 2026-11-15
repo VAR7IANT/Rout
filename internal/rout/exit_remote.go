@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -28,11 +29,15 @@ import (
 // (UDP is rejected on nodes that use an outbound, unchanged from SOCKS5/HTTP exits).
 var remoteNodeSchemes = map[string]bool{"vless": true, "anytls": true, "trojan": true, "ss": true, "hy2": true, "hysteria2": true, "tuic": true}
 
+var shareLinkStart = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
 // ParseRemoteNode turns a remote node's share link into an outbound endpoint. A Snell node,
 // which has no share link, is given by its Surge line (see snell_remote.go).
 func ParseRemoteNode(link string) (*Proxy, error) {
 	link = strings.TrimSpace(link)
-	if !strings.Contains(link, "://") && strings.Contains(link, "=") && !strings.ContainsAny(link, "\r\n\x00") {
+	// A share link starts with its scheme; anything else with "Name = …" is a Surge line, even
+	// when one of its values (test-url, say) is itself a URL.
+	if !shareLinkStart.MatchString(link) && strings.Contains(link, "=") && !strings.ContainsAny(link, "\r\n\x00") {
 		converted, e := snellLinkFromSurge(link)
 		if e != nil {
 			return nil, e

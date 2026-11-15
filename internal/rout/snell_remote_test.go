@@ -26,7 +26,7 @@ func TestSnellRemoteExitFromSurgeLine(t *testing.T) {
 	}
 
 	// v6, IPv6, and obfs for v4.
-	p6, e := ParseRemoteNode("JP = snell, 2001:db8::7, 30002, psk=Q0123456789abcdefghijklmnopqrstu, version=6, reuse=true")
+	p6, e := ParseRemoteNode("JP = snell, 2001:db8::7, 30002, psk=Q0123456789abcdefghijklmnopqrstu, version=6, reuse=true, test-url=http://www.gstatic.com/generate_204")
 	if e != nil {
 		t.Fatal(e)
 	}
