@@ -228,8 +228,8 @@ func TestSnellSurgeLine(t *testing.T) {
 	if _, e := p.SurgeLine("203.0.113.10", 0); e == nil {
 		t.Error("port 0 accepted")
 	}
-	if _, e := fixture(t, "ss").SurgeLine("203.0.113.10", 8000); e == nil {
-		t.Error("a Shadowsocks node produced a Surge Snell line")
+	if line, e := fixture(t, "ss").SurgeLine("203.0.113.10", 8000); e != nil || strings.Contains(line, "= snell,") || !strings.Contains(line, "= ss, 203.0.113.10, 8000, encrypt-method=") {
+		t.Errorf("a Shadowsocks node must get its own ss line, never a Snell line: %q %v", line, e)
 	}
 	// Snell has no share link, and no sing-box client either; nothing is faked.
 	if _, e := p.URI(); e == nil {

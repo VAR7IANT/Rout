@@ -162,6 +162,7 @@ type NodeView struct {
 	Subscriptions []string     `json:"subscriptions"`
 	Warnings      []string     `json:"warnings"`
 	HasLink       bool         `json:"has_link"`
+	HasSurge      bool         `json:"has_surge"`
 	// OutboundPolicy is the effective outbound IP family (auto, ipv4_first, ipv6_first,
 	// ipv4_only, ipv6_only). Scope says what it governs: "direct" (the node's own connections to
 	// the destination) or "proxy" (only the connection to its outbound proxy server).
@@ -203,6 +204,9 @@ func (a *App) nodeView(s State, p Profile, now time.Time, tv *TrafficView) NodeV
 	}
 	if _, e := p.Share(); e == nil {
 		v.HasLink = true
+	}
+	if _, e := p.SurgeLine(p.PublicHost, p.PublicPort); e == nil {
+		v.HasSurge = true
 	}
 	for _, sub := range s.Subscriptions {
 		for _, id := range sub.localIDs() {
@@ -442,7 +446,7 @@ func (a *App) subscriptionView(s State, sub Subscription, now time.Time, tokens 
 				if _, e := p.SurgeLine(p.PublicHost, p.PublicPort); e == nil {
 					iv.SurgeOK = true
 				} else {
-					iv.SurgeWhy = a.T("Surge 格式目前只包含 Snell 节点")
+					iv.SurgeWhy = a.Error(e)
 				}
 			}
 			v.Local++

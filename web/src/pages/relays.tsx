@@ -312,6 +312,9 @@ function RelayDetail({ relay, onEdit, onDelete, onToggle, onRestart }: { relay: 
         ) : (
           <p className="dim">{t('relays.detail.noLink')}</p>
         )}
+        {relay.has_surge ? (
+          <SecretBox label={t('relays.detail.surgeHidden')} qr={false} load={async () => (await api.get<{ line: string }>(`/api/relays/${relay.id}/surge`)).line} />
+        ) : null}
       </Section>
 
       <Section title={t('relays.detail.test')}>

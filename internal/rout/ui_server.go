@@ -225,6 +225,11 @@ func (u *UI) printLinks(p Profile, setup *ServerSetup) error {
 		fmt.Fprintln(u.writer(), u.a.T("Surge 配置（粘贴到 [Proxy] 段；Surge 无 Snell 分享链接）："))
 	}
 	fmt.Fprintln(u.writer(), uri)
+	if !p.snellNode() {
+		if line, er := p.SurgeLine(p.PublicHost, p.PublicPort); er == nil {
+			fmt.Fprintf(u.writer(), "%s\n%s\n", u.a.T("Surge 配置（粘贴到 [Proxy] 段）："), line)
+		}
+	}
 	if setup == nil {
 		if st, er := u.a.LoadSettings(); er == nil {
 			setup = st.Server

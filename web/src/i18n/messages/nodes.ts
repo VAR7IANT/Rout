@@ -62,6 +62,7 @@ export const nodes = {
   'nodes.detail.share': ['分享链接', '分享連結', 'Share link'],
   'nodes.detail.shareHidden': ['分享链接包含凭据，默认隐藏', '分享連結包含憑證，預設隱藏', 'The share link holds credentials and stays hidden'],
   'nodes.detail.noLink': ['此节点暂时无法生成链接。', '此節點暫時無法產生連結。', 'A link cannot be generated for this node right now.'],
+  'nodes.detail.surgeHidden': ['Surge 配置行（粘贴到 [Proxy] 段）包含凭据，默认隐藏', 'Surge 設定行（貼上到 [Proxy] 段）包含憑證，預設隱藏', 'The Surge line (paste into [Proxy]) holds credentials and stays hidden'],
   'nodes.detail.sub': ['所在订阅', '所在訂閱', 'In subscriptions'],
   'nodes.detail.listen': ['监听', '監聽', 'Listens on'],
   'nodes.detail.public': ['对外地址', '對外位址', 'Public address'],
