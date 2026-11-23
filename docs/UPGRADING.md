@@ -1,6 +1,12 @@
 # Upgrading and rollback safety
 
-## Next release: native Snell (Surge)
+## To v0.8.0: Telegram MTProto Proxy
+
+Existing profiles require no migration. Creating an MTP node adds a profile with `"protocol": "mtp"` and stores its FakeTLS secret in the private state and generated configuration. Rout installs the pinned mtg engine on first use and manages the node with the regular service controls.
+
+Before rolling back to v0.7.0, delete MTP nodes with v0.8.0 to stop their services and remove the generated files. If you need their configuration later, save a private backup first. An older manager requires a state file compatible with its version.
+
+## Native Snell (Surge)
 
 Back up first: `sudo rout backup --full`. Nothing restarts and nothing is migrated: existing nodes keep their configuration byte for byte, no key is added to them, and the web panel, subscriptions, tokens, traffic data and AI routing are untouched. Snell is opt-in: a Snell node is created from the menu (or the panel) like any other.
 

@@ -108,8 +108,8 @@ func (u *UI) doctor(fix bool) error {
 		needed[a.engineName(p)] = true
 	}
 	names := []string{"sing-box", "gost"}
-	for _, name := range []string{"snell-v5", "snell-v6"} {
-		// Snell engines are listed only where they are in use or installed.
+	for _, name := range []string{"snell-v5", "snell-v6", mtpEngine} {
+		// Optional engines are listed only where they are in use or installed.
 		if _, e := os.Stat(a.enginePath(name)); needed[name] || e == nil {
 			names = append(names, name)
 		}
@@ -118,7 +118,9 @@ func (u *UI) doctor(fix bool) error {
 		path := a.enginePath(name)
 		st, e := os.Stat(path)
 		if e != nil || st.Mode()&0111 == 0 {
-			if needed[name] {
+			if needed[name] && name == mtpEngine {
+				d.bad("%s 未安装（运行 rout apply）", name)
+			} else if needed[name] {
 				d.bad("%s 未安装（运行 rout engines）", name)
 			} else {
 				d.ok("%s 未安装（当前不需要）", name)
@@ -129,7 +131,7 @@ func (u *UI) doctor(fix bool) error {
 		switch {
 		case name == "gost":
 			flag = "-V"
-		case isSnellEngine(name):
+		case isSnellEngine(name), name == mtpEngine:
 			flag = "--version"
 		}
 		out, e := runOutput(10*time.Second, path, flag)
@@ -195,7 +197,11 @@ func (d *doctorRun) profile(s State, p Profile, manager string, now time.Time) {
 	if e := p.CheckCompatibility(); e != nil {
 		d.bad("%s：%s", label, a.Error(e))
 	}
-	if p.snellOfficial() {
+	if p.mtpNode() {
+		if a.checkProfileConfig(p, a.profileDir(p.ID)) != nil {
+			d.warn("%s：运行配置与状态不一致，运行 rout apply 修复", label)
+		}
+	} else if p.snellOfficial() {
 		expected, e := snellServerConf(p)
 		actual, er := os.ReadFile(filepath.Join(a.profileDir(p.ID), snellConf))
 		if e == nil && (er != nil || string(actual) != expected) {

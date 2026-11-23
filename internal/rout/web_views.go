@@ -185,7 +185,7 @@ func (a *App) nodeView(s State, p Profile, now time.Time, tv *TrafficView) NodeV
 	v := NodeView{ID: p.ID, Name: p.Name, Kind: p.Kind, Protocol: p.Protocol, Label: nodeLabel(p), Enabled: p.Enabled,
 		State: a.serviceStateOf(p), Listen: p.Listen, Port: p.Port, PublicHost: p.PublicHost, PublicPort: p.PublicPort,
 		Networks: p.Networks(), Inbound: p.inboundMode(), SNI: p.SNI, ExitID: p.ExitID, Created: p.CreatedAt, Subscriptions: []string{}, Warnings: []string{}}
-	if p.Kind == "node" {
+	if p.Kind == "node" && !p.mtpNode() {
 		info := p.egressInfo()
 		enforced := info.Enforced
 		v.OutboundPolicy, v.OutboundScope, v.OutboundEnforced, v.OutboundNote = info.Policy, info.Scope, &enforced, a.T(p.egressScopeNote())

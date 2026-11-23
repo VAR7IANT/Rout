@@ -42,8 +42,13 @@ func (u *UI) nodeListeningSetup(setup ServerSetup, protocols ...string) (ServerS
 	if len(items) == 0 {
 		return setup, errors.New("本机没有可用的监听地址")
 	}
-	selected := items[0].key
-	items[0].label += " [推荐]"
+	selected := preferredNodeListen(items, setup, protocols)
+	for i := range items {
+		if items[i].key == selected {
+			items[i].label += " [推荐]"
+			break
+		}
+	}
 	if len(items) > 1 {
 		selected = u.option("选择监听地址", items, selected)
 		if u.err != nil {
@@ -65,6 +70,17 @@ func (u *UI) nodeListeningSetup(setup ServerSetup, protocols ...string) (ServerS
 		setup.ipv4Mapped = &mapped
 	}
 	return u.alignPublicHost(setup, selected)
+}
+
+func preferredNodeListen(items []menuItem, setup ServerSetup, protocols []string) string {
+	if len(protocols) == 1 && protocols[0] == protoMTP && familyOf(setup.PublicHost) == inIPv6 {
+		for _, item := range items {
+			if item.key == inIPv6 {
+				return inIPv6
+			}
+		}
+	}
+	return items[0].key
 }
 
 // alignPublicHost keeps the address clients are told to use consistent with the inbound

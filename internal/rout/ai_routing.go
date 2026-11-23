@@ -59,6 +59,9 @@ func (r AIRouting) aiBound() map[string]bool {
 
 // aiEligible says whether a profile can be an AI-routed inbound at all.
 func aiEligible(p Profile) error {
+	if p.mtpNode() {
+		return errMTPOutbound
+	}
 	if p.Kind != "node" {
 		return errors.New("端口转发（中转）没有路由规则，不能绑定 AI 智能分流")
 	}

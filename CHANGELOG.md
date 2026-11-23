@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0
+
+- **Telegram MTProto Proxy (MTP).** Quick Create option 9 and the web panel create Telegram proxies using the SHA256-pinned mtg v2.3.0 engine. Rout generates a 128-bit FakeTLS secret and prints both Telegram import links after startup.
+- **Node management.** MTP uses Rout's node list, service controls, port checks, log redaction and nftables traffic accounting. Set the provider's external TCP port for NAT. IPv4, IPv6 and dual-stack listeners are supported.
+- **Upgrade and rollback.** Existing profiles need no state migration. Remove MTP nodes with v0.8.0 before rolling back to v0.7.0, or restore a compatible pre-upgrade backup. See [Upgrading](https://github.com/VAR7IANT/Rout/blob/v0.8.0/docs/UPGRADING.md#to-v080-telegram-mtproto-proxy).
+- **Verification.** Automated tests validated real mtg FakeTLS handshakes, NAT port mapping, nftables accounting, systemd service recovery, link persistence after a Debian VM reboot and removal. Public VPS and provider NAT deployment, Telegram client import and message send/receive remain unverified.
+
 ## v0.7.0
 
 Surge and Snell: every node Surge can run now has a Surge line, AnyTLS gets a standard-TLS variant Surge and Mihomo can use, Snell nodes can use exits and AI routing, and Surge lists and Snell nodes can be imported. This release also carries everything prepared for v0.6.2, which was never tagged: the rewritten web panel and three reliability fixes. Configuration files, existing nodes and the API are unchanged; no migration is needed.

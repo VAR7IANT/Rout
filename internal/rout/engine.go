@@ -261,7 +261,7 @@ func engineRuns(name, path string) bool {
 	switch {
 	case name == "gost":
 		flag = "-V"
-	case isSnellEngine(name):
+	case isSnellEngine(name), name == mtpEngine:
 		flag = "--version"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

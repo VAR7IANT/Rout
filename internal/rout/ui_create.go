@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias, protoAnyTLSTLS}
-var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)", "AnyTLS TLS (Surge)"}
+var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias, protoAnyTLSTLS, protoMTP}
+var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)", "AnyTLS TLS (Surge)", "MTProto (MTP)"}
 
 func (u *UI) selectProtocols() []string {
 	u.say("可创建的协议：")
@@ -86,6 +86,7 @@ func portConflict(s State, p Profile) error {
 // askListenPort reads a listening port for p and keeps asking until it is free on every
 // network p uses. On a legacy NAT host the mapped public port is derived from the saved range.
 func (u *UI) askListenPort(s State, setup ServerSetup, p *Profile) {
+	local, public := p.Port, p.PublicPort
 	for u.err == nil {
 		p.Port = u.askPortValue(p.Name+" "+u.a.T("监听端口"), p.Port)
 		if u.err != nil {
@@ -102,6 +103,13 @@ func (u *UI) askListenPort(s State, setup ServerSetup, p *Profile) {
 		if e := portConflict(s, *p); e != nil {
 			u.fail(u.a.Error(e))
 			continue
+		}
+		if p.mtpNode() && p.NAT && !setup.NAT {
+			def := p.Port
+			if p.Port == local {
+				def = public
+			}
+			p.PublicPort = u.askPortValue("NAT 映射的公网 TCP 端口", def)
 		}
 		return
 	}
@@ -165,8 +173,11 @@ func (u *UI) create() error {
 		u.say("HY2/TUIC/AnyTLS-TLS 使用自动生成的自签证书（高级选项中可改用现有 PEM 证书）")
 	}
 	exitID := ""
-	if len(old.Exits) > 0 {
+	if len(old.Exits) > 0 && !(len(selected) == 1 && selected[0] == protoMTP) {
 		u.say("这批节点的出站（同一批节点使用相同出站）：")
+		if contains(selected, protoMTP) {
+			u.warn(errMTPOutbound.Error())
+		}
 		var ok bool
 		if old, exitID, ok = u.pickOutbound(old, ""); !ok {
 			return u.err
@@ -190,7 +201,7 @@ func (u *UI) create() error {
 		}
 		p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
 		p.SNI = realitySNI
-		if p.snellNode() {
+		if p.snellNode() || p.mtpNode() {
 			p.SNI = ""
 		}
 		if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
@@ -203,7 +214,7 @@ func (u *UI) create() error {
 			return fmt.Errorf("%s: %w", p.Name, e)
 		}
 		next = replace(next, p)
-		if exitID != "" {
+		if exitID != "" && !p.mtpNode() {
 			if next, e = BindExit(next, p.ID, exitID); e != nil {
 				return e
 			}
@@ -234,7 +245,7 @@ confirm:
 				next = replace(next, p)
 			}
 		case "advanced":
-			if next, e = u.createAdvanced(next, created); e != nil {
+			if next, e = u.createAdvanced(next, created, setup); e != nil {
 				return e
 			}
 		default:
@@ -254,20 +265,45 @@ confirm:
 	if e = u.a.Commit(old, next, false); e != nil {
 		return e
 	}
-	u.good("节点创建成功")
+	if len(selected) != 1 || selected[0] != protoMTP {
+		u.good("节点创建成功")
+	}
 	for _, id := range created {
 		p, _ := Find(next, id)
-		fmt.Fprintln(u.writer(), u.bold(p.Name))
+		if p.mtpNode() {
+			u.good("MTP 节点创建成功")
+			u.printf("名称：%s\n", p.Name)
+			u.say("协议：MTProto")
+			u.printf("地址：%s\n", p.PublicHost)
+			u.printf("端口：%d\n", p.PublicPort)
+		} else {
+			fmt.Fprintln(u.writer(), u.bold(p.Name))
+		}
 		if e = u.printLinks(p, &setup); e != nil {
 			return e
 		}
 		u.snellNotes(p, setup)
 	}
-	return u.saveServer(serverDefaults)
+	if e = u.saveServer(serverDefaults); e != nil {
+		return e
+	}
+	if u.interactive() && contains(selected, protoMTP) {
+		for _, id := range created {
+			p, _ := Find(next, id)
+			if p.mtpNode() && u.yes("复制 Telegram 导入链接", false) {
+				link, e := p.Share()
+				if e != nil {
+					return e
+				}
+				u.copyLink(link)
+			}
+		}
+	}
+	return u.err
 }
 
 // createAdvanced groups the rarely needed choices so the default path stays short.
-func (u *UI) createAdvanced(next State, ids []string) (State, error) {
+func (u *UI) createAdvanced(next State, ids []string, setup ServerSetup) (State, error) {
 	has := func(protocols ...string) bool {
 		for _, id := range ids {
 			p, _ := Find(next, id)
@@ -284,7 +320,15 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 	if has("hy2", "tuic", protoAnyTLSTLS) {
 		items = append(items, item("tls", "HY2/TUIC/AnyTLS-TLS 证书"))
 	}
-	items = append(items, item("credentials", "自定义认证凭据"), item("egress", "出站网络策略"))
+	if len(ids) > 1 || !has(protoMTP) {
+		items = append(items, item("credentials", "自定义认证凭据"), item("egress", "出站网络策略"))
+	}
+	if has(protoMTP) {
+		items = append(items, item("mtp-name", "修改 MTP 节点名称"))
+		if !setup.NAT {
+			items = append(items, itemNote("mtp-public", "设置 MTP 的 NAT 公网端口", "使用商家映射到当前监听端口的公网 TCP 端口"))
+		}
+	}
 	v := u.menu("高级选项", items, "返回")
 	if u.err != nil || v == "" {
 		return next, u.err
@@ -292,13 +336,20 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 	each := func(protocols []string, fn func(*Profile)) {
 		for _, id := range ids {
 			p, _ := Find(next, id)
-			if contains(protocols, p.Protocol) {
+			if contains(protocols, p.Protocol) || (protocols == nil && !p.mtpNode()) {
 				fn(&p)
 				next = replace(next, p)
 			}
 		}
 	}
 	switch v {
+	case "mtp-name":
+		each([]string{protoMTP}, func(p *Profile) { p.Name = u.ask("节点名称", p.Name) })
+	case "mtp-public":
+		each([]string{protoMTP}, func(p *Profile) {
+			p.PublicPort = u.askPortValue("NAT 映射的公网 TCP 端口", p.PublicPort)
+			p.NAT = true
+		})
 	case "reality":
 		var cur string
 		each([]string{"vless", "anytls"}, func(p *Profile) { cur = p.SNI })
@@ -334,7 +385,7 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 		// Per node, and independent of the listening mode: it only decides how the node reaches
 		// the Internet. Auto (the default) writes nothing.
 		var cur string
-		each(createProtocols, func(p *Profile) { cur = p.OutboundPolicy })
+		each(nil, func(p *Profile) { cur = p.OutboundPolicy })
 		policy, ok := u.chooseNodePolicy("出站网络策略（节点访问互联网时使用的 IP 类型）", cur)
 		if u.err != nil || !ok {
 			return next, u.err
@@ -343,9 +394,9 @@ func (u *UI) createAdvanced(next State, ids []string) (State, error) {
 		if e != nil {
 			return next, e
 		}
-		each(createProtocols, func(p *Profile) { p.OutboundPolicy = norm })
+		each(nil, func(p *Profile) { p.OutboundPolicy = norm })
 	case "credentials":
-		each(createProtocols, func(p *Profile) {
+		each(nil, func(p *Profile) {
 			u.printf("配置 %s 的认证凭据\n", nodeLabel(*p))
 			if p.Protocol == "vless" || p.Protocol == "tuic" {
 				p.UUID = u.ask("UUID", p.UUID)

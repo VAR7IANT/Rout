@@ -37,6 +37,7 @@ const nodeList = (nodes: NodeView[]): NodeList => ({
   protocols: [
     { id: 'vless', label: 'VLESS Reality', networks: ['tcp'] },
     { id: 'hy2', label: 'Hysteria2', networks: ['udp'] },
+    { id: 'mtp', label: 'MTP', networks: ['tcp'] },
   ],
   exits: [{ id: 'x1', name: 'US-SOCKS', kind: 'classic' }],
   host: { ipv4: true, ipv6: false },
@@ -113,6 +114,39 @@ describe('nodes', () => {
     expect(create).toBeDisabled()
     await userEvent.click(within(dialog).getByRole('checkbox', { name: /no IPv6 route/i }))
     expect(create).toBeEnabled()
+  })
+
+  it('opens the created MTP node and reveals its import link after reauthentication', async () => {
+    let created = false
+    let verified = false
+    const mtp = node({ id: 'mtp-id', name: 'US-MTP', protocol: 'mtp', label: 'MTP', subscriptions: [] })
+    const link = 'https://t.me/proxy?server=203.0.113.9&port=443&secret=test-secret'
+    const calls = serve({
+      'GET /api/nodes': () => ({ body: nodeList(created ? [mtp] : []) }),
+      'POST /api/nodes': () => {
+        created = true
+        return { body: { nodes: [mtp] } }
+      },
+      'GET /api/nodes/mtp-id/link': () => verified
+        ? { body: { link } }
+        : { status: 403, body: { error: { code: 'reauth_required', message: 'again' } } },
+      'POST /api/reauth': () => {
+        verified = true
+        return {}
+      },
+    })
+    mount(<NodesPage />)
+    await userEvent.click((await screen.findAllByRole('button', { name: /new nodes/i }))[0])
+    const dialog = within(screen.getByRole('dialog'))
+    await userEvent.click(dialog.getByRole('checkbox', { name: /vless/i }))
+    await userEvent.click(dialog.getByRole('checkbox', { name: /^mtp/i }))
+    expect(dialog.queryByLabelText(/^exit/i)).not.toBeInTheDocument()
+    await userEvent.click(dialog.getByRole('button', { name: 'Create' }))
+    await userEvent.click(await screen.findByRole('button', { name: /verify password and show/i }))
+    expect(screen.queryByRole('link', { name: 'Open in Telegram' })).not.toBeInTheDocument()
+    await userEvent.type(await screen.findByLabelText('Administrator password'), 'pw{Enter}')
+    expect(await screen.findByRole('link', { name: 'Open in Telegram' })).toHaveAttribute('href', link)
+    expect(sent(calls, 'POST', '/api/nodes')[0].body).toMatchObject({ protocols: ['mtp'], exit_id: '', outbound_policy: '' })
   })
 
   it('deletes after the consequences are shown, asking for the password when the server demands it', async () => {

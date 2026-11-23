@@ -181,6 +181,9 @@ func (s State) exportMihomo(sub Subscription) (proxies []M, warnings []string) {
 }
 
 func mihomoNode(p Profile) (M, error) {
+	if p.mtpNode() {
+		return nil, errMTPClient
+	}
 	if !utf8.ValidString(p.Name) {
 		return nil, errors.New("节点名称不是有效的 UTF-8，请修改节点名称")
 	}

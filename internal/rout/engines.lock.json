@@ -76,5 +76,20 @@
         "libc": "glibc"
       }
     ]
+  },
+  "mtg": {
+    "version": "v2.3.0",
+    "assets": [
+      {
+        "name": "mtg-2.3.0-linux-amd64.tar.gz",
+        "url": "https://github.com/9seconds/mtg/releases/download/v2.3.0/mtg-2.3.0-linux-amd64.tar.gz",
+        "sha256": "11c038ea5eeebd5d49148048975c24f7b0c4fa4c1cf4f15a2410203e2da01812"
+      },
+      {
+        "name": "mtg-2.3.0-linux-arm64.tar.gz",
+        "url": "https://github.com/9seconds/mtg/releases/download/v2.3.0/mtg-2.3.0-linux-arm64.tar.gz",
+        "sha256": "86e0fc6f50bfb453b7a6e8b91497c6661a7d64a3f607828e0e42f534d795ac5a"
+      }
+    ]
   }
 }

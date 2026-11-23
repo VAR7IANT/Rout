@@ -572,7 +572,7 @@ func (a *App) checkAggregate(s State, items []SubItem) ([]SubItem, error) {
 			if e != nil {
 				return nil, e
 			}
-			if _, e = p.Share(); e != nil {
+			if _, e = p.subscriptionShare(); e != nil {
 				return nil, fmt.Errorf("%s 不能加入订阅：%w", p.Name, e)
 			}
 			if locals++; locals > maxSubscriptionNodes {

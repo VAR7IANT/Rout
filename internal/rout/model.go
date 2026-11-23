@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.7.0"
+const Version = "0.8.0"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -144,6 +144,9 @@ func NewProfile(protocol string) (Profile, error) {
 	}
 	if protocol == "ss" {
 		p.Password = RandomPassword(16)
+	}
+	if protocol == protoMTP {
+		p.Password, p.Method, p.SNI, p.UUID = newMTPSecret(), "", "", ""
 	}
 	if protocol == protoSnell {
 		psk, e := NewSnellPSK()
@@ -425,6 +428,8 @@ func (p Profile) Validate() error {
 		if e != nil || len(b) != 16 {
 			return errors.New("SS2022 密钥应为 16 字节 Base64")
 		}
+	case protoMTP:
+		return p.checkMTP()
 	case protoSnell:
 		if e := p.checkSnell(); e != nil {
 			return e
@@ -528,6 +533,10 @@ func ParseTarget(input string) (string, string, error) {
 		return "", "", errors.New("节点链接解析失败")
 	}
 	scheme := strings.ToLower(u.Scheme)
+	if (scheme == "tg" && u.Hostname() == "proxy") ||
+		(scheme == "https" && strings.EqualFold(u.Hostname(), "t.me") && u.Path == "/proxy") {
+		return "", "", errMTPClient
+	}
 	if scheme == "ss" && u.Hostname() == "" {
 		return "", "", errors.New("请使用 SIP002 格式 SS 链接：ss://凭据@地址:端口")
 	}
@@ -679,6 +688,8 @@ func (p Profile) URIAt(host string, port int) (string, error) {
 		q.Set("sni", p.SNI)
 		q.Set("congestion_control", "bbr")
 		q.Set("alpn", "h3")
+	case protoMTP:
+		return "", errMTPClient
 	case protoSnell:
 		return "", errNoShareLink
 	default:

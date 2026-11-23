@@ -47,16 +47,20 @@ func (a *App) engineName(p Profile) string {
 	if p.Kind == "relay" {
 		return "gost"
 	}
+	if p.mtpNode() {
+		return mtpEngine
+	}
 	if p.snellOfficial() {
 		return snellEngine(p.snellVersion())
 	}
 	return "sing-box"
 }
 
-// checkProfileConfig validates the configuration a node's engine will read from dir. Snell
-// has no dry-run mode, so its file is checked by Rout itself; every other node is checked
-// by sing-box.
+// checkProfileConfig validates the file each node engine will read from dir.
 func (a *App) checkProfileConfig(p Profile, dir string) error {
+	if p.mtpNode() {
+		return checkMTPConf(p, dir)
+	}
 	if p.snellOfficial() {
 		return checkSnellConf(filepath.Join(dir, snellConf), p)
 	}
@@ -278,6 +282,26 @@ func (a *App) writeProfile(p Profile) error {
 func writeProfileIn(p Profile, dir string) error {
 	if e := os.MkdirAll(dir, 0700); e != nil {
 		return e
+	}
+	if p.mtpNode() {
+		conf, e := mtpServerConf(p, dir)
+		if e != nil {
+			return e
+		}
+		path := filepath.Join(dir, mtpAllowlist)
+		if cidr := p.mtpAllowedCIDR(); cidr != "" {
+			if e = AtomicWrite(path, []byte(cidr), 0600); e != nil {
+				return e
+			}
+		} else if e = os.Remove(path); e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		return AtomicWrite(filepath.Join(dir, mtpConf), []byte(conf), 0600)
+	}
+	for _, file := range []string{mtpConf, mtpAllowlist} {
+		if e := os.Remove(filepath.Join(dir, file)); e != nil && !os.IsNotExist(e) {
+			return e
+		}
 	}
 	if p.CertPEM != "" {
 		if e := AtomicWrite(filepath.Join(dir, "tls.crt"), []byte(p.CertPEM), 0600); e != nil {

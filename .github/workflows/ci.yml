@@ -104,7 +104,7 @@ jobs:
       - name: systemd lifecycle, sandboxed protocols, startup rollback and failed-exit isolation
         run: |
           go test -c -o "$RUNNER_TEMP/rout-integration.test" ./internal/rout
-          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^(TestIntegrationServiceLifecycle|TestIntegrationSystemdSandboxProtocols|TestIntegrationAIServiceIsolation)$' -test.v
+          sudo env ROUT_TEST_SYSTEMD=1 ROUT_TEST_ENGINES="$RUNNER_TEMP/rout-engines" "$RUNNER_TEMP/rout-integration.test" -test.run '^(TestIntegrationServiceLifecycle|TestIntegrationSystemdSandboxProtocols|TestIntegrationMTPSystemdLifecycle|TestIntegrationAIServiceIsolation)$' -test.v
       - name: Kernel accounting, quota recovery and hard quota tests in an isolated network namespace
         run: |
           sudo apt-get update

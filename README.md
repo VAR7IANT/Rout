@@ -2,7 +2,7 @@
 
 Create proxy nodes, relay traffic to this or another server and manage reusable outbound proxies on IPv4-only, IPv6-only and dual-stack VPS hosts — from one small, dependency-free binary with a bilingual terminal menu (**简体中文** / **English**).
 
-- Node protocols: **VLESS Reality, AnyTLS Reality, AnyTLS TLS, Shadowsocks 2022, Hysteria2, TUIC v5** and **Snell v5 / v6 (beta)** for Surge, run on the vendor's official `snell-server` (see [docs/SNELL.md](docs/SNELL.md))
+- Node protocols: **VLESS Reality, AnyTLS Reality, AnyTLS TLS, Shadowsocks 2022, Hysteria2, TUIC v5**, **Snell v5 / v6 (beta)** for Surge, and [**MTProto (MTP)** for Telegram](#telegram-mtproto-proxy-mtp). Snell uses the vendor's official `snell-server` (see [docs/SNELL.md](docs/SNELL.md)).
 - Guided TCP/UDP relays to a service on this server or to a remote server, with a full path preview, loop checks and the original node's credentials kept
 - Reusable **SOCKS5 / HTTP / certificate-verified HTTPS CONNECT outbound proxies** shared by many nodes, with no silent direct-IP fallback
 - Per-node **outbound IP family**: Auto, IPv4 first, IPv6 first, **IPv4 only**, **IPv6 only** — "only" really excludes the other family, for names and for bare addresses (see [Outbound IP family per node](#outbound-ip-family-per-node))
@@ -19,7 +19,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.7.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.8.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -31,7 +31,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.7.0
+Rout 0.8.0
   ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   ! Tokyo-HY2 certificate expires in 12 days
 
@@ -77,14 +77,33 @@ Creating `Tokyo` with VLESS, SS and HY2 produces `Tokyo-VLESS`, `Tokyo-SS` and `
 | Hysteria2 | UDP | Self-signed (pinned) or your PEM | Link carries `insecure=1` **and** `pinSHA256`; secure only with clients that enforce the pin — otherwise use the exported JSON |
 | TUIC v5 | UDP | Self-signed or your PEM | Self-signed links need the certificate trusted separately; use the exported JSON |
 | Snell v5 / v6 (beta) | TCP (v5 may also use UDP on the same port for QUIC Proxy Mode) | — (Snell's own encryption) | **Surge only.** Snell has no share link: Rout prints the Surge `[Proxy]` line (`Name = snell, host, port, psk=…, version=5`) and serves it as `?format=surge`. Official `snell-server`, one pinned engine per version; v6 is a vendor beta and glibc-only. See [docs/SNELL.md](docs/SNELL.md) |
+| MTProto (MTP) | TCP | FakeTLS (`ee` secret) | **Telegram only.** `https://t.me/proxy` and `tg://proxy` import links. |
 
 **Snell** (Surge's own protocol) is created like any other protocol (*Snell v5* or *Snell v6 (beta)* in the same menu, random 32-character PSK, free or chosen port, IPv4 or dual stack, NAT-aware) and then listed, edited (port, public address, listen address, PSK, outbound IP family), restarted, limited and deleted like every other node, with one service, one configuration file and one traffic table per node so several Snell nodes can coexist. A Snell node bound to an outbound proxy or AI routing runs on sing-box's built-in Snell instead of `snell-server` (which has no upstream proxy), and switches back when both are removed; a v5 node then takes `version=4` in Surge. What a Snell node cannot do (a share link, a sing-box client file, Mihomo export) is refused explicitly, never faked. Creation ends with the Surge line to paste. Install, upgrade and rollback of the engine, the IPv4/IPv6/NAT behaviour, troubleshooting, what is and is not verified, and a Surge iOS acceptance checklist are in [docs/SNELL.md](docs/SNELL.md).
 
 When a Reality protocol is selected, Rout checks from the server that the SNI target answers TLS 1.3 with a valid certificate (and HTTP/2). If the check fails, it warns you and asks before continuing. Pick a reachable, popular TLS 1.3 site that you do not control.
 
+
+## Telegram MTProto Proxy (MTP)
+
+To try this feature from the source checkout, run `go build -o rout ./cmd/rout` and start it with `sudo ./rout`.
+
+1. In **Quick create node**, select **9 · MTProto (MTP)**. Rout detects the server address, allocates a free TCP port and generates a secret with 16 random bytes. The default name is `<base>-MTP`. Use **Change ports** to choose a listening port or **Advanced options → Set MTP node name** to enter the full name.
+2. On a regular VPS allow inbound TCP to the listening port in your firewall. On a NAT VPS, choose a listening port assigned by your provider, then use **Advanced options → Set MTP public NAT port** to enter its mapped public TCP port. Rout also honors a saved legacy TCP or TCP+UDP mapping and derives the public port from that range. The link uses your public IP or domain and the external port. Configure the forwarding with your provider.
+3. Confirm creation. Rout prints the full Secret, the `https://t.me/proxy` import link and the `tg://proxy` deep link after the service starts. Open either link on a device with Telegram, or use **Copy Telegram import link** from a terminal that supports OSC 52. If clipboard access is unavailable, copy the printed URL. The web panel offers an **Open in Telegram** link after re-authentication.
+4. **Manage nodes** shows the links again. Select the node to enable, disable, restart or delete it. Under **Edit** you can rename it, change its address or port, reset the Secret, check TCP port usage and view logs. `rout copy ID`, `rout logs ID` and `rout doctor` are also available.
+
+Rout checks the SHA256 of the pinned [mtg v2.3.0](https://github.com/9seconds/mtg/releases/tag/v2.3.0) engine before installing it on Linux amd64 or arm64. Each MTP node has its own service with boot enablement and restart on failure. Rout keeps the Secret in private state and engine configuration files. Reboots, service restarts and renames preserve the import links. Resetting the Secret or changing the public endpoint requires a new import. Treat the full links and Rout backups as credentials.
+
+MTP supports IPv4, IPv6 and dual-stack listeners. IPv6 links require a client network with IPv6 reachability and a Telegram version that supports FakeTLS and IPv6 proxy endpoints. FakeTLS uses `www.cloudflare.com` as the default cover host. The VPS needs working DNS, an accurate clock and access to Telegram data centers. For the wire format and link parameters, see the [mtg documentation](https://github.com/9seconds/mtg/tree/v2.3.0#generate-secret) and [Telegram link specification](https://core.telegram.org/api/links#mtproxy-links).
+
+With Rout traffic monitoring enabled, nftables accounts for client-side TCP traffic and enforces configured quotas at the listening port, including on NAT. MTP is dedicated to Telegram. Generic client exports, Base64/Clash/Mihomo/Surge subscriptions, outbound proxy binding and AI routing are unavailable for MTP.
+
+The automated integration test downloads the pinned engine and authenticates its FakeTLS handshake on IPv4, IPv6 and dual-stack loopback. The systemd test also checks enablement, restart, stop, link persistence and deletion. To accept a public deployment, import the generated link in Telegram from another network, confirm message send and receive, then reboot the VPS and repeat with the same link. For NAT, repeat using the provider's external address and port. A local listener or successful FakeTLS handshake alone cannot confirm that Telegram messaging works.
+
 ## Server address, IPv4 and IPv6
 
-There is no server-type question. Every new node and relay behaves like a regular VPS: the **public port equals the listening port**, a free port is chosen automatically (TCP and UDP are both checked) and you may type your own, which is checked before anything is saved.
+The **public port equals the listening port** by default. Rout chooses a free port on the protocol’s transports and checks any port you specify. MTP also lets you enter a provider-mapped public TCP port during creation.
 
 On first use Rout detects the server's public addresses and saves the result (Settings → Server address repeats the detection or lets you type an IP or domain). Detection asks an echo service only for address families the host plausibly has, falls back to the interface addresses when the service is unreachable, and never accepts a link-local (`fe80::`), unique-local (`fc00::/7`), private, CGNAT or loopback address as a public address.
 
@@ -141,7 +160,7 @@ With an **outbound proxy** (SOCKS5, HTTP CONNECT, HTTPS CONNECT, a remote node) 
 
 ### Legacy NAT-VPS mappings
 
-Hosts set up with v0.3.0 or earlier in NAT mode keep working. Nothing is migrated or rewritten: the saved internal range, public offset and allowed networks stay in `settings.json`, existing NAT nodes and relays keep their ports, and new entries on such a host keep following the saved mapping (a notice says so) because a regular-VPS port would be unreachable there. Editing an existing NAT node or relay still asks for the provider-mapped public port. To start using regular-VPS behavior for new entries, choose Settings → Server address → *Switch to a regular VPS*; this asks for confirmation, changes only the saved default and leaves existing NAT entries as they are. There is no menu to create a new NAT mapping.
+Hosts set up with v0.3.0 or earlier in NAT mode keep working. Nothing is migrated or rewritten: the saved internal range, public offset and allowed networks stay in `settings.json`, existing NAT nodes and relays keep their ports, and new entries on such a host keep following the saved mapping (a notice says so) because a regular-VPS port would be unreachable there. Editing an existing NAT node or relay still asks for the provider-mapped public port. To start using regular-VPS behavior for new entries, choose Settings → Server address → *Switch to a regular VPS*; this asks for confirmation, changes only the saved default and leaves existing NAT entries as they are. For new MTP nodes, **Advanced options → Set MTP public NAT port** records an existing provider mapping.
 
 Rout cannot create provider mappings or open external firewalls. A local test does not prove the public port is reachable: verify the link from an external client.
 

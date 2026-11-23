@@ -166,7 +166,7 @@ func (u *UI) initLanguage(force bool) error {
 }
 
 func ProtocolLabel(p string) string {
-	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", protoAnyTLSTLS: "AnyTLS-TLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", protoSnell: "Snell", snell6Alias: "Snell6", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
+	return map[string]string{"vless": "VLESS", "anytls": "AnyTLS", protoAnyTLSTLS: "AnyTLS-TLS", "ss": "SS", "hy2": "HY2", "tuic": "TUIC", protoSnell: "Snell", snell6Alias: "Snell6", protoMTP: "MTP", "tcp": "TCP", "udp": "UDP", "both": "TCP+UDP"}[p]
 }
 
 // outboundLabel names the outbound proxy a node uses ("Direct connection" if none).
@@ -753,15 +753,19 @@ func (u *UI) copy(p Profile) error {
 	if e = u.printLinks(p, nil); e != nil {
 		return e
 	}
+	u.copyLink(uri)
+	return nil
+}
+
+func (u *UI) copyLink(uri string) {
 	if u.out == nil {
 		if st, e := os.Stdout.Stat(); e == nil && st.Mode()&os.ModeCharDevice != 0 {
 			fmt.Fprintf(u.writer(), "\033]52;c;%s\a", base64.StdEncoding.EncodeToString([]byte(uri)))
 			u.say("已发送终端复制请求；若终端不支持，请手动复制以上完整链接")
-			return nil
+			return
 		}
 	}
 	u.say("请复制以上完整链接")
-	return nil
 }
 func (u *UI) exportClient(p Profile) error {
 	c, e := ClientConfig(p, p.PublicHost, p.PublicPort, 2080)
@@ -785,6 +789,9 @@ func (u *UI) exportClient(p Profile) error {
 func (u *UI) export(p Profile) error {
 	if e := u.copy(p); e != nil {
 		return e
+	}
+	if p.mtpNode() {
+		return nil
 	}
 	if !u.yes("同时导出 sing-box 客户端配置", false) {
 		return u.err
@@ -954,7 +961,11 @@ func (u *UI) nodeDetail(id string) error {
 		if !p.Enabled {
 			toggle = "启用节点"
 		}
-		v := u.menu("", []menuItem{item("edit", "编辑"), item("delete", "删除"), item("export", "复制链接或导出客户端配置"), item("toggle", toggle), item("restart", "重启")}, "返回")
+		exportLabel := "复制链接或导出客户端配置"
+		if p.mtpNode() {
+			exportLabel = "复制 Telegram 导入链接"
+		}
+		v := u.menu("", []menuItem{item("edit", "编辑"), item("delete", "删除"), item("export", exportLabel), item("toggle", toggle), item("restart", "重启")}, "返回")
 		if u.err != nil || v == "" {
 			return u.err
 		}
@@ -1033,6 +1044,9 @@ func (u *UI) nodeMenu(id string) error {
 		if p.snellNode() {
 			items = append(items, item("listen", "修改监听地址"), item("psk", "设置 PSK"), item("exit", "选择出站代理"))
 		}
+		if p.mtpNode() {
+			items = []menuItem{item("name", "重命名"), item("address", "修改端口或公网地址"), item("test", "测试连接"), item("logs", "查看日志"), item("traffic", "流量与限额"), item("credentials", "重置认证凭据"), item("sockets", "查看 TCP 端口占用")}
+		}
 		v := u.menu("", items, "返回")
 		if u.err != nil || v == "" {
 			return u.err
@@ -1074,6 +1088,9 @@ func (u *UI) nodeAddress(p *Profile) error {
 		p.PublicPort = u.askPortValue("公网端口", p.PublicPort)
 		if u.err == nil {
 			u.fitListen(p)
+			if p.mtpNode() && p.PublicPort != p.Port {
+				p.NAT = true
+			}
 		}
 		return u.err
 	}
@@ -1094,6 +1111,9 @@ func (u *UI) nodeAddress(p *Profile) error {
 	} else if settings.Server != nil && settings.Server.NAT {
 		u.warnf("端口 %d 不在已保存的 NAT 范围 %d-%d 内，请确认商家确实映射了此端口", p.Port, settings.Server.LocalStart, settings.Server.LocalEnd)
 	}
+	if p.mtpNode() && def == 0 && p.Port == oldPort {
+		def = p.PublicPort
+	}
 	p.PublicPort = u.askPortValue(fmt.Sprintf(u.a.T("商家映射到内部端口 %d 的公网端口"), p.Port), def)
 	return u.err
 }
@@ -1107,6 +1127,22 @@ func (u *UI) nodeAction(s State, p Profile, v string) error {
 		return u.a.Probe(p)
 	case "logs":
 		return u.a.Logs(p)
+	case "sockets":
+		sockets, e := readSockets()
+		if e != nil {
+			return e
+		}
+		found := false
+		for _, socket := range sockets {
+			if strings.HasPrefix(socket.Network, "tcp") && socket.Port == p.Port {
+				u.printf("TCP %s 正在监听\n", socket.Addr())
+				found = true
+			}
+		}
+		if !found {
+			u.printf("TCP 端口 %d 未被监听\n", p.Port)
+		}
+		return nil
 	case "traffic":
 		return u.trafficManage(p)
 	case "cert":

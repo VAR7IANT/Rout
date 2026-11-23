@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,15 @@ func TestNodeListeningProtocolConfiguration(t *testing.T) {
 				}
 				p := fixture(t, proto)
 				p.Listen = setup.Listen
+				if p.mtpNode() {
+					p.PublicHost, p.InboundMode = setup.PublicHost, setup.inbound
+					conf, e := mtpServerConf(p, "/config")
+					want := "bind-to = " + strconv.Quote(net.JoinHostPort(choice.listen, itoa(p.Port)))
+					if e != nil || !strings.Contains(conf, want) {
+						t.Fatalf("MTP listener configuration mismatch: %v", e)
+					}
+					return
+				}
 				if p.snellNode() {
 					// snell-server reads its own file: the chosen listening mode must reach it.
 					conf, e := snellServerConf(p)
@@ -210,7 +220,7 @@ func TestNodeCreationPreservesExistingNodesAndServerDefaults(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	u, out := testUI(a, "New\n1 2 3 4 5 6 7 8\n\n\n")
+	u, out := testUI(a, "New\n1 2 3 4 5 6 7 8 9\n\n\n")
 	u.caps = func() listenCaps { return listenCaps{V4: true, V6: true, DualStack: true} }
 	if e := u.create(); e != nil {
 		t.Fatal(e, out.String())

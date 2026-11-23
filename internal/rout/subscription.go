@@ -272,11 +272,18 @@ func renderSubscription(uris []string) string {
 	return base64.StdEncoding.EncodeToString([]byte(strings.Join(uris, "\n")))
 }
 
-// SubscriptionCandidates lists the entries a subscription may contain (those that produce a
-// valid share link, disabled ones included) and warnings for entries that cannot.
+// subscriptionShare also accepts nodes with a native client configuration, such as Snell.
+func (p Profile) subscriptionShare() (string, error) {
+	if p.mtpNode() {
+		return "", errMTPClient
+	}
+	return p.Share()
+}
+
+// SubscriptionCandidates lists entries eligible for subscriptions, including disabled entries.
 func (s State) SubscriptionCandidates() (ok []Profile, warnings []string) {
 	for _, p := range s.Profiles {
-		if _, e := p.Share(); e != nil {
+		if _, e := p.subscriptionShare(); e != nil {
 			warnings = append(warnings, fmt.Sprintf("%s 不能加入订阅：%s", p.Name, e.Error()))
 			continue
 		}
@@ -337,7 +344,7 @@ func checkSubscriptionNodes(s State, ids []string) error {
 		if e != nil {
 			return e
 		}
-		if _, e = p.Share(); e != nil {
+		if _, e = p.subscriptionShare(); e != nil {
 			return fmt.Errorf("%s 不能加入订阅：%w", p.Name, e)
 		}
 	}

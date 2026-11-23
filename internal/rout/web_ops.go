@@ -136,7 +136,7 @@ func (u *UI) webListenSetup(setup ServerSetup, inbound string, protocols ...stri
 	if len(items) == 0 {
 		return setup, errors.New("本机没有可用的监听地址")
 	}
-	selected := items[0].key
+	selected := preferredNodeListen(items, setup, protocols)
 	if inbound != "" {
 		found := false
 		for _, it := range items {
@@ -225,6 +225,9 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 	if e != nil {
 		return nil, e
 	}
+	if len(spec.Protocols) == 1 && seen[protoMTP] && (spec.ExitID != "" || policy != "") {
+		return nil, errMTPOutbound
+	}
 	if !spec.Force {
 		if e = checkPolicyRoute(policy); e != nil {
 			return nil, e
@@ -270,9 +273,11 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 				return old, e
 			}
 			p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
-			p.OutboundPolicy = policy
+			if !p.mtpNode() {
+				p.OutboundPolicy = policy
+			}
 			p.SNI = sni
-			if p.snellNode() {
+			if p.snellNode() || p.mtpNode() {
 				p.SNI = ""
 			}
 			if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
@@ -294,7 +299,7 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 				return old, fmt.Errorf("%s: %w", p.Name, e)
 			}
 			next = replace(next, p)
-			if spec.ExitID != "" {
+			if spec.ExitID != "" && !p.mtpNode() {
 				if next, e = BindExit(next, p.ID, spec.ExitID); e != nil {
 					return old, e
 				}
