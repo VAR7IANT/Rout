@@ -25,7 +25,7 @@ import (
 func testApp(t *testing.T) *App {
 	t.Helper()
 	a := &App{Home: t.TempDir(), BinDir: t.TempDir(), ServiceMode: "none", Language: "en"}
-	for _, name := range []string{"sing-box", "snell-v5", "snell-v6"} {
+	for _, name := range []string{"sing-box", "snell-v5", "snell-v6", mtpEngine} {
 		if e := os.WriteFile(a.enginePath(name), []byte("#!/bin/sh\nexit 0\n"), 0755); e != nil {
 			t.Fatal(e)
 		}

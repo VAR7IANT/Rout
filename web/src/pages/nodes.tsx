@@ -5,7 +5,7 @@ import { useDebounced, useHotkey, useRemote } from '../core/hooks'
 import { useI18n, type MessageKey } from '../core/i18n'
 import { useAct, useReauth } from '../core/session'
 import type { ExitRef, HostInfo, NodeList, NodeView, PolicyChoice, ProtocolInfo } from '../core/types'
-import { DiagRunner, InboundPicker, LoadState, NameDialog, Section, SecretBox, StateTag, Traffic, WarningTags, type Inbound } from '../ui/domain'
+import { DiagRunner, InboundPicker, LoadState, NameDialog, Reveal, Section, SecretBox, SecretValue, StateTag, Traffic, WarningTags, type Inbound } from '../ui/domain'
 import { Button, Checkbox, Empty, Field, Input, KV, PageHead, Panel, Search, Select, Tag } from '../ui/kit'
 import { Confirm, Dialog, Drawer, Menu } from '../ui/overlay'
 import { DataTable, type Column } from '../ui/table'
@@ -181,7 +181,7 @@ export function NodesPage() {
             <Button size="sm" icon="stop" onClick={() => void change(() => bulk('disable', pickedIds), bulkDone)}>
               {t('nodes.bulk.disable')}
             </Button>
-            <Button size="sm" icon="link" onClick={() => setBinding(true)} disabled={list.exits.length === 0}>
+            <Button size="sm" icon="link" onClick={() => setBinding(true)} disabled={list.exits.length === 0 || picked.some((node) => node.protocol === 'mtp')}>
               {t('nodes.bulk.bind')}
             </Button>
             <Button size="sm" onClick={() => void change(() => bulk('unbind_exit', pickedIds), bulkDone)}>
@@ -225,9 +225,11 @@ export function NodesPage() {
           host={list.host}
           policies={list.outbound_policies}
           onClose={() => setCreating(false)}
-          onCreated={async () => {
+          onCreated={async (created) => {
             setCreating(false)
             await res.reload()
+            const mtp = created.find((node) => node.protocol === 'mtp')
+            if (mtp) setOpenId(mtp.id)
           }}
         />
       ) : null}
@@ -341,7 +343,7 @@ interface CreateProps {
   host: HostInfo
   policies: PolicyChoice[]
   onClose: () => void
-  onCreated: () => Promise<void>
+  onCreated: (nodes: NodeView[]) => Promise<void>
 }
 
 function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: CreateProps) {
@@ -357,6 +359,7 @@ function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: C
   const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  const mtpOnly = picked.length === 1 && picked[0] === 'mtp'
   const reality = picked.some((p) => p === 'vless' || p === 'anytls')
   const single = picked.length === 1 // a fixed port only makes sense for one node
   const portNumber = port === '' ? 0 : Number(port)
@@ -370,16 +373,16 @@ function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: C
         protocols: picked,
         inbound,
         reality_sni: reality ? sni.trim() : '',
-        exit_id: exit,
+        exit_id: mtpOnly ? '' : exit,
         port: single ? portNumber : 0,
-        outbound_policy: policy === 'auto' ? '' : policy,
+        outbound_policy: mtpOnly || policy === 'auto' ? '' : policy,
         force: confirmed,
       }),
     )
     setBusy(false)
     if (!r) return
     if (r.nodes.length > 0) await act(async () => null, { ok: t('nodes.create.done', { n: r.nodes.length }) })
-    await onCreated()
+    await onCreated(r.nodes)
   }
 
   return (
@@ -393,7 +396,7 @@ function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: C
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </Button>
-          <Button variant="primary" onClick={() => void submit()} busy={busy} disabled={picked.length === 0 || portBad || needsConfirm(policies, policy, confirmed)}>
+          <Button variant="primary" onClick={() => void submit()} busy={busy} disabled={picked.length === 0 || portBad || (!mtpOnly && needsConfirm(policies, policy, confirmed))}>
             {t('common.create')}
           </Button>
         </>
@@ -431,18 +434,20 @@ function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: C
         ) : null}
 
         <div className="cols-2">
-          <Field label={t('nodes.create.exit')} hint={t('nodes.create.exitHint')}>
-            {(id, note) => (
-              <Select id={id} aria-describedby={note} value={exit} onChange={(e) => setExit(e.target.value)}>
-                <option value="">{t('nodes.direct')}</option>
-                {exits.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
+          {!mtpOnly ? (
+            <Field label={t('nodes.create.exit')} hint={t('nodes.create.exitHint')}>
+              {(id, note) => (
+                <Select id={id} aria-describedby={note} value={exit} onChange={(e) => setExit(e.target.value)}>
+                  <option value="">{t('nodes.direct')}</option>
+                  {exits.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          ) : null}
           {single ? (
             <Field label={`${t('nodes.create.port')} ${t('common.optional')}`} hint={t('nodes.create.portHint')} error={portBad ? t('nodes.create.portHint') : null}>
               {(id, note) => <Input id={id} aria-describedby={note} inputMode="numeric" placeholder={t('common.auto')} value={port} onChange={(e) => setPort(portDigits(e.target.value))} />}
@@ -450,9 +455,12 @@ function CreateNodes({ protocols, exits, host, policies, onClose, onCreated }: C
           ) : null}
         </div>
 
-        <Field label={t('egress.title')} hint={t('egress.hint')}>
-          {(id, note) => <PolicyPicker id={id} describedBy={note} value={policy} onChange={setPolicy} choices={policies} confirmed={confirmed} onConfirm={setConfirmed} />}
-        </Field>
+        {!mtpOnly ? (
+          <Field label={t('egress.title')} hint={t('egress.hint')}>
+            {(id, note) => <PolicyPicker id={id} describedBy={note} value={policy} onChange={setPolicy} choices={policies} confirmed={confirmed} onConfirm={setConfirmed} />}
+          </Field>
+        ) : null}
+        {picked.includes('mtp') ? <p className="dim small">{t('nodes.mtp.note')}</p> : null}
       </div>
     </Dialog>
   )
@@ -529,8 +537,19 @@ function NodeDrawer({ node, policies, onChanged, onClose, onRename, onDelete, on
           </Section>
         ) : null}
 
-        <Section title={t('nodes.detail.share')}>
-          {node.has_link ? (
+        <Section title={t(node.protocol === 'mtp' ? 'nodes.mtp.import' : 'nodes.detail.share')}>
+          {node.has_link && node.protocol === 'mtp' ? (
+            <Reveal label={t('nodes.detail.shareHidden')} load={async () => (await api.get<{ link: string }>(`/api/nodes/${node.id}/link`)).link}>
+              {(value) => (
+                <>
+                  <SecretValue value={value} label={t('nodes.mtp.import')} qrLabel={`${node.name} QR`} />
+                  {value.startsWith('https://t.me/proxy?') ? (
+                    <a href={value} target="_blank" rel="noreferrer">{t('nodes.mtp.open')}</a>
+                  ) : null}
+                </>
+              )}
+            </Reveal>
+          ) : node.has_link ? (
             <SecretBox label={t('nodes.detail.shareHidden')} qrLabel={`${node.name} QR`} load={async () => (await api.get<{ link: string }>(`/api/nodes/${node.id}/link`)).link} />
           ) : (
             <p className="dim">{t('nodes.detail.noLink')}</p>
@@ -541,13 +560,15 @@ function NodeDrawer({ node, policies, onChanged, onClose, onRename, onDelete, on
           ) : null}
         </Section>
 
-        <Section title={t('egress.title')}>
-          {/* Remounts when the saved policy changes so the picker starts from the new value. */}
-          <EgressSection key={`${node.id}:${node.outbound_policy ?? 'auto'}`} node={node} choices={policies} onChanged={onChanged} />
-        </Section>
+        {node.protocol !== 'mtp' ? (
+          <Section title={t('egress.title')}>
+            {/* Remounts when the saved policy changes so the picker starts from the new value. */}
+            <EgressSection key={`${node.id}:${node.outbound_policy ?? 'auto'}`} node={node} choices={policies} onChanged={onChanged} />
+          </Section>
+        ) : null}
 
         <Section title={t('nodes.detail.test')}>
-          <DiagRunner path={`/api/nodes/${node.id}/test`} />
+          <DiagRunner path={`/api/nodes/${node.id}/test`} canFull={node.protocol !== 'mtp'} />
         </Section>
       </div>
     </Drawer>

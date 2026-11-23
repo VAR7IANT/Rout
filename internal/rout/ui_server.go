@@ -224,8 +224,20 @@ func (u *UI) printLinks(p Profile, setup *ServerSetup) error {
 	if p.snellNode() {
 		fmt.Fprintln(u.writer(), u.a.T("Surge 配置（粘贴到 [Proxy] 段；Surge 无 Snell 分享链接）："))
 	}
-	fmt.Fprintln(u.writer(), uri)
-	if !p.snellNode() {
+	if p.mtpNode() {
+		_, deep, e := p.telegramLinks(p.PublicHost, p.PublicPort)
+		if e != nil {
+			return e
+		}
+		u.printf("Secret：%s\n", p.Password)
+		u.say("Telegram 一键导入：")
+		fmt.Fprintln(u.writer(), uri)
+		fmt.Fprintln(u.writer(), "TG Deep Link:")
+		fmt.Fprintln(u.writer(), deep)
+	} else {
+		fmt.Fprintln(u.writer(), uri)
+	}
+	if !p.snellNode() && !p.mtpNode() {
 		if line, er := p.SurgeLine(p.PublicHost, p.PublicPort); er == nil {
 			fmt.Fprintf(u.writer(), "%s\n%s\n", u.a.T("Surge 配置（粘贴到 [Proxy] 段）："), line)
 		}

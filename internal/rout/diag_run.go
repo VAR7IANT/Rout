@@ -43,6 +43,10 @@ func (a *App) diagnoseNode(ctx context.Context, p Profile, env diagEnv, opts dia
 			return rep
 		}
 	}
+	if p.mtpNode() {
+		d.add(5, diagWarn, "MTP 协议请在 Telegram 中导入代理并收发消息验证")
+		return rep
+	}
 	if p.snellNode() {
 		// Rout has no Snell client: the handshake can only be proven from Surge.
 		d.add(5, diagWarn, "Snell 协议握手无法在本机验证，请在 Surge 中测试该节点（端口可达不代表代理可用）")

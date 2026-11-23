@@ -47,6 +47,9 @@ func (p Profile) SurgeLine(host string, port int) (string, error) {
 
 // surgeLine also returns the Surge type of the line (for version gating).
 func (p Profile) surgeLine(host string, port int) (string, string, error) {
+	if p.mtpNode() {
+		return "", "", errMTPClient
+	}
 	if p.snellNode() {
 		line, e := p.SnellSurgeLine(host, port)
 		return line, protoSnell, e

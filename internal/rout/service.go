@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,8 @@ func (a *App) relayHelper() string { return filepath.Join(a.BinDir, "rout-relay-
 func (a *App) serviceCommand(p Profile) (string, []string) {
 	conf := filepath.Join(a.profileDir(p.ID), "config.json")
 	switch {
+	case p.mtpNode():
+		return a.enginePath(mtpEngine), []string{"run", filepath.Join(a.profileDir(p.ID), mtpConf)}
 	case p.snellOfficial():
 		return a.enginePath(a.engineName(p)), []string{"-c", filepath.Join(a.profileDir(p.ID), snellConf)}
 	case p.nativeRelay():
@@ -274,10 +277,18 @@ func (a *App) startFailure(p Profile, cause error) error {
 // sockets, and not be restarted by the init system during a settle window.
 func (a *App) waitHealthy(m string, p Profile) error {
 	name := serviceName(p)
-	deadline := time.Now().Add(healthTimeout)
+	timeout := healthTimeout
+	bound := func() bool { return listening(p) }
+	if p.mtpNode() {
+		// mtg resolves its FakeTLS cover host before binding. During that time another
+		// process might have won the port after the preflight bind.
+		timeout += 10 * time.Second
+		bound = func() bool { return mtpServiceListening(m, name, p.Port) }
+	}
+	deadline := time.Now().Add(timeout)
 	for {
 		active := serviceActive(m, name)
-		if active && listening(p) {
+		if active && bound() {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -290,7 +301,7 @@ func (a *App) waitHealthy(m string, p Profile) error {
 	}
 	pid := servicePID(m, name)
 	time.Sleep(healthSettle)
-	if !serviceActive(m, name) || servicePID(m, name) != pid || !listening(p) {
+	if !serviceActive(m, name) || servicePID(m, name) != pid || !bound() {
 		return fmt.Errorf("%s 启动后立即退出或被重启，请运行 rout logs %s 查看原因", p.Name, p.ID)
 	}
 	return nil
@@ -307,6 +318,35 @@ func listening(p Profile) bool {
 	return true
 }
 func socketBound(network string, port int) bool {
+	return socketBoundBy(network, port, nil)
+}
+
+func mtpServiceListening(manager, name string, port int) bool {
+	pid := servicePID(manager, name)
+	if n, e := strconv.Atoi(pid); e != nil || n <= 0 {
+		return false
+	}
+	pids := []string{pid}
+	if manager == "openrc" {
+		// supervise-daemon may store its own PID, while the child holds the socket.
+		children, _ := os.ReadFile(filepath.Join("/proc", pid, "task", pid, "children"))
+		pids = append(pids, strings.Fields(string(children))...)
+	}
+	inodes := map[string]bool{}
+	for _, pid := range pids {
+		dir := filepath.Join("/proc", pid, "fd")
+		fds, _ := os.ReadDir(dir)
+		for _, fd := range fds {
+			link, _ := os.Readlink(filepath.Join(dir, fd.Name()))
+			if inode, ok := strings.CutPrefix(link, "socket:["); ok {
+				inodes[strings.TrimSuffix(inode, "]")] = true
+			}
+		}
+	}
+	return socketBoundBy("tcp", port, inodes)
+}
+
+func socketBoundBy(network string, port int, inodes map[string]bool) bool {
 	want := strings.ToUpper(fmt.Sprintf(":%04x", port))
 	for _, suffix := range []string{"", "6"} {
 		b, e := os.ReadFile("/proc/net/" + network + suffix)
@@ -316,6 +356,9 @@ func socketBound(network string, port int) bool {
 		for _, line := range strings.Split(string(b), "\n")[1:] {
 			f := strings.Fields(line)
 			// TCP must be LISTEN (0A); an unconnected UDP socket reports 07.
+			if inodes != nil && (len(f) <= 9 || !inodes[f[9]]) {
+				continue
+			}
 			if len(f) > 3 && strings.HasSuffix(f[1], want) && (f[3] == "0A" || (network == "udp" && f[3] == "07")) {
 				return true
 			}
@@ -447,10 +490,16 @@ func redactProxySecrets(text string, s State) string {
 		if p.Outbound != nil {
 			add(*p.Outbound)
 		}
-		// A Snell PSK is the node's only secret and its engine logs on its own terms: it
-		// never reaches the screen, whichever node's log is being shown.
-		if p.snellNode() {
+		// Native engine credentials stay private whichever node's log is being shown.
+		if p.snellNode() || p.mtpNode() {
 			addValue(p.Password)
+		}
+		if p.mtpNode() {
+			if raw, e := hex.DecodeString(p.Password); e == nil {
+				addValue(strings.ToLower(p.Password))
+				addValue(strings.ToUpper(p.Password))
+				addValue(base64.RawURLEncoding.EncodeToString(raw))
+			}
 		}
 	}
 	var keys []string

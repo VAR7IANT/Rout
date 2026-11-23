@@ -48,6 +48,9 @@ func proxyConfig(p Proxy) M {
 
 // HTTP and unverified third-party SOCKS UDP are TCP-only. No direct fallback exists.
 func serverConfig(p Profile, dir string) (M, error) {
+	if p.mtpNode() {
+		return nil, errors.New("MTP 节点使用 mtg 配置文件")
+	}
 	if p.snellOfficial() {
 		// snell-server reads its own INI file (snell.go), never a sing-box JSON document.
 		return nil, errors.New("Snell 节点使用 snell-server 配置文件")
@@ -158,6 +161,9 @@ func serverConfig(p Profile, dir string) (M, error) {
 
 // ClientConfig exports a complete, portable sing-box configuration without server secrets.
 func ClientConfig(p Profile, host string, port, localPort int) (M, error) {
+	if p.mtpNode() {
+		return nil, errMTPClient
+	}
 	if p.snellNode() {
 		return nil, errNoClientConfig
 	}
