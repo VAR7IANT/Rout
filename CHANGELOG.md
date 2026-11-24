@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.0
+
+- **Authenticated SOCKS5 and HTTP proxies.** Quick Create options 10 and 11 and the web panel create TCP proxy nodes with a cryptographically random 24-character username and 32-character password. Use a direct connection or route the node through a saved Rout outbound proxy.
+- **Copy and paste.** Copy the generated `host:port:username:password` line into the outbound proxy form on a second Rout server after choosing the same protocol. IPv6 literals use brackets. On a NAT server, the line uses the configured public endpoint.
+- **Credential handling.** SOCKS5 and HTTP send credentials without transport encryption. The engine log level for these nodes is fatal to keep submitted credentials out of authentication error logs.
+- **Compatibility.** Existing profiles require no migration. Before downgrading, remove any SOCKS5 or HTTP nodes created with this version. See [Upgrading](https://github.com/VAR7IANT/Rout/blob/v0.9.0/docs/UPGRADING.md#to-v090-authenticated-socks5-and-http-nodes).
+- **Verification.** Real sing-box integration tests exercise IPv4 and IPv6, HTTP CONNECT and forward requests, invalid credentials, and authentication across a chained proxy. Public VPS and provider NAT deployment were not verified.
+
 ## v0.8.0
 
 - **Telegram MTProto Proxy (MTP).** Quick Create option 9 and the web panel create Telegram proxies using the SHA256-pinned mtg v2.3.0 engine. Rout generates a 128-bit FakeTLS secret and prints both Telegram import links after startup.

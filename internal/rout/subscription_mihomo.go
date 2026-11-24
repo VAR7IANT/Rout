@@ -181,6 +181,9 @@ func (s State) exportMihomo(sub Subscription) (proxies []M, warnings []string) {
 }
 
 func mihomoNode(p Profile) (M, error) {
+	if p.classicProxyNode() {
+		return nil, errClassicProxyShare
+	}
 	if p.mtpNode() {
 		return nil, errMTPClient
 	}

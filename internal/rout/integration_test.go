@@ -160,7 +160,8 @@ const (
 // startEngine runs an engine for the rest of the test and returns as soon as every
 // ready socket is bound. An engine that exits early, or is not ready within
 // engineReadyTimeout, fails the test with its log; the process is always reaped.
-func startEngine(t *testing.T, ready []engineSocket, path string, args ...string) {
+// The returned path allows tests to inspect the engine log.
+func startEngine(t *testing.T, ready []engineSocket, path string, args ...string) string {
 	t.Helper()
 	logPath := filepath.Join(t.TempDir(), "engine.log")
 	log, e := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0600)
@@ -212,7 +213,7 @@ func startEngine(t *testing.T, ready []engineSocket, path string, args ...string
 		}
 		wait := missing()
 		if len(wait) == 0 {
-			return
+			return logPath
 		}
 		if time.Now().After(deadline) {
 			logged = true

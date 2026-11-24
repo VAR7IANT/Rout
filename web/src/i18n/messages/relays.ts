@@ -92,6 +92,8 @@ export const relays = {
   'exits.create.user': ['用户名', '使用者名稱', 'Username'],
   'exits.create.pass': ['密码', '密碼', 'Password'],
   'exits.create.passKeep': ['留空保持不变', '留空保持不變', 'Leave empty to keep it'],
+  'exits.create.proxyLine': ['粘贴代理连接信息', '貼上代理連線資訊', 'Paste proxy connection details'],
+  'exits.create.proxyLineHint': ['粘贴 IP:端口:用户名:密码，IPv6 使用 [地址]:端口:用户名:密码。也可单独填写下方字段。', '貼上 IP:連接埠:使用者名稱:密碼，IPv6 使用 [位址]:連接埠:使用者名稱:密碼。也可分別填寫下方欄位。', 'Paste IP:port:username:password or [IPv6]:port:username:password. You can also enter the fields below.'],
   'exits.create.link': ['远程节点分享链接', '遠端節點分享連結', 'Remote node share link'],
   'exits.create.linkHint': ['粘贴另一台服务器上节点的分享链接，本机会把流量转给它。', '貼上另一台伺服器上節點的分享連結，本機會把流量轉給它。', 'Paste a share link of a node on another server; traffic is handed to it.'],
   'exits.create.linkKeep': ['留空保持不变；粘贴新链接可替换', '留空保持不變；貼上新連結可取代', 'Leave empty to keep it; paste a new link to replace it'],

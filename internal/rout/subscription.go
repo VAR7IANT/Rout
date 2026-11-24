@@ -274,6 +274,9 @@ func renderSubscription(uris []string) string {
 
 // subscriptionShare also accepts nodes with a native client configuration, such as Snell.
 func (p Profile) subscriptionShare() (string, error) {
+	if p.classicProxyNode() {
+		return "", errClassicProxyShare
+	}
 	if p.mtpNode() {
 		return "", errMTPClient
 	}

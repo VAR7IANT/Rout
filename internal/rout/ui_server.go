@@ -235,9 +235,12 @@ func (u *UI) printLinks(p Profile, setup *ServerSetup) error {
 		fmt.Fprintln(u.writer(), "TG Deep Link:")
 		fmt.Fprintln(u.writer(), deep)
 	} else {
+		if p.classicProxyNode() {
+			u.say("复制下方整行，在另一台 Rout 的出站代理中选择同一协议后粘贴")
+		}
 		fmt.Fprintln(u.writer(), uri)
 	}
-	if !p.snellNode() && !p.mtpNode() {
+	if !p.snellNode() && !p.mtpNode() && !p.classicProxyNode() {
 		if line, er := p.SurgeLine(p.PublicHost, p.PublicPort); er == nil {
 			fmt.Fprintf(u.writer(), "%s\n%s\n", u.a.T("Surge 配置（粘贴到 [Proxy] 段）："), line)
 		}

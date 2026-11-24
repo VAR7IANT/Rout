@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias, protoAnyTLSTLS, protoMTP}
-var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)", "AnyTLS TLS (Surge)", "MTProto (MTP)"}
+var createProtocols = []string{"vless", "anytls", "ss", "hy2", "tuic", protoSnell, snell6Alias, protoAnyTLSTLS, protoMTP, "socks5", "http"}
+var createLabels = []string{"VLESS Reality", "AnyTLS Reality", "Shadowsocks 2022", "Hysteria2", "TUIC v5", "Snell v5", "Snell v6 (beta)", "AnyTLS TLS (Surge)", "MTProto (MTP)", "SOCKS5", "HTTP CONNECT"}
 
 func (u *UI) selectProtocols() []string {
 	u.say("可创建的协议：")
@@ -149,6 +149,9 @@ func (u *UI) create() error {
 		u.say("已取消")
 		return nil
 	}
+	if contains(selected, "socks5") || contains(selected, "http") {
+		u.warn("SOCKS5/HTTP 入口的账号密码通过未加密的连接发送")
+	}
 	// Keep the server's saved defaults for relays and future address settings.
 	serverDefaults := setup
 	setup, e = u.nodeListeningSetup(setup, selected...)
@@ -201,7 +204,7 @@ func (u *UI) create() error {
 		}
 		p.Name = uniqueName(next, base+"-"+ProtocolLabel(protocol))
 		p.SNI = realitySNI
-		if p.snellNode() || p.mtpNode() {
+		if p.snellNode() || p.mtpNode() || p.classicProxyNode() {
 			p.SNI = ""
 		}
 		if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
@@ -401,7 +404,14 @@ func (u *UI) createAdvanced(next State, ids []string, setup ServerSetup) (State,
 			if p.Protocol == "vless" || p.Protocol == "tuic" {
 				p.UUID = u.ask("UUID", p.UUID)
 			}
-			if p.snellNode() {
+			if p.classicProxyNode() {
+				if user := u.secret("代理用户名（留空保持随机）"); user != "" {
+					p.Username = user
+				}
+				if pw := u.secret("代理密码（留空保持随机）"); pw != "" {
+					p.Password = pw
+				}
+			} else if p.snellNode() {
 				if pw := strings.TrimSpace(u.secret("Snell PSK（12–255 个字符：字母、数字和 . _ ~ + -；留空保持随机）")); pw != "" {
 					p.Password = pw
 				}

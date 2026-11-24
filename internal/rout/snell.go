@@ -348,6 +348,13 @@ func (p Profile) Share() (string, error) { return p.ShareAt(p.PublicHost, p.Publ
 
 // ShareAt is Share for another address of the same node (for example its IPv6).
 func (p Profile) ShareAt(host string, port int) (string, error) {
+	if p.classicProxyNode() {
+		proxy, e := p.classicProxyAt(host, port)
+		if e != nil {
+			return "", e
+		}
+		return proxy.inputLine(), nil
+	}
 	if p.mtpNode() {
 		link, _, e := p.telegramLinks(host, port)
 		return link, e
