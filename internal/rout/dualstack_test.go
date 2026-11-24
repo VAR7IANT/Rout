@@ -657,7 +657,7 @@ func TestIntegrationDualStackListener(t *testing.T) {
 	camHost, camPort, _ := ParseEndpoint(strings.TrimPrefix(camouflage.URL, "https://"))
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "198.51.100.19") }))
 	defer origin.Close()
-	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
+	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic", "socks5", "http"} {
 		for _, host := range []string{"127.0.0.1", "::1"} {
 			t.Run(protocol+"/"+host, func(t *testing.T) {
 				isolated := *a

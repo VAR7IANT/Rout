@@ -19,7 +19,7 @@ f=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/VAR7IANT/Rout/main/i
 sudo rout
 ```
 
-On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.8.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
+On Alpine, or when already root, omit `sudo`. The installer downloads release `v0.9.0`, checks its SHA256 before replacing the executable, installs `nftables` and enables traffic accounting for the default directories. It does not create nodes, set any limit or change the default route. `ROUT_SETUP_TRAFFIC=0` skips the accounting setup. The first interactive run asks for the language; change it later in Settings (简体中文, 繁體中文 or English), or use `--lang en` / `--lang zh-CN` / `--lang zh-TW` for one run.
 
 Release binaries carry GitHub build-provenance attestations. The checksum file comes from the same release, so it proves integrity, not authenticity; to verify origin independently:
 
@@ -31,7 +31,7 @@ gh attestation verify rout-linux-amd64 --repo VAR7IANT/Rout
 
 ```text
 sudo rout
-Rout 0.8.0
+Rout 0.9.0
   ● Nodes: 4 · Relays: 1 · Running: 5 · AI routing: enabled (2 inbounds)
   ! Tokyo-HY2 certificate expires in 12 days
 
@@ -209,6 +209,19 @@ Links settle the transport (VLESS, AnyTLS, Trojan: TCP; Hysteria2, TUIC: UDP; Sh
 Checks before saving: address and port validity, port conflicts (TCP and UDP separately), and forwarding loops (the relay's own listening port or public entry, or a chain of local relays leading back to it). Forwarding to another port on the same server is allowed, and a destination that merely shares the server's public IP is not treated as a loop: on NAT VPS hosts that IP is shared. When the destination is the public entry of a node on this server, Rout offers to switch to `127.0.0.1:<listening port>` instead, because many networks cannot hairpin (connect to their own public address). Reachability: a local destination is checked for a listening socket; a remote TCP destination gets a real connection attempt, which proves the port is reachable, not that the proxy protocol works. UDP has no handshake and is never reported as verified.
 
 After saving, Rout prints the client endpoint and, when the destination is a known node or a pasted link, a share link rewritten to the relay entry: only the address and port change; UUID, Reality public key, short ID, SNI, fingerprint, flow and every other parameter are kept byte for byte. **Test relay** runs the [layered diagnosis](#diagnostics) and can include a full protocol test through the relay. **Edit relay** changes destination, entry, transport, name or state; **Delete relay** defaults to No. Relays created by older versions keep working; their destination type is inferred.
+
+## Create an authenticated SOCKS5 or HTTP proxy
+
+In **Quick create node**, select **10 · SOCKS5** or **11 · HTTP CONNECT**. Rout generates an independent 24-character username and 32-character password from a cryptographic random source. The node can connect directly or use an existing Rout outbound. The ordinary node controls manage its service, port, traffic and credential reset. The web panel also offers these protocols under **New nodes**.
+
+After creation, Rout prints one line in the same format accepted by **Outbound proxies → Create**. Select the matching protocol on the receiving Rout and paste the line. The web panel accepts it in **Paste proxy connection details** when adding an exit. Use `rout copy ID` or the node details to retrieve the line later.
+
+```text
+203.0.113.10:1080:username:password
+[2001:db8::10]:8080:username:password
+```
+
+The line uses the public endpoint, including the mapped port on a NAT VPS. Each line contains both credentials. These listeners forward TCP. SOCKS5 and HTTP send client credentials without transport encryption. Rout retains fatal engine logs for these nodes because sing-box includes submitted credentials in authentication errors.
 
 ## Outbound proxies
 

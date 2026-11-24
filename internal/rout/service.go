@@ -490,6 +490,9 @@ func redactProxySecrets(text string, s State) string {
 		if p.Outbound != nil {
 			add(*p.Outbound)
 		}
+		if p.classicProxyNode() {
+			add(Proxy{Username: p.Username, Password: p.Password})
+		}
 		// Native engine credentials stay private whichever node's log is being shown.
 		if p.snellNode() || p.mtpNode() {
 			addValue(p.Password)

@@ -242,12 +242,14 @@ function ExitForm({ exit, onClose, onSaved }: { exit?: ExitView; onClose: () => 
   const [user, setUser] = useState('')
   const [pass, setPass] = useState('')
   const [link, setLink] = useState('')
+  const [proxyLine, setProxyLine] = useState('')
   const [tcpOnly, setTcpOnly] = useState(false)
   const [busy, setBusy] = useState(false)
 
   // A share-link exit: a new "remote" one, or an existing exit that is not a plain proxy.
   const byLink = exit ? !['socks5', 'http', 'https'].includes(exit.protocol) : kind === 'remote'
-  const ready = byLink ? !!exit || link.trim() !== '' : host.trim() !== '' && isPort(port)
+  const byProxyLine = !exit && !byLink && proxyLine.trim() !== ''
+  const ready = byLink ? !!exit || link.trim() !== '' : byProxyLine || (host.trim() !== '' && isPort(port))
 
   const submit = async () => {
     setBusy(true)
@@ -266,12 +268,16 @@ function ExitForm({ exit, onClose, onSaved }: { exit?: ExitView; onClose: () => 
             api.post('/api/exits', {
               name: name.trim(),
               protocol: kind,
-              host: host.trim(),
-              port: Number(port) || 0,
-              username: user,
-              password: pass,
-              link: byLink ? link.trim() : '',
-              remote_network: byLink && tcpOnly ? 'tcp' : '',
+              ...(byProxyLine
+                ? { proxy_line: proxyLine }
+                : {
+                    host: host.trim(),
+                    port: Number(port) || 0,
+                    username: user,
+                    password: pass,
+                    link: byLink ? link.trim() : '',
+                    remote_network: byLink && tcpOnly ? 'tcp' : '',
+                  }),
             }),
           { ok: t('exits.create.done') },
         )
@@ -327,20 +333,29 @@ function ExitForm({ exit, onClose, onSaved }: { exit?: ExitView; onClose: () => 
           </>
         ) : (
           <>
-            <div className="cols-2">
-              <Field label={t('exits.create.host')} required>
-                {(id) => <Input id={id} value={host} onChange={(e) => setHost(e.target.value)} autoCapitalize="none" />}
+            {!exit ? (
+              <Field label={t('exits.create.proxyLine')} hint={t('exits.create.proxyLineHint')}>
+                {(id, note) => <Input id={id} aria-describedby={note} type="password" autoComplete="off" value={proxyLine} onChange={(e) => setProxyLine(e.target.value)} />}
               </Field>
-              <Field label={t('exits.create.port')} required>
-                {(id) => <Input id={id} inputMode="numeric" value={port} onChange={(e) => setPort(portDigits(e.target.value))} />}
-              </Field>
-            </div>
-            <div className="cols-2">
-              <Field label={`${t('exits.create.user')} ${t('common.optional')}`}>{(id) => <Input id={id} autoComplete="off" value={user} onChange={(e) => setUser(e.target.value)} />}</Field>
-              <Field label={`${t('exits.create.pass')} ${t('common.optional')}`} hint={exit ? t('exits.create.passKeep') : undefined}>
-                {(id, note) => <Input id={id} aria-describedby={note} type="password" autoComplete="new-password" value={pass} onChange={(e) => setPass(e.target.value)} />}
-              </Field>
-            </div>
+            ) : null}
+            {!byProxyLine ? (
+              <>
+                <div className="cols-2">
+                  <Field label={t('exits.create.host')} required>
+                    {(id) => <Input id={id} value={host} onChange={(e) => setHost(e.target.value)} autoCapitalize="none" />}
+                  </Field>
+                  <Field label={t('exits.create.port')} required>
+                    {(id) => <Input id={id} inputMode="numeric" value={port} onChange={(e) => setPort(portDigits(e.target.value))} />}
+                  </Field>
+                </div>
+                <div className="cols-2">
+                  <Field label={`${t('exits.create.user')} ${t('common.optional')}`}>{(id) => <Input id={id} autoComplete="off" value={user} onChange={(e) => setUser(e.target.value)} />}</Field>
+                  <Field label={`${t('exits.create.pass')} ${t('common.optional')}`} hint={exit ? t('exits.create.passKeep') : undefined}>
+                    {(id, note) => <Input id={id} aria-describedby={note} type="password" autoComplete="new-password" value={pass} onChange={(e) => setPass(e.target.value)} />}
+                  </Field>
+                </div>
+              </>
+            ) : null}
           </>
         )}
       </div>

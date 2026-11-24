@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 type State struct {
 	Schema   int       `json:"schema"`
@@ -61,6 +61,7 @@ type Profile struct {
 	NAT          bool           `json:"nat"`
 	SNI          string         `json:"sni,omitempty"`
 	UUID         string         `json:"uuid,omitempty"`
+	Username     string         `json:"username,omitempty"`
 	Password     string         `json:"password,omitempty"`
 	PrivateKey   string         `json:"private_key,omitempty"`
 	PublicKey    string         `json:"public_key,omitempty"`
@@ -125,6 +126,12 @@ func NewProfile(protocol string) (Profile, error) {
 	p := Profile{ID: RandomHex(6), Name: protocol, Kind: "node", Enabled: true, Protocol: protocol, Listen: "0.0.0.0", Password: RandomPassword(24), Method: "2022-blake3-aes-128-gcm", SNI: "addons.mozilla.org"}
 	now := time.Now()
 	p.CreatedAt = &now
+	if p.classicProxyNode() {
+		var err error
+		p.Username, p.Password, err = newClassicCredentials()
+		p.Method, p.SNI = "", ""
+		return p, err
+	}
 	b := make([]byte, 16)
 	if _, e := rand.Read(b); e != nil {
 		return p, e
@@ -282,7 +289,7 @@ func (p Proxy) Validate() error {
 	if strings.Contains(p.Username, ":") {
 		return errors.New("用户名不能包含冒号")
 	}
-	_, e := ParseProxy(p.Protocol, net.JoinHostPort(p.Host, strconv.Itoa(p.Port))+":"+p.Username+":"+p.Password)
+	_, e := ParseProxy(p.Protocol, p.inputLine())
 	return e
 }
 
@@ -401,6 +408,9 @@ func (p Profile) Validate() error {
 		}
 	}
 	switch p.Protocol {
+	case "socks5", "http":
+		_, e := p.classicProxyAt(p.PublicHost, p.PublicPort)
+		return e
 	case "vless", "anytls":
 		if !validHost(p.SNI) || net.ParseIP(p.SNI) != nil {
 			return errors.New("Reality SNI 应为有效域名")
@@ -637,6 +647,8 @@ func (p Profile) URIAt(host string, port int) (string, error) {
 	u := &url.URL{Host: net.JoinHostPort(host, strconv.Itoa(port)), Fragment: p.Name}
 	q := url.Values{}
 	switch p.Protocol {
+	case "socks5", "http":
+		return "", errClassicProxyShare
 	case "vless", "anytls":
 		q.Set("security", "reality")
 		q.Set("sni", p.SNI)

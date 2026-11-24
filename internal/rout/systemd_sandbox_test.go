@@ -85,7 +85,7 @@ func TestIntegrationSystemdSandboxProtocols(t *testing.T) {
 		}
 		return ""
 	}
-	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic"} {
+	for _, protocol := range []string{"vless", "anytls", "ss", "hy2", "tuic", "socks5", "http"} {
 		t.Run(protocol, func(t *testing.T) {
 			p := fixture(t, protocol)
 			p.Port, _ = freePort()

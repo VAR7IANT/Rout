@@ -1,5 +1,11 @@
 # Upgrading and rollback safety
 
+## To v0.9.0: authenticated SOCKS5 and HTTP nodes
+
+Existing profiles require no migration. New authenticated nodes use `"protocol": "socks5"` or `"protocol": "http"` and store their username and password in the private state and sing-box configuration. The copyable connection line includes both credentials.
+
+Before rolling back to v0.8.0, save a private backup if you need those profiles later, then delete the SOCKS5 and HTTP nodes with v0.9.0. This stops their services and removes generated configurations. The older binary requires a compatible state file.
+
 ## To v0.8.0: Telegram MTProto Proxy
 
 Existing profiles require no migration. Creating an MTP node adds a profile with `"protocol": "mtp"` and stores its FakeTLS secret in the private state and generated configuration. Rout installs the pinned mtg engine on first use and manages the node with the regular service controls.

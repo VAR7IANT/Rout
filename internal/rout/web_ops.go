@@ -277,7 +277,7 @@ func (a *App) CreateNodes(spec NodeSpec) ([]Profile, error) {
 				p.OutboundPolicy = policy
 			}
 			p.SNI = sni
-			if p.snellNode() || p.mtpNode() {
+			if p.snellNode() || p.mtpNode() || p.classicProxyNode() {
 				p.SNI = ""
 			}
 			if protocol == "hy2" || protocol == "tuic" || protocol == protoAnyTLSTLS {
@@ -702,6 +702,7 @@ type ExitSpec struct {
 	Port          int    `json:"port"`
 	Username      string `json:"username"`
 	Password      string `json:"password"`
+	ProxyLine     string `json:"proxy_line"`
 	Link          string `json:"link"`
 	ProxyProtocol string `json:"proxy_protocol"` // for remote exits that are plain proxies
 	RemoteNetwork string `json:"remote_network"` // "tcp" for a TCP-only NAT
@@ -755,6 +756,12 @@ func buildExit(spec ExitSpec) (Exit, error) {
 func proxyFromSpec(protocol string, spec ExitSpec) (*Proxy, error) {
 	if protocol != "socks5" && protocol != "http" && protocol != "https" {
 		return nil, errors.New("请选择 SOCKS5、HTTP 或 HTTPS")
+	}
+	if spec.ProxyLine != "" {
+		if spec.Host != "" || spec.Port != 0 || spec.Username != "" || spec.Password != "" {
+			return nil, errors.New("请使用粘贴格式或单独填写代理字段")
+		}
+		return ParseProxy(protocol, spec.ProxyLine)
 	}
 	if strings.Contains(spec.Username, ":") {
 		return nil, errors.New("用户名不能包含冒号")

@@ -80,6 +80,15 @@ func serverConfig(p Profile, dir string) (M, error) {
 	}
 	in := M{"tag": "entry", "listen": p.Listen, "listen_port": p.Port}
 	switch p.Protocol {
+	case "socks5", "http":
+		if _, e := p.classicProxyAt(p.PublicHost, p.PublicPort); e != nil {
+			return nil, e
+		}
+		in["type"] = p.Protocol
+		if p.Protocol == "socks5" {
+			in["type"] = "socks"
+		}
+		in["users"] = []any{M{"username": p.Username, "password": p.Password}}
 	case "vless", "anytls":
 		in["type"] = p.Protocol
 		in["tls"] = M{"enabled": true, "server_name": p.SNI, "reality": M{"enabled": true, "handshake": M{"server": p.SNI, "server_port": 443}, "private_key": p.PrivateKey, "short_id": []string{p.ShortID}}}
@@ -124,7 +133,9 @@ func serverConfig(p Profile, dir string) (M, error) {
 	rules := []any{}
 	if p.Outbound != nil {
 		out = proxyConfig(*p.Outbound)
-		rules = append(rules, M{"network": "udp", "action": "reject"})
+		if p.Protocol != "socks5" {
+			rules = append(rules, M{"network": "udp", "action": "reject"})
+		}
 	}
 	// The node's outbound IP family (node_egress.go): dial options on the egress outbound, the
 	// resolver they refer to, and for an "only" policy the rule that also covers destinations
@@ -146,13 +157,21 @@ func serverConfig(p Profile, dir string) (M, error) {
 			outbounds = append(outbounds, aiOut)
 		}
 	}
+	if p.Protocol == "socks5" {
+		rules = append([]any{M{"network": "udp", "action": "reject"}}, rules...)
+	}
 	if p.InboundMode == inIPv6 && p.Listen == "::" {
 		// sing-box listens on "::" as a dual-stack socket and offers no IPV6_V6ONLY option.
 		// An explicitly IPv6-only node therefore refuses IPv4 clients by source address,
 		// ahead of every other rule.
 		rules = append([]any{M{"inbound": []string{"entry"}, "source_ip_cidr": []string{"0.0.0.0/0"}, "action": "reject"}}, rules...)
 	}
-	cfg := M{"log": M{"level": "warn", "timestamp": true}, "inbounds": []any{in}, "outbounds": outbounds, "route": M{"rules": rules, "final": "egress"}}
+	logLevel := "warn"
+	if p.classicProxyNode() {
+		// sing-box logs submitted credentials at error level on failed proxy authentication.
+		logLevel = "fatal"
+	}
+	cfg := M{"log": M{"level": logLevel, "timestamp": true}, "inbounds": []any{in}, "outbounds": outbounds, "route": M{"rules": rules, "final": "egress"}}
 	if dns := p.egressDNS(); dns != nil {
 		cfg["dns"] = dns
 	}
@@ -181,6 +200,13 @@ func ClientConfig(p Profile, host string, port, localPort int) (M, error) {
 	}
 	out = M{"tag": "node", "server": host, "server_port": port}
 	switch p.Protocol {
+	case "socks5", "http":
+		proxy, e := p.classicProxyAt(host, port)
+		if e != nil {
+			return nil, e
+		}
+		out = proxyConfig(proxy)
+		out["tag"] = "node"
 	case "vless", "anytls":
 		out["type"] = p.Protocol
 		out["tls"] = M{"enabled": true, "server_name": p.SNI, "utls": M{"enabled": true, "fingerprint": "chrome"}, "reality": M{"enabled": true, "public_key": p.PublicKey, "short_id": p.ShortID}}

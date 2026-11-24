@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { AIView, DiagResult, ExitView, NodeList, NodeView, PanelHTTPSReport, SourceView, SubscriptionView, SystemView } from '../core/types'
 import { AIPage, isHostPort, observedExitIPs } from '../pages/ai'
+import { ExitsTab } from '../pages/exits'
 import { needsConfirm } from '../pages/node-egress'
 import { NodesPage } from '../pages/nodes'
 import { forgetPanelReport, loadPanelReport, panelHealth } from '../pages/panel-https'
@@ -46,6 +47,28 @@ const nodeList = (nodes: NodeView[]): NodeList => ({
     { policy: 'auto', available: true },
     { policy: 'ipv6_only', available: false, missing: 'IPv6' },
   ],
+})
+
+describe('exits', () => {
+  it('imports the pasted HTTP connection details without separate fields', async () => {
+    const calls = serve({
+      'GET /api/exits': () => ({ body: { exits: [] } }),
+      'POST /api/exits': () => ({ body: { exit: {} } }),
+    })
+    mount(<ExitsTab />)
+    await userEvent.click((await screen.findAllByRole('button', { name: 'New exit' }))[0])
+    const dialog = within(screen.getByRole('dialog'))
+    await userEvent.click(dialog.getByText('HTTP', { exact: true }))
+    const line = '[2001:db8::10]:8080:sample-user:sample:password'
+    // user-event treats square brackets as key descriptors when typing.
+    const user = userEvent.setup()
+    await user.click(dialog.getByLabelText('Paste proxy connection details'))
+    await user.paste(line)
+    expect(dialog.queryByLabelText('Host')).not.toBeInTheDocument()
+    await user.click(dialog.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(sent(calls, 'POST', '/api/exits')).toHaveLength(1))
+    expect(sent(calls, 'POST', '/api/exits')[0].body).toEqual({ name: '', protocol: 'http', proxy_line: line })
+  })
 })
 
 describe('nodes', () => {
